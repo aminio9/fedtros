@@ -1,0 +1,148 @@
+# ----------------------------------------------------------------------
+# Python basics
+# ----------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.dylib
+*.dll
+
+# Bytecode caches created inside src/ and other packages
+src/**/__pycache__/
+
+# ----------------------------------------------------------------------
+# Packaging / build artifacts
+# ----------------------------------------------------------------------
+.Python
+build/
+dist/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-wheel-metadata/
+
+# ----------------------------------------------------------------------
+# Virtual environments and dependency managers
+# ----------------------------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv*/
+.env
+.env.*
+.python-version
+
+# ----------------------------------------------------------------------
+# Installer / build logs
+# ----------------------------------------------------------------------
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ----------------------------------------------------------------------
+# Unit test / coverage artifacts
+# ----------------------------------------------------------------------
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+pytestdebug.log
+htmlcov/
+.pytest_cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# ----------------------------------------------------------------------
+# Type-checker caches
+# ----------------------------------------------------------------------
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# ----------------------------------------------------------------------
+# Interactive computing
+# ----------------------------------------------------------------------
+.ipynb_checkpoints
+profile_default/
+ipython_config.py
+
+# ----------------------------------------------------------------------
+# Editor & OS-generated files
+# ----------------------------------------------------------------------
+.vscode/
+.idea/
+*.code-workspace
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+*.orig
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ----------------------------------------------------------------------
+# Experiment & tracking tools
+# ----------------------------------------------------------------------
+.hydra/
+multirun/
+wandb/
+mlruns/
+tensorboard/
+tb_logs/
+lightning_logs/
+
+# ----------------------------------------------------------------------
+# Project-specific artifacts
+# ----------------------------------------------------------------------
+logs/
+figures/
+outputs/
+
+# Data generated during preprocessing / training
+data/processed/
+data/raw/**/*.csv
+data/raw/**/*.tsv
+data/raw/**/*.json
+data/raw/**/*.pt
+data/raw/**/*.pth
+data/raw/**/*.npy
+data/raw/**/*.npz
+data/raw/**/*.log
+data/**/*.tmp
+
+# Model checkpoints, weights, and reports
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.pb
+*.tflite
+
+# Miscellaneous run artifacts
+checkpoints/
+*.log
+*.tmp
+*.bak
+*.swp
