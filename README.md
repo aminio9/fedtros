@@ -53,3 +53,10 @@ Once all 3 clients connect, the server will begin the first round of training. L
 - After every federated round, each client evaluates its personalized agent on `paths.closed_set_test_data`. The resulting classification report (`client_<cid>_report_round_XXX.txt`) and confusion matrix plot (`client_<cid>_cm_round_XXX.png`) are stored under `figures/clients/client_<cid>/`.
 - The server still runs the global closed-set evaluation; its confusion matrices and reports remain in `figures/`.
 - Make sure `conf/config_fl.yaml` points `paths.closed_set_test_data`, `paths.class_names`, and `paths.figures_dir` at locations that exist on disk so the artifacts can be written.
+
+## Generator Training (Unknown Attack Reconstruction)
+
+- Each client now trains the decoder/generation network **once**, right after completing its final federated round. Training uses only the locally **correctly classified** samples, ensuring the generator learns from the final global model snapshot.
+- The training loop mirrors the standalone script (`train_generator.py` in the original OpenSetQ-Chain project) and now supports multiple generator rounds with per-round epochs. Each round/epoch logs its reconstruction MSE so you can inspect convergence for every agent.
+- Configure the behavior via the `generator_training` block in `conf/config_fl.yaml` (toggle `enabled`, tweak `batch_size`, learning rate, the minimum number of correct samples, plus `rounds` and `epochs_per_round` to control how many generator passes run).
+- Generator weights are still federated with the prior and Q-network parameters, but they are only updated in the last round before training concludes, keeping the communication cost the same as the RL phase.

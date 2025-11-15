@@ -69,6 +69,10 @@ def aggregate_fit_metrics(
     aggregated: Dict[str, float] = {}
     metric_keys = ["avg_reward_per_episode", "avg_td_loss", "avg_kl_loss", "avg_q_value"]
 
+    generator_sample_total = 0.0
+    generator_loss_weighted = 0.0
+    generator_correct_weighted = 0.0
+
     for key in metric_keys:
         weighted_sum = 0.0
         present = False
@@ -80,6 +84,33 @@ def aggregate_fit_metrics(
             present = True
         if present:
             aggregated[key] = weighted_sum / total_examples
+
+    for _, metrics in fit_metrics:
+        gen_samples = float(metrics.get("generator_samples", 0.0))
+        if gen_samples <= 0:
+            continue
+        generator_sample_total += gen_samples
+        gen_loss = metrics.get("generator_loss")
+        if gen_loss is not None:
+            generator_loss_weighted += float(gen_loss) * gen_samples
+        gen_correct = metrics.get("generator_correct_frac")
+        if gen_correct is not None:
+            generator_correct_weighted += float(gen_correct) * gen_samples
+
+    if generator_sample_total > 0:
+        aggregated["generator_samples"] = generator_sample_total
+        aggregated["generator_loss"] = generator_loss_weighted / generator_sample_total
+        aggregated["generator_correct_frac"] = (
+            generator_correct_weighted / generator_sample_total
+            if generator_sample_total
+            else 0.0
+        )
+        logger.info(
+            "Aggregated generator metrics | samples=%s | loss=%.6f | correct_frac=%.4f",
+            generator_sample_total,
+            aggregated["generator_loss"],
+            aggregated["generator_correct_frac"],
+        )
 
     avg_reward = aggregated.get("avg_reward_per_episode")
     if avg_reward is not None:
@@ -125,8 +156,10 @@ class ClosedSetEvaluator:
         self.value_network = model_factory.create_value_network().to(self.device)
         self.prior_net = self.value_network.encoder.prior
         self.main_q_net = self.value_network.decoder.main_q
+        self.generation_net = model_factory.create_generation_network().to(self.device)
         self.prior_keys = list(self.prior_net.state_dict().keys())
         self.main_keys = list(self.main_q_net.state_dict().keys())
+        self.generator_keys = list(self.generation_net.state_dict().keys())
 
     @staticmethod
     def _load_class_names(path: Path, num_actions: int) -> List[str]:
@@ -148,23 +181,36 @@ class ClosedSetEvaluator:
         else:
             ndarrays = fl.common.parameters_to_ndarrays(parameters)
 
-        expected = len(self.prior_keys) + len(self.main_keys)
-        if len(ndarrays) != expected:
+        expected_min = len(self.prior_keys) + len(self.main_keys)
+        expected_with_gen = expected_min + len(self.generator_keys)
+        if len(ndarrays) not in (expected_min, expected_with_gen):
             raise ValueError(
-                f"Parameter length mismatch. Expected {expected}, received {len(ndarrays)}"
+                f"Parameter length mismatch. Expected {expected_min} or {expected_with_gen}, "
+                f"received {len(ndarrays)}"
             )
+
+        prior_slice = ndarrays[: len(self.prior_keys)]
+        main_slice = ndarrays[len(self.prior_keys) : len(self.prior_keys) + len(self.main_keys)]
 
         prior_tensors = [
             torch.tensor(arr, device=self.device, dtype=self.prior_net.state_dict()[key].dtype)
-            for arr, key in zip(ndarrays[: len(self.prior_keys)], self.prior_keys)
+            for arr, key in zip(prior_slice, self.prior_keys)
         ]
         main_tensors = [
             torch.tensor(arr, device=self.device, dtype=self.main_q_net.state_dict()[key].dtype)
-            for arr, key in zip(ndarrays[len(self.prior_keys) :], self.main_keys)
+            for arr, key in zip(main_slice, self.main_keys)
         ]
 
         self.prior_net.load_state_dict(dict(zip(self.prior_keys, prior_tensors)))
         self.main_q_net.load_state_dict(dict(zip(self.main_keys, main_tensors)))
+
+        if len(ndarrays) == expected_with_gen:
+            gen_slice = ndarrays[expected_min:expected_with_gen]
+            gen_tensors = [
+                torch.tensor(arr, device=self.device, dtype=self.generation_net.state_dict()[key].dtype)
+                for arr, key in zip(gen_slice, self.generator_keys)
+            ]
+            self.generation_net.load_state_dict(dict(zip(self.generator_keys, gen_tensors)))
 
     def _run_inference(self) -> Tuple[float, np.ndarray, np.ndarray]:
         assert self.loader is not None

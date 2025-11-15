@@ -122,6 +122,46 @@ class FlowerClient(fl.client.NumPyClient):
             device=self.device,
         )
 
+        generator_cfg = getattr(self.cfg, "generator_training", None)
+        generator_metrics: Dict[str, float] = {}
+        if generator_cfg and bool(getattr(generator_cfg, "enabled", False)):
+            round_val = config.get("server_round")
+            try:
+                round_index = int(round_val)
+            except (TypeError, ValueError):
+                round_index = -1
+            total_rounds = int(getattr(self.cfg.server, "num_rounds", 0))
+            if round_index >= total_rounds and total_rounds > 0:
+                try:
+                    features = self.env.all_features_s.clone()
+                    labels = self.env.all_labels_a_t.clone()
+                except AttributeError:
+                    logger.warning(
+                        "Client %s: environment does not expose raw features; skipping generator training.",
+                        self.cid,
+                    )
+                else:
+                    logger.info(
+                        "Client %s: training generation network on %s local samples (final round).",
+                        self.cid,
+                        features.shape[0],
+                    )
+                    generator_metrics = self.agent.train_generation_network(
+                        features, labels, generator_cfg
+                    )
+            else:
+                logger.debug(
+                    "Client %s: generator training waits for final round (%s/%s).",
+                    self.cid,
+                    round_index,
+                    total_rounds,
+                )
+        else:
+            logger.debug("Client %s: generator training disabled.", self.cid)
+
+        if generator_metrics:
+            metrics.update(generator_metrics)
+
         updated_parameters = self.get_parameters(config={})
         return updated_parameters, num_steps_trained, metrics
 

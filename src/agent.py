@@ -1,5 +1,5 @@
 ﻿import logging
-from typing import Tuple, List
+from typing import Tuple, List, Dict
 from collections import OrderedDict
 
 import torch
@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 from omegaconf import DictConfig
+from torch.utils.data import DataLoader, TensorDataset
 
 try:
     from .models import OpenSetQChainModelFactory, ValueNetwork
@@ -60,6 +61,7 @@ class Agent:
         # Global (Federated) Components
         self.prior_net = self.encoder.prior
         self.value_net_main = self.decoder.main_q
+        self.generation_net = model_factory.create_generation_network().to(device)
         
         # Local (Personalized) Components
         self.recognition_net = self.encoder.recognition
@@ -173,14 +175,16 @@ class Agent:
 
     def get_federated_parameters(self) -> List[np.ndarray]:
         """Get the parameters of the components to be federated (Prior + MainQ)."""
-        logger.debug(f"Getting federated parameters (PriorNet + MainQNet)")
+        logger.debug("Getting federated parameters (PriorNet + MainQNet + GenerationNet)")
         
         prior_state_dict = self.prior_net.state_dict()
         main_q_state_dict = self.value_net_main.state_dict()
+        generation_state_dict = self.generation_net.state_dict()
         
         # Combine parameters into a single list
         params = [val.cpu().numpy() for val in prior_state_dict.values()]
         params.extend([val.cpu().numpy() for val in main_q_state_dict.values()])
+        params.extend([val.cpu().numpy() for val in generation_state_dict.values()])
             
         return params
 
@@ -189,18 +193,24 @@ class Agent:
         Set the received federated parameters (Prior + MainQ).
         This logic is the inverse of get_federated_parameters.
         """
-        logger.debug(f"Setting federated parameters (PriorNet + MainQNet)")
+        logger.debug("Setting federated parameters (PriorNet + MainQNet + GenerationNet)")
 
         prior_keys = list(self.prior_net.state_dict().keys())
         main_q_keys = list(self.value_net_main.state_dict().keys())
+        generation_keys = list(self.generation_net.state_dict().keys())
         
         num_prior_params = len(prior_keys)
         num_main_q_params = len(main_q_keys)
+        num_generation_params = len(generation_keys)
+        expected_without_generator = num_prior_params + num_main_q_params
+        expected_with_generator = expected_without_generator + num_generation_params
 
-        if len(parameters) != (num_prior_params + num_main_q_params):
+        if len(parameters) not in (expected_without_generator, expected_with_generator):
             logger.error(
-                f"Parameter mismatch: Expected {num_prior_params + num_main_q_params} "
-                f"tensors, but received {len(parameters)}"
+                "Parameter mismatch: expected %s or %s tensors, but received %s",
+                expected_without_generator,
+                expected_with_generator,
+                len(parameters),
             )
             raise ValueError("Mismatched number of parameters received from server")
         
@@ -211,14 +221,147 @@ class Agent:
         ))
         
         # Load MainQNet parameters
+        main_start = num_prior_params
+        main_end = main_start + num_main_q_params
         main_q_load_dict = OrderedDict(zip(
             main_q_keys,
-            [torch.tensor(p, device=self.device) for p in parameters[num_prior_params:]]
+            [torch.tensor(p, device=self.device) for p in parameters[main_start:main_end]]
         ))
             
         self.prior_net.load_state_dict(prior_load_dict)
         self.value_net_main.load_state_dict(main_q_load_dict)
+
+        if len(parameters) == expected_with_generator:
+            generator_load_dict = OrderedDict(
+                zip(
+                    generation_keys,
+                    [
+                        torch.tensor(p, device=self.device)
+                        for p in parameters[main_end:expected_with_generator]
+                    ],
+                )
+            )
+            self.generation_net.load_state_dict(generator_load_dict)
+        else:
+            logger.debug("No generation network weights provided; keeping local generator as-is.")
         
         if hard_target_update:
             logger.debug("Performing hard update of target network post-aggregation")
             self.hard_update_target_network()
+
+    def train_generation_network(
+        self,
+        features: torch.Tensor,
+        labels: torch.Tensor,
+        generator_cfg: DictConfig,
+    ) -> Dict[str, float]:
+        """
+        Train the generation network on correctly classified samples using the
+        procedure described for the Unknown Attack Recognition module.
+        """
+        features = features.detach().cpu().float()
+        labels = labels.detach().cpu().long()
+        if features.dim() != 2 or labels.dim() != 1:
+            raise ValueError("Features must be [N, D] and labels must be [N].")
+
+        gen_batch_size = int(getattr(generator_cfg, "batch_size", 128))
+        gen_lr = float(getattr(generator_cfg, "lr", 5e-4))
+        gen_rounds = max(1, int(getattr(generator_cfg, "rounds", 1)))
+        gen_epochs_per_round = max(
+            1,
+            int(
+                getattr(
+                    generator_cfg,
+                    "epochs_per_round",
+                    getattr(generator_cfg, "epochs", 5),
+                )
+            ),
+        )
+        min_correct = int(getattr(generator_cfg, "min_correct_samples", 1))
+
+        dataset = TensorDataset(features, labels)
+        full_loader = DataLoader(dataset, batch_size=gen_batch_size, shuffle=False)
+
+        correct_mask_parts: List[torch.Tensor] = []
+        with torch.no_grad():
+            self.prior_net.eval()
+            self.value_net_main.eval()
+            for states_s, true_actions in full_loader:
+                states_s = states_s.to(self.device)
+                true_actions = true_actions.to(self.device)
+                mu_p, _ = self.prior_net(states_s)
+                q_values = self.value_net_main(mu_p, states_s)
+                preds = q_values.argmax(dim=1)
+                correct_mask_parts.append((preds == true_actions).cpu())
+
+        if not correct_mask_parts:
+            logger.warning("Generator training skipped: no batches available.")
+            return {}
+
+        correct_mask = torch.cat(correct_mask_parts, dim=0)
+        num_correct = int(correct_mask.sum().item())
+        total_samples = int(features.shape[0])
+
+        if num_correct < min_correct:
+            logger.warning(
+                "Generator training skipped: only %s/%s correctly classified samples (< %s).",
+                num_correct,
+                total_samples,
+                min_correct,
+            )
+            return {
+                "generator_samples": float(num_correct),
+                "generator_correct_frac": num_correct / max(1, total_samples),
+            }
+
+        filtered_dataset = TensorDataset(features[correct_mask], labels[correct_mask])
+        train_loader = DataLoader(filtered_dataset, batch_size=gen_batch_size, shuffle=True)
+
+        optimizer = optim.Adam(self.generation_net.parameters(), lr=gen_lr)
+        loss_fn = nn.MSELoss()
+
+        self.generation_net.train()
+        self.recognition_net.eval()
+
+        last_epoch_loss = 0.0
+        for round_idx in range(1, gen_rounds + 1):
+            logger.info(
+                "Generator round %02d/%02d | samples=%s/%s",
+                round_idx,
+                gen_rounds,
+                num_correct,
+                total_samples,
+            )
+            for epoch in range(1, gen_epochs_per_round + 1):
+                total_loss = 0.0
+                for states_s, true_actions in train_loader:
+                    states_s = states_s.to(self.device)
+                    true_actions = true_actions.to(self.device)
+                    with torch.no_grad():
+                        mu_q, log_var_q = self.recognition_net(states_s, true_actions)
+                        latent_z = reparameterization_trick(mu_q, log_var_q)
+                    recon = self.generation_net(latent_z, true_actions)
+                    loss = loss_fn(recon, states_s)
+
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+
+                    total_loss += loss.item()
+
+                last_epoch_loss = total_loss / max(1, len(train_loader))
+                logger.info(
+                    "Round %02d/%02d | Epoch %02d/%02d | avg recon mse: %.6f",
+                    round_idx,
+                    gen_rounds,
+                    epoch,
+                    gen_epochs_per_round,
+                    last_epoch_loss,
+                )
+
+        self.generation_net.eval()
+        return {
+            "generator_loss": float(last_epoch_loss),
+            "generator_samples": float(num_correct),
+            "generator_correct_frac": num_correct / max(1, total_samples),
+        }
