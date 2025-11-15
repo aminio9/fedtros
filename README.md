@@ -47,3 +47,9 @@ You will need **4 separate terminals**.
     ```
 
 Once all 3 clients connect, the server will begin the first round of training. Logs for the server and each client will be saved to the `logs/` directory.
+
+## Evaluation Artifacts
+
+- After every federated round, each client evaluates its personalized agent on `paths.closed_set_test_data`. The resulting classification report (`client_<cid>_report_round_XXX.txt`) and confusion matrix plot (`client_<cid>_cm_round_XXX.png`) are stored under `figures/clients/client_<cid>/`.
+- The server still runs the global closed-set evaluation; its confusion matrices and reports remain in `figures/`.
+- Make sure `conf/config_fl.yaml` points `paths.closed_set_test_data`, `paths.class_names`, and `paths.figures_dir` at locations that exist on disk so the artifacts can be written.
