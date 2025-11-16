@@ -1,71 +1,85 @@
-﻿## Setup
-1. **Install Dependencies:**
-    ```bash
-    pip install poetry
-    poetry install
-    ```
+﻿# FedOSQ-Chain
 
-2. **Preprocess and Partition Data:**
-    This project assumes you have already run your preprocessing scripts and have partitioned your training data for each client. Place them in `data/processed/`.
-    - `data/processed/client_1_train.pt`
-    - `data/processed/client_2_train.pt`
-    - `data/processed/client_3_train.pt`
-    - `data/processed/closed_set_test.pt` (held-out known data)
-    - `data/processed/open_set_test.pt` (closed-set test + all unknown samples for EVT evaluation)
+**FedOSQ-Chain: Federated Multi-Agent Reinforcement Deep Q-Learning for Open-Set Recognition in Blockchain Network Traffic**  
+Optional subtitle: *A Privacy-Preserving Intrusion Detection Framework Using Distributed Q-Learning and Conditional Variational Autoencoding*
 
-    *Note: These files must be PyTorch-loadable and return a dictionary `{'features': torch.Tensor, 'labels': torch.Tensor}`.*
+## Overview
+FedOSQ-Chain is a federated CVAE-DQN framework for intrusion detection on blockchain network traffic. Clients train locally, share weights via Flower (FedAvg/FedProx), and perform open-set recognition by reconstructing traffic and rejecting high reconstruction errors using EVT. No raw traffic leaves the node.
 
-3. **Configure Environment:**
-    Open `conf/config_fl.yaml` and **you must** set the `env_metadata` to match your data:
-    ```yaml
-    env_metadata:
-      state_dim: 30  # <-- CHANGE TO YOUR FEATURE DIM
-      num_actions: 8 # <-- CHANGE TO YOUR NUMBER OF CLASSES
-    ```
+**Key pieces**
+- CVAE-DQN prior/encoder + dueling Q-head for action selection.
+- Federated training of prior, recognition, main Q, and generator weights.
+- Generator trains every round on correctly classified samples.
+- EVT on reconstruction errors for Unknown attack detection.
 
-## How to Run (1 Server + 3 Clients)
+## Requirements
+- Python 3.12+
+- Poetry for dependency management
 
-You will need **4 separate terminals**.
+## Install
+```bash
+pip install poetry
+poetry install
+```
 
-1. **Terminal 1: Start the Server**
-    ```bash
-    poetry run python run_server.py
-    ```
-    *The server will start and wait for 3 clients to connect.*
+## Data prep
+Place processed tensors in `data/processed/`:
+- `client_1_train.pt`, `client_2_train.pt`, `client_3_train.pt`
+- `closed_set_test.pt` (held-out known traffic)
+- `open_set_test.pt` (known + unknown for EVT/open-set eval)
 
-2. **Terminal 2: Start Client 1**
-    ```bash
-    poetry run python run_client.py --cid 1 --data_path data/processed/client_1_train.pt
-    ```
+Each file should be a PyTorch dict: `{"features": Tensor, "labels": Tensor}`.
 
-3. **Terminal 3: Start Client 2**
-    ```bash
-    poetry run python run_client.py --cid 2 --data_path data/processed/client_2_train.pt
-    ```
+## Configure
+Edit `conf/config_fl.yaml`:
+```yaml
+env_metadata:
+  state_dim: 31    # feature dim
+  num_actions: 4   # number of classes
 
-4. **Terminal 4: Start Client 3**
-    ```bash
-    poetry run python run_client.py --cid 3 --data_path data/processed/client_3_train.pt
-    ```
+server:
+  num_rounds: 25   # federated rounds
+  proximal_mu: 0.0 # FedAvg (set >0 for FedProx)
+```
+Adjust `training`, `generator_training`, and `evt` blocks as needed. Paths must point to your processed data and artifact directories.
 
-Once all 3 clients connect, the server will begin the first round of training. Logs for the server and each client will be saved to the `logs/` directory.
+## Run (1 server + 3 clients)
+Use four terminals:
+```bash
+# Terminal 1
+poetry run python run_server.py
 
-## Evaluation Artifacts
+# Terminal 2
+poetry run python run_client.py --cid 1 --data_path data/processed/client_1_train.pt
 
-- After every federated round, each client evaluates its personalized agent on `paths.closed_set_test_data`. The resulting classification report (`client_<cid>_report_round_XXX.txt`) and confusion matrix plot (`client_<cid>_cm_round_XXX.png`) are stored under `figures/clients/client_<cid>/`.
-- The server still runs the global closed-set evaluation; its confusion matrices and reports remain in `figures/`.
-- Make sure `conf/config_fl.yaml` points `paths.closed_set_test_data`, `paths.class_names`, and `paths.figures_dir` at locations that exist on disk so the artifacts can be written.
+# Terminal 3
+poetry run python run_client.py --cid 2 --data_path data/processed/client_2_train.pt
 
-## Generator Training (Unknown Attack Reconstruction)
+# Terminal 4
+poetry run python run_client.py --cid 3 --data_path data/processed/client_3_train.pt
+```
+Logs go to `logs/`. Figures and reports go to `figures/` and `figures/clients/client_<cid>/`.
 
-- Each client now trains the decoder/generation network **once**, right after completing its final federated round. Training uses only the locally **correctly classified** samples, ensuring the generator learns from the final global model snapshot.
-- The training loop mirrors the standalone script (`train_generator.py` in the original OpenSetQ-Chain project) and now supports multiple generator rounds with per-round epochs. Each round/epoch logs its reconstruction MSE so you can inspect convergence for every agent.
-- Configure the behavior via the `generator_training` block in `conf/config_fl.yaml` (toggle `enabled`, tweak `batch_size`, learning rate, the minimum number of correct samples, plus `rounds` and `epochs_per_round` to control how many generator passes run).
-- Generator weights are still federated with the prior and Q-network parameters, but they are only updated in the last round before training concludes, keeping the communication cost the same as the RL phase.
+## Evaluation artifacts
+- Client closed-set: `client_<cid>_report_round_XXX.txt`, `client_<cid>_cm_round_XXX.png` under `figures/clients/client_<cid>/`.
+- Server closed-set (global model): reports and confusion matrices under `figures/`.
+- Open-set: EVT artifacts in `evt/client_<cid>/`; reports/plots in `figures/clients/client_<cid>/openset/`.
 
-## EVT-Based Open-Set Evaluation
+## Open-set detection logic (EVT on reconstruction error)
+1. Predict class with main Q-network.
+2. Reconstruct using predicted label; compute reconstruction error.
+3. EVT models (per known class) score the error; if above threshold, relabel as Unknown.
 
-- After generator training on the final federated round, each client now fits Extreme Value Theory (EVT) models on its local reconstruction errors and calibrates detection thresholds based on the training data.
-- Configure the EVT pipeline via the new `evt` block in `conf/config_fl.yaml` (tail size, percentile `q`, target known-FPR, decision thresholds, and optional per-class calibration). Point `paths.open_set_test_data` to the mixed known+unknown dataset produced by preprocessing, and `paths.evt_dir` to where EVT artifacts should live.
-- EVT artifacts (`evt_models.pkl`, `evt_meta.json`) plus open-set evaluation plots/reports are stored under `evt/client_<cid>/` and `figures/clients/client_<cid>/openset/`.
-- Open-set metrics (F1 scores, known accuracy, unknown recall, overall accuracy) are reported back to the server so you can track performance across rounds.
+## Repository naming
+- Repository: **FedOSQ-Chain**
+<!-- - Python package: `fedosq_chain` (code currently lives under `src/`; keep the existing import paths).
+
+## Citation (template)
+If you use FedOSQ-Chain, please cite:
+```
+@article{fedosqchain2025,
+  title={FedOSQ-Chain: Federated Multi-Agent Reinforcement Deep Q-Learning for Open-Set Recognition in Blockchain Network Traffic},
+  author={...},
+  year={2025}
+}
+``` -->
