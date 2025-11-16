@@ -28,16 +28,20 @@ try:
     from .exceptions import ConfigMismatchError
     from .local_training import run_local_training_round
     from .models import OpenSetQChainModelFactory
+    from .openset_eval import calibrate_evt_thresholds, evaluate_open_set, fit_evt_models
     from .policy import EpsilonGreedyPolicy, EpsilonScheduler
     from .replay_buffer import ExperienceReplayBuffer
+    from .evt import save_evt_collection, save_evt_meta
 except ImportError:  # pragma: no cover - standalone usage
     from agent import Agent
     from environment import BlockchainIntrusionEnv
     from exceptions import ConfigMismatchError
     from local_training import run_local_training_round
     from models import OpenSetQChainModelFactory
+    from openset_eval import calibrate_evt_thresholds, evaluate_open_set, fit_evt_models
     from policy import EpsilonGreedyPolicy, EpsilonScheduler
     from replay_buffer import ExperienceReplayBuffer
+    from evt import save_evt_collection, save_evt_meta
 
 logger = logging.getLogger("Client")
 
@@ -84,11 +88,21 @@ class FlowerClient(fl.client.NumPyClient):
         )
         self.epsilon_scheduler = EpsilonScheduler(cfg.training)
 
+        figures_root = _resolve_project_path(getattr(cfg.paths, "figures_dir", "figures"))
+        self.client_figure_dir = figures_root / "clients" / f"client_{cid}"
+        self.client_figure_dir.mkdir(parents=True, exist_ok=True)
+
+        evt_root = _resolve_project_path(getattr(cfg.paths, "evt_dir", "evt"))
+        self.evt_output_dir = evt_root / f"client_{cid}"
+        self.evt_output_dir.mkdir(parents=True, exist_ok=True)
+        self.openset_output_dir = self.client_figure_dir / "openset"
+        self.openset_output_dir.mkdir(parents=True, exist_ok=True)
+
         # Closed-set evaluation artifacts
         self.eval_enabled: bool = False
         self.eval_loader: Optional[DataLoader] = None
         self.eval_class_names: List[str] = []
-        self.eval_output_dir: Optional[Path] = None
+        self.eval_output_dir: Optional[Path] = self.client_figure_dir
         self._init_closed_set_evaluation()
 
         logger.info("Client %s: Initialization complete.", cid)
@@ -124,43 +138,57 @@ class FlowerClient(fl.client.NumPyClient):
 
         generator_cfg = getattr(self.cfg, "generator_training", None)
         generator_metrics: Dict[str, float] = {}
+        evt_metrics: Dict[str, float] = {}
         if generator_cfg and bool(getattr(generator_cfg, "enabled", False)):
             round_val = config.get("server_round")
             try:
                 round_index = int(round_val)
             except (TypeError, ValueError):
                 round_index = -1
-            total_rounds = int(getattr(self.cfg.server, "num_rounds", 0))
-            if round_index >= total_rounds and total_rounds > 0:
-                try:
-                    features = self.env.all_features_s.clone()
-                    labels = self.env.all_labels_a_t.clone()
-                except AttributeError:
-                    logger.warning(
-                        "Client %s: environment does not expose raw features; skipping generator training.",
-                        self.cid,
-                    )
-                else:
-                    logger.info(
-                        "Client %s: training generation network on %s local samples (final round).",
-                        self.cid,
-                        features.shape[0],
-                    )
-                    generator_metrics = self.agent.train_generation_network(
-                        features, labels, generator_cfg
-                    )
-            else:
-                logger.debug(
-                    "Client %s: generator training waits for final round (%s/%s).",
+            try:
+                features = self.env.all_features_s.clone()
+                labels = self.env.all_labels_a_t.clone()
+            except AttributeError:
+                logger.warning(
+                    "Client %s: environment does not expose raw features; skipping generator training.",
                     self.cid,
-                    round_index,
-                    total_rounds,
                 )
+            else:
+                if self.eval_enabled and self.eval_loader is not None:
+                    logger.info(
+                        "Client %s: running closed-set evaluation before generator training (round %s).",
+                        self.cid,
+                        round_index,
+                    )
+                    _, _, pre_gen_metrics = self._evaluate_closed_set(round_index)
+                    metrics.update(
+                        {
+                            "pre_generator_closed_acc": pre_gen_metrics.get("accuracy", 0.0),
+                            "pre_generator_closed_samples": len(self.eval_loader.dataset),
+                        }
+                    )
+                logger.info(
+                    "Client %s: training generation network on %s local samples (round %s).",
+                    self.cid,
+                    features.shape[0],
+                    round_index,
+                )
+                generator_metrics = self.agent.train_generation_network(
+                    features, labels, generator_cfg
+                )
+                evt_cfg = getattr(self.cfg, "evt", None)
+                if evt_cfg and bool(getattr(evt_cfg, "enabled", False)):
+                    logger.info("Client %s: fitting EVT models for open-set evaluation.", self.cid)
+                    evt_metrics = self._fit_evt_and_run_openset_eval(features, labels, evt_cfg)
+                else:
+                    logger.debug("Client %s: EVT evaluation disabled.", self.cid)
         else:
             logger.debug("Client %s: generator training disabled.", self.cid)
 
         if generator_metrics:
             metrics.update(generator_metrics)
+        if evt_metrics:
+            metrics.update(evt_metrics)
 
         updated_parameters = self.get_parameters(config={})
         return updated_parameters, num_steps_trained, metrics
@@ -368,3 +396,101 @@ class FlowerClient(fl.client.NumPyClient):
         logger.debug("Client %s evaluation report (round %s):\n%s", self.cid, round_index, report)
 
         return loss, num_examples, {"accuracy": accuracy}
+
+    def _fit_evt_and_run_openset_eval(
+        self, features: torch.Tensor, labels: torch.Tensor, evt_cfg: DictConfig
+    ) -> Dict[str, float]:
+        paths_cfg = getattr(self.cfg, "paths", None)
+        if paths_cfg is None:
+            logger.warning("Client %s: cfg.paths missing; skipping EVT pipeline.", self.cid)
+            return {}
+
+        open_set_rel = getattr(paths_cfg, "open_set_test_data", None)
+        class_names_rel = getattr(paths_cfg, "class_names", None)
+        if not (open_set_rel and class_names_rel):
+            logger.warning(
+                "Client %s: open-set paths missing; skipping EVT-based evaluation.", self.cid
+            )
+            return {}
+
+        try:
+            evt_models = fit_evt_models(
+                features=features.float(),
+                labels=labels.long(),
+                batch_size=int(self.cfg.training.batch_size),
+                evt_cfg=evt_cfg,
+                prior_net=self.agent.prior_net,
+                recognition_net=self.agent.recognition_net,
+                value_net_main=self.agent.value_net_main,
+                generation_net=self.agent.generation_net,
+                device=self.device,
+            )
+        except Exception:
+            logger.exception("Client %s: EVT fitting failed.", self.cid)
+            return {}
+
+        evt_model_path = self.evt_output_dir / "evt_models.pkl"
+        save_evt_collection(evt_models, evt_model_path)
+
+        try:
+            meta = calibrate_evt_thresholds(
+                features=features.float(),
+                labels=labels.long(),
+                batch_size=int(self.cfg.training.batch_size),
+                evt_models=evt_models,
+                evt_cfg=evt_cfg,
+                prior_net=self.agent.prior_net,
+                recognition_net=self.agent.recognition_net,
+                value_net_main=self.agent.value_net_main,
+                generation_net=self.agent.generation_net,
+                device=self.device,
+            )
+        except Exception:
+            logger.exception("Client %s: EVT threshold calibration failed.", self.cid)
+            return {}
+
+        default_delta = float(getattr(evt_cfg, "decision_threshold", 0.1))
+        meta.setdefault("global_delta", default_delta)
+        save_evt_meta(meta, self.evt_output_dir / "evt_meta.json")
+
+        open_set_path = _resolve_project_path(open_set_rel)
+        if not open_set_path.exists():
+            logger.warning(
+                "Client %s: open-set test data missing at %s; skipping evaluation.",
+                self.cid,
+                open_set_path,
+            )
+            return {}
+
+        class_names_path = _resolve_project_path(class_names_rel)
+        try:
+            with open(class_names_path, "r", encoding="utf-8") as fh:
+                class_map = {int(k): v for k, v in json.load(fh).items()}
+        except FileNotFoundError:
+            logger.warning(
+                "Client %s: class-names file missing at %s; skipping open-set evaluation.",
+                self.cid,
+                class_names_path,
+            )
+            return {}
+
+        data = torch.load(open_set_path, map_location="cpu")
+        open_features = data["features"].float()
+        open_labels = data["labels"].long()
+
+        metrics = evaluate_open_set(
+            features=open_features,
+            labels=open_labels,
+            batch_size=int(self.cfg.training.batch_size),
+            prior_net=self.agent.prior_net,
+            recognition_net=self.agent.recognition_net,
+            value_net_main=self.agent.value_net_main,
+            generation_net=self.agent.generation_net,
+            evt_models=evt_models,
+            evt_meta=meta,
+            class_names=class_map,
+            output_dir=self.openset_output_dir,
+            device=self.device,
+            report_to_stdout=False,
+        )
+        return metrics
