@@ -26,7 +26,7 @@ except ImportError:
         soft_update_target_network,
     )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("Agent")
 
 def _ensure_action_index(a: torch.Tensor, num_actions: int) -> torch.Tensor:
     """Ensure action tensor is a long int tensor of shape [B, 1]."""
@@ -60,11 +60,11 @@ class Agent:
         
         # Global (Federated) Components
         self.prior_net = self.encoder.prior
+        self.recognition_net = self.encoder.recognition
         self.value_net_main = self.decoder.main_q
         self.generation_net = model_factory.create_generation_network().to(device)
         
         # Local (Personalized) Components
-        self.recognition_net = self.encoder.recognition
         self.value_net_target = self.decoder.target_q
         
         # Sync target net initially
@@ -174,35 +174,36 @@ class Agent:
     # --- METHODS FOR FEDERATED LEARNING ---
 
     def get_federated_parameters(self) -> List[np.ndarray]:
-        """Get the parameters of the components to be federated (Prior + MainQ)."""
-        logger.debug("Getting federated parameters (PriorNet + MainQNet + GenerationNet)")
+        """Get the parameters to federate (Prior + Recognition + MainQ + Generation)."""
+        logger.debug("Getting federated parameters (Prior + Recognition + MainQ + Generation)")
         
         prior_state_dict = self.prior_net.state_dict()
+        recog_state_dict = self.recognition_net.state_dict()
         main_q_state_dict = self.value_net_main.state_dict()
         generation_state_dict = self.generation_net.state_dict()
         
-        # Combine parameters into a single list
         params = [val.cpu().numpy() for val in prior_state_dict.values()]
+        params.extend([val.cpu().numpy() for val in recog_state_dict.values()])
         params.extend([val.cpu().numpy() for val in main_q_state_dict.values()])
         params.extend([val.cpu().numpy() for val in generation_state_dict.values()])
-            
         return params
 
     def set_federated_parameters(self, parameters: List[np.ndarray], hard_target_update: bool = True):
         """
-        Set the received federated parameters (Prior + MainQ).
+        Set the received federated parameters (Prior + Recognition + MainQ + Generation).
         This logic is the inverse of get_federated_parameters.
         """
-        logger.debug("Setting federated parameters (PriorNet + MainQNet + GenerationNet)")
-
+        logger.debug("Setting federated parameters (Prior + Recognition + MainQ + Generation)")
         prior_keys = list(self.prior_net.state_dict().keys())
+        recog_keys = list(self.recognition_net.state_dict().keys())
         main_q_keys = list(self.value_net_main.state_dict().keys())
         generation_keys = list(self.generation_net.state_dict().keys())
         
         num_prior_params = len(prior_keys)
+        num_recog_params = len(recog_keys)
         num_main_q_params = len(main_q_keys)
         num_generation_params = len(generation_keys)
-        expected_without_generator = num_prior_params + num_main_q_params
+        expected_without_generator = num_prior_params + num_recog_params + num_main_q_params
         expected_with_generator = expected_without_generator + num_generation_params
 
         if len(parameters) not in (expected_without_generator, expected_with_generator):
@@ -220,8 +221,17 @@ class Agent:
             [torch.tensor(p, device=self.device) for p in parameters[:num_prior_params]]
         ))
         
+        recog_start = num_prior_params
+        recog_end = recog_start + num_recog_params
+        recog_load_dict = OrderedDict(
+            zip(
+                recog_keys,
+                [torch.tensor(p, device=self.device) for p in parameters[recog_start:recog_end]],
+            )
+        )
+
         # Load MainQNet parameters
-        main_start = num_prior_params
+        main_start = recog_end
         main_end = main_start + num_main_q_params
         main_q_load_dict = OrderedDict(zip(
             main_q_keys,
@@ -229,6 +239,7 @@ class Agent:
         ))
             
         self.prior_net.load_state_dict(prior_load_dict)
+        self.recognition_net.load_state_dict(recog_load_dict)
         self.value_net_main.load_state_dict(main_q_load_dict)
 
         if len(parameters) == expected_with_generator:

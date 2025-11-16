@@ -111,6 +111,10 @@ def aggregate_fit_metrics(
             aggregated["generator_loss"],
             aggregated["generator_correct_frac"],
         )
+    else:
+        logger.info(
+            "No generator metrics received from clients this round; skip aggregated generator stats."
+        )
 
     avg_reward = aggregated.get("avg_reward_per_episode")
     if avg_reward is not None:
@@ -155,9 +159,11 @@ class ClosedSetEvaluator:
         model_factory = OpenSetQChainModelFactory(cfg.model)
         self.value_network = model_factory.create_value_network().to(self.device)
         self.prior_net = self.value_network.encoder.prior
+        self.recognition_net = self.value_network.encoder.recognition
         self.main_q_net = self.value_network.decoder.main_q
         self.generation_net = model_factory.create_generation_network().to(self.device)
         self.prior_keys = list(self.prior_net.state_dict().keys())
+        self.recog_keys = list(self.recognition_net.state_dict().keys())
         self.main_keys = list(self.main_q_net.state_dict().keys())
         self.generator_keys = list(self.generation_net.state_dict().keys())
 
@@ -181,7 +187,7 @@ class ClosedSetEvaluator:
         else:
             ndarrays = fl.common.parameters_to_ndarrays(parameters)
 
-        expected_min = len(self.prior_keys) + len(self.main_keys)
+        expected_min = len(self.prior_keys) + len(self.recog_keys) + len(self.main_keys)
         expected_with_gen = expected_min + len(self.generator_keys)
         if len(ndarrays) not in (expected_min, expected_with_gen):
             raise ValueError(
@@ -189,12 +195,21 @@ class ClosedSetEvaluator:
                 f"received {len(ndarrays)}"
             )
 
-        prior_slice = ndarrays[: len(self.prior_keys)]
-        main_slice = ndarrays[len(self.prior_keys) : len(self.prior_keys) + len(self.main_keys)]
+        cursor = 0
+        prior_slice = ndarrays[cursor : cursor + len(self.prior_keys)]
+        cursor += len(self.prior_keys)
+        recog_slice = ndarrays[cursor : cursor + len(self.recog_keys)]
+        cursor += len(self.recog_keys)
+        main_slice = ndarrays[cursor : cursor + len(self.main_keys)]
+        cursor += len(self.main_keys)
 
         prior_tensors = [
             torch.tensor(arr, device=self.device, dtype=self.prior_net.state_dict()[key].dtype)
             for arr, key in zip(prior_slice, self.prior_keys)
+        ]
+        recog_tensors = [
+            torch.tensor(arr, device=self.device, dtype=self.recognition_net.state_dict()[key].dtype)
+            for arr, key in zip(recog_slice, self.recog_keys)
         ]
         main_tensors = [
             torch.tensor(arr, device=self.device, dtype=self.main_q_net.state_dict()[key].dtype)
@@ -202,10 +217,11 @@ class ClosedSetEvaluator:
         ]
 
         self.prior_net.load_state_dict(dict(zip(self.prior_keys, prior_tensors)))
+        self.recognition_net.load_state_dict(dict(zip(self.recog_keys, recog_tensors)))
         self.main_q_net.load_state_dict(dict(zip(self.main_keys, main_tensors)))
 
         if len(ndarrays) == expected_with_gen:
-            gen_slice = ndarrays[expected_min:expected_with_gen]
+            gen_slice = ndarrays[cursor: cursor + len(self.generator_keys)]
             gen_tensors = [
                 torch.tensor(arr, device=self.device, dtype=self.generation_net.state_dict()[key].dtype)
                 for arr, key in zip(gen_slice, self.generator_keys)
