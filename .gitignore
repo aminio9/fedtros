@@ -119,6 +119,7 @@ lightning_logs/
 logs/
 figures/
 outputs/
+evt/
 
 # Data generated during preprocessing / training
 data/processed/

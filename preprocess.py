@@ -1,4 +1,4 @@
-﻿import json
+import json
 import logging
 import sys
 from pathlib import Path
@@ -42,7 +42,7 @@ def run_preprocessing(cfg: DictConfig):
     log_level = str(cfg.get("log_level", "INFO")).upper()
     setup_logging(log_file_path=str(log_file), log_level=log_level)
 
-    logger.info("--- 🚀 Starting Preprocessing Pipeline ---")
+    logger.info("--- ?? Starting Preprocessing Pipeline ---")
 
     def resolve_path(path_like) -> Path:
         path = Path(path_like)
@@ -133,7 +133,7 @@ def run_preprocessing(cfg: DictConfig):
         random_state=42,
     )
 
-    logger.info("--- 📊 Closed-Set Test Data (closed_set_test.pt) ---")
+    logger.info("--- ?? Closed-Set Test Data (closed_set_test.pt) ---")
     logger.info(f"Shape: {X_test_closed.shape}")
     if len(y_test_closed) > 0:
         unique_labels, counts = np.unique(y_test_closed, return_counts=True)
@@ -154,7 +154,7 @@ def run_preprocessing(cfg: DictConfig):
         X_client = X_train_known[client_idx_set]
         y_client = y_train_known[client_idx_set]
 
-        logger.info(f"--- 📊 Client {client_id} Training Data (client_{client_id}_train.pt) ---")
+        logger.info(f"--- ?? Client {client_id} Training Data (client_{client_id}_train.pt) ---")
         logger.info(f"Shape: {X_client.shape}")
         if len(y_client) > 0:
             unique_labels, counts = np.unique(y_client, return_counts=True)
@@ -166,8 +166,11 @@ def run_preprocessing(cfg: DictConfig):
         save_path = output_dir / f"client_{client_id}_train.pt"
         save_as_torch(X_client, y_client, save_path)
 
+    open_features = np.copy(X_test_closed)
+    open_labels = np.copy(y_test_closed)
+
     if len(df_unknown) > 0:
-        logger.info("Processing UNKNOWN data...")
+        logger.info("Processing UNKNOWN data for open-set evaluation...")
         num_scaled_unknown = scaler.transform(df_unknown[num_cols])
         cat_encoded_unknown = encoder.transform(df_unknown[cat_cols])
 
@@ -177,15 +180,26 @@ def run_preprocessing(cfg: DictConfig):
         ).astype(np.float32)
         labels_unknown = np.full(len(df_unknown), -1, dtype=np.int64)
 
-        logger.info("--- 📊 Open-Set Test Data (open_set_test.pt) ---")
-        logger.info(f"Shape: {features_unknown.shape}")
-        logger.info(f"Labels: All {len(labels_unknown)} samples marked as -1 (unknown)")
-
-        save_as_torch(features_unknown, labels_unknown, output_dir / "open_set_test.pt")
+        open_features = np.concatenate([open_features, features_unknown], axis=0)
+        open_labels = np.concatenate([open_labels, labels_unknown], axis=0)
+        logger.info(
+            "Appended %d unknown samples to open-set split (total=%d).",
+            len(labels_unknown),
+            len(open_labels),
+        )
     else:
-        logger.warning("No 'Unknown' samples found. 'open_set_test.pt' will not be created.")
+        logger.warning("No 'Unknown' samples found; open_set_test will contain only closed-set data.")
 
-    logger.info("--- ✅ Preprocessing Pipeline FINISHED ---")
+    logger.info("--- ?? Open-Set Evaluation Data (open_set_test.pt) ---")
+    logger.info(f"Shape: {open_features.shape}")
+    if len(open_labels) > 0:
+        unique_labels, counts = np.unique(open_labels, return_counts=True)
+        label_dist_str = ", ".join(
+            [f"'{idx_to_label.get(l, 'Unknown')}' (ID {l}): {c}" for l, c in zip(unique_labels, counts)]
+        )
+        logger.info(f"Label Distribution: {label_dist_str}")
+    save_as_torch(open_features, open_labels, output_dir / "open_set_test.pt")
+    logger.info("--- ? Preprocessing Pipeline FINISHED ---")
     print("\n" + "=" * 60)
     print("  ACTION REQUIRED: Update 'conf/config_fl.yaml' file!")
     print("  Copy these values into the 'env_metadata' section:")
@@ -196,3 +210,4 @@ def run_preprocessing(cfg: DictConfig):
 
 if __name__ == "__main__":
     run_preprocessing()
+

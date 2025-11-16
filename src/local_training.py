@@ -16,7 +16,7 @@ except ImportError:  # pragma: no cover - support standalone testing
     from policy import EpsilonGreedyPolicy, EpsilonScheduler
     from replay_buffer import ExperienceReplayBuffer
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("LocalTraining")
 
 
 def run_local_training_round(

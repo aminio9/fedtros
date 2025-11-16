@@ -6,7 +6,7 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("Environment")
 
 
 class BlockchainIntrusionEnv(gym.Env):

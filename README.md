@@ -10,6 +10,8 @@
     - `data/processed/client_1_train.pt`
     - `data/processed/client_2_train.pt`
     - `data/processed/client_3_train.pt`
+    - `data/processed/closed_set_test.pt` (held-out known data)
+    - `data/processed/open_set_test.pt` (closed-set test + all unknown samples for EVT evaluation)
 
     *Note: These files must be PyTorch-loadable and return a dictionary `{'features': torch.Tensor, 'labels': torch.Tensor}`.*
 
@@ -60,3 +62,10 @@ Once all 3 clients connect, the server will begin the first round of training. L
 - The training loop mirrors the standalone script (`train_generator.py` in the original OpenSetQ-Chain project) and now supports multiple generator rounds with per-round epochs. Each round/epoch logs its reconstruction MSE so you can inspect convergence for every agent.
 - Configure the behavior via the `generator_training` block in `conf/config_fl.yaml` (toggle `enabled`, tweak `batch_size`, learning rate, the minimum number of correct samples, plus `rounds` and `epochs_per_round` to control how many generator passes run).
 - Generator weights are still federated with the prior and Q-network parameters, but they are only updated in the last round before training concludes, keeping the communication cost the same as the RL phase.
+
+## EVT-Based Open-Set Evaluation
+
+- After generator training on the final federated round, each client now fits Extreme Value Theory (EVT) models on its local reconstruction errors and calibrates detection thresholds based on the training data.
+- Configure the EVT pipeline via the new `evt` block in `conf/config_fl.yaml` (tail size, percentile `q`, target known-FPR, decision thresholds, and optional per-class calibration). Point `paths.open_set_test_data` to the mixed known+unknown dataset produced by preprocessing, and `paths.evt_dir` to where EVT artifacts should live.
+- EVT artifacts (`evt_models.pkl`, `evt_meta.json`) plus open-set evaluation plots/reports are stored under `evt/client_<cid>/` and `figures/clients/client_<cid>/openset/`.
+- Open-set metrics (F1 scores, known accuracy, unknown recall, overall accuracy) are reported back to the server so you can track performance across rounds.

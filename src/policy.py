@@ -11,7 +11,7 @@ except ImportError:
     from models import PriorNetwork, MainQNetwork
     from utils import reparameterization_trick
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("Policy")
 
 class EpsilonScheduler:
     """Manages the decay of epsilon over time (episodes)."""

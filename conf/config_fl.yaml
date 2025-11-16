@@ -6,24 +6,28 @@ paths:
   data_client_3: "data/processed/client_3_train.pt"
   model_dir: "models/federated_global" 
   closed_set_test_data: "data/processed/closed_set_test.pt"
+  open_set_test_data: "data/processed/open_set_test.pt"
   class_names: "data/processed/class_names.json"
   figures_dir: "figures"
+  evt_dir: "evt"
 
 server:
   address: "127.0.0.1:8090"
-  num_rounds: 1
+  # More rounds to let aggregation converge; previously plateaued ~92%
+  num_rounds: 25
   fraction_fit: 1.0           # Use 100% of clients (3)
   fraction_evaluate: 1.0
   min_fit_clients: 3          # Wait for all 3 clients
   min_evaluate_clients: 3
   min_available_clients: 3
-  proximal_mu: 0.1            # FedProx regularization strength
+  # Relax FedProx regularization to avoid underfitting to local data
+  proximal_mu: 0.0            # FedAvg; set >0 if clients diverge
 
 # Metadata about the environment, MUST match your preprocessed data
 # !!! RUN 'poetry run python preprocess.py' TO GET THESE VALUES !!!
 env_metadata:
   state_dim: 31       # Example: MUST BE UPDATED
-  num_actions: 5      # Example: MUST BE UPDATED
+  num_actions: 4      # Example: MUST BE UPDATED
 
 # Model config
 model:
@@ -33,34 +37,49 @@ model:
 
 # Training config (passed to each client)
 training:
-  local_episodes_per_round: 10   # Run 100 episodes locally per FL round
-  steps_per_episode: 100
-  replay_buffer_size: 10000
-  min_buffer_size: 128
-  batch_size: 128
+  # Increase local work so each round carries more signal
+  local_episodes_per_round: 50
+  steps_per_episode: 150
+  replay_buffer_size: 50000
+  min_buffer_size: 2000
+  batch_size: 256
 
   gamma: 0.99
-  lr_prior: 0.0001
-  lr_q_rl: 0.0001
-  tau: 0.005                  # For soft target update
-  target_update_freq: 100     # Steps between soft updates
+  # Slightly higher LR to speed convergence with deeper buffers
+  lr_prior: 0.0003
+  lr_q_rl: 0.0003
+  tau: 0.01                  # For soft target update
+  target_update_freq: 5     # Steps between soft updates
 
   use_double_dqn: True
   prior_grad_clip_norm: 1.0
 
   # Epsilon-greedy (decays per episode)
   epsilon_start: 1.0
-  epsilon_end: 0.1
-  epsilon_decay_rate: 0.99
+  epsilon_end: 0.05
+  # Faster decay to exploit sooner with more local episodes
+  epsilon_decay_rate: 0.90
 
 generator_training:
   enabled: true
   batch_size: 128
-  epochs: 50
-  rounds: 5
-  epochs_per_round: 10
+  epochs: 15
+  rounds: 2
+  epochs_per_round: 15
   lr: 0.0005
   min_correct_samples: 256
+
+evt:
+  enabled: true
+  # Use longer EVT tail and higher known-FPR to raise Unknown recall
+  tail_size_percent: 0.2
+  min_errors_per_class: 5
+  min_tail_size: 5
+  q: 0.80
+  target_known_fpr: 0.15
+  delta_grid: [1e-6, 0.99, 200]
+  decision_threshold: 0.05
+  per_class_thresholds: true
 
 # --- UPDATED SECTION ---
 # Configuration for the one-time preprocessing script
@@ -113,5 +132,5 @@ preprocess:
     - "Normal"
     - "BP"
     - "DoS"
-    - "FoT"
+    # - "FoT"
     - "MitM"

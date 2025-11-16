@@ -9,7 +9,7 @@ try:
 except ImportError:
     from utils import to_one_hot, LOGVAR_MIN, LOGVAR_MAX
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("Models")
 
 
 class ResidualBlock(nn.Module):
