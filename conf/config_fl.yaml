@@ -1,5 +1,11 @@
 ﻿log_level: "INFO"
 
+device:
+  # Prefer "cuda" to force NVIDIA CUDA, "directml" for torch-directml (DX12 GPUs like Radeon Vega/iGPU), "cpu" to disable GPU, or "auto" to auto-detect.
+  prefer: "directml"
+  allow_cpu_fallback: true   # If false and CUDA is unavailable, startup will raise instead of silently using CPU.
+  move_data_to_device: true # Set true to keep dataset tensors on the selected device (GPU) to avoid host<->device hops.
+
 paths:
   data_client_1: "data/processed/client_1_train.pt"
   data_client_2: "data/processed/client_2_train.pt"

@@ -60,6 +60,14 @@ poetry run python run_client.py --cid 3 --data_path data/processed/client_3_trai
 ```
 Logs go to `logs/`. Figures and reports go to `figures/` and `figures/clients/client_<cid>/`.
 
+## GPU usage
+- Set `device.prefer: "cuda"` in `conf/config_fl.yaml` (or export `FEDOSQ_DEVICE=cuda`) to force GPU selection; set `allow_cpu_fallback: false` to fail fast if CUDA is missing.
+- Enable `device.move_data_to_device: true` if you want dataset tensors kept on GPU alongside models (uses more memory but avoids repeated host/device copies).
+- On AMD/Intel GPUs (e.g., Ryzen 3500U + Radeon Vega 8) install `torch-directml` and set `device.prefer: "directml"` (or `FEDOSQ_DEVICE=directml`). PyTorch will use DirectML, and logs will print the selected adapter name/version.
+- Example for a single DirectML client on Windows PowerShell: `pip install torch-directml` then `$env:FEDOSQ_DEVICE="directml"; poetry run python run_client.py --cid 1 --data_path data/processed/client_1_train.pt`.
+- Flower follows the device visible to each client process. Pin a GPU per client (e.g., PowerShell: `$env:CUDA_VISIBLE_DEVICES=\"0\"; $env:FEDOSQ_DEVICE=\"cuda\"; poetry run python run_client.py ...`) to prevent contention when running multiple clients on one host.
+- The server and evaluation pipelines reuse the same resolved device, so closed-set/open-set checks run on GPU when configured.
+
 ## Evaluation artifacts
 - Client closed-set: `client_<cid>_report_round_XXX.txt`, `client_<cid>_cm_round_XXX.png` under `figures/clients/client_<cid>/`.
 - Server closed-set (global model): reports and confusion matrices under `figures/`.

@@ -2,15 +2,16 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import flwr as fl
+import torch
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, OmegaConf
 
 try:
-    from src.utils import setup_logging
+    from src.utils import resolve_device_from_config, setup_logging
     from src.client import FlowerClient
     from src.exceptions import ConfigMismatchError
 except ImportError as err:
@@ -33,10 +34,10 @@ def load_config(overrides: List[str]) -> DictConfig:
     return cfg
 
 
-def run_client(cfg: DictConfig, cid: str, data_path: Path) -> None:
+def run_client(cfg: DictConfig, cid: str, data_path: Path, device: Optional[torch.device]) -> None:
     """Instantiate and start a Flower client."""
     try:
-        client = FlowerClient(cid=cid, cfg=cfg, data_path=str(data_path))
+        client = FlowerClient(cid=cid, cfg=cfg, data_path=str(data_path), device=device)
         fl.client.start_client(server_address=cfg.server.address, client=client.to_client())
     except ConfigMismatchError as exc:
         logging.getLogger(__name__).critical("Configuration Error: %s", exc, exc_info=True)
@@ -74,11 +75,13 @@ def main() -> None:
     setup_logging(log_file_path=str(log_file), log_level=log_level)
 
     logger = logging.getLogger(__name__)
+    device = resolve_device_from_config(cfg)
     logger.info("--- Starting Client %s ---", client_args.cid)
     logger.info("Data Path: %s", data_path)
     logger.info("Base Config Loaded. Server: %s", cfg.server.address)
+    logger.info("Resolved device: %s", device)
 
-    run_client(cfg, client_args.cid, data_path)
+    run_client(cfg, client_args.cid, data_path, device)
 
     logger.info("--- Client %s finished ---", client_args.cid)
 

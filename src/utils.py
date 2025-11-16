@@ -5,16 +5,25 @@ import sys
 import random
 import os
 from pathlib import Path
-from typing import Optional, List, OrderedDict
+from typing import Optional, List, OrderedDict, Union
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+try:
+    import torch_directml  # type: ignore
+except ImportError:  # pragma: no cover - optional dependency
+    torch_directml = None  # type: ignore
+
 # --- VAE Constants ---
 LOGVAR_MIN, LOGVAR_MAX = -6.0, 2.0
 EPS = 1e-12
+
+# Cached device so the whole app uses a single, consistent target.
+_GLOBAL_DEVICE: Optional[torch.device] = None
+_DEVICE_ENV_VARS = ("FEDOSQ_DEVICE", "DEVICE", "TORCH_DEVICE")
 
 
 def setup_logging(
@@ -103,33 +112,173 @@ def set_seed(seed: int, deterministic: bool = True):
     logging.info(f"Global random seed set to {seed}")
 
 
-def get_device(prefer: Optional[str] = None) -> torch.device:
-    """Get the appropriate torch device, logging the choice."""
+def _normalize_device_preference(prefer: Optional[str]) -> Optional[str]:
+    """Map various user inputs to canonical device strings."""
+    if prefer is None:
+        return None
+    prefer = str(prefer).strip().lower()
+    if prefer in {"auto", ""}:
+        return None
+    if prefer in {"cuda", "gpu"}:
+        return "cuda"
+    if prefer == "cpu":
+        return "cpu"
+    if prefer in {"dml", "directml"}:
+        return "directml"
+    return prefer
+
+
+def get_device(
+    prefer: Optional[str] = None,
+    *,
+    allow_cpu_fallback: bool = True,
+    cache: bool = True,
+) -> torch.device:
+    """
+    Get the torch device to use across the project.
+
+    - Honors env vars: FEDOSQ_DEVICE / DEVICE / TORCH_DEVICE
+    - Caches the first resolved device so every module shares it
+    - Optionally refuses to fall back to CPU if CUDA is requested
+    """
+    global _GLOBAL_DEVICE
     logger = logging.getLogger(__name__)
-    if prefer == "cuda" and torch.cuda.is_available():
-        device = torch.device("cuda")
+
+    # Resolve preference: config/arg -> env -> auto
+    prefer = _normalize_device_preference(prefer)
+    if prefer is None:
+        for env_key in _DEVICE_ENV_VARS:
+            env_val = os.getenv(env_key)
+            if env_val:
+                prefer = _normalize_device_preference(env_val)
+                break
+
+    # Reuse cached device if it matches the preference
+    if cache and _GLOBAL_DEVICE is not None:
+        if _device_matches_preference(_GLOBAL_DEVICE, prefer):
+            return _GLOBAL_DEVICE
+
+    # Choose device
+    device: torch.device
+    if prefer == "cpu":
+        device = torch.device("cpu")
+    elif prefer == "cuda":
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+            logger.info("Using CUDA device (torch %s)", torch.__version__)
+        elif torch_directml is not None:
+            logger.warning("CUDA requested but unavailable; trying DirectML as fallback.")
+            device = _resolve_directml_device(logger, allow_cpu_fallback)
+        elif allow_cpu_fallback:
+            logger.warning("CUDA requested but unavailable; falling back to CPU.")
+            device = torch.device("cpu")
+        else:
+            raise RuntimeError("CUDA requested but not available. Set allow_cpu_fallback=True to fall back to CPU.")
+    elif prefer == "directml":
+        device = _resolve_directml_device(logger, allow_cpu_fallback)
     else:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logger.info(f"Using device: {device}")
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+            logger.info("Auto-selected CUDA device (torch %s)", torch.__version__)
+        elif torch_directml is not None:
+            device = _resolve_directml_device(logger, allow_cpu_fallback)
+        else:
+            device = torch.device("cpu")
+
+    if cache:
+        _GLOBAL_DEVICE = device
+
+    logger.info("Using device: %s", device)
     return device
+
+
+def _resolve_directml_device(logger: logging.Logger, allow_cpu_fallback: bool) -> torch.device:
+    """Try to return a DirectML device if torch-directml is installed."""
+    if torch_directml is None:
+        if allow_cpu_fallback:
+            logger.warning("torch-directml not installed; falling back to CPU.")
+            return torch.device("cpu")
+        raise RuntimeError("DirectML requested but torch-directml is not installed.")
+
+    try:
+        device = torch_directml.device()
+        name = None
+        # torch-directml exposes adapter introspection on some builds; guard calls.
+        try:
+            idx = device.index if getattr(device, "index", None) is not None else 0
+        except Exception:
+            idx = 0
+        try:
+            if hasattr(torch_directml, "device_name"):
+                name = torch_directml.device_name(idx)  # type: ignore[attr-defined,arg-type]
+            elif hasattr(torch_directml, "get_device_name"):
+                name = torch_directml.get_device_name(idx)  # type: ignore[attr-defined,arg-type]
+        except Exception:
+            name = None
+        logger.info(
+            "Using DirectML device: %s%s (torch-directml %s, torch %s)",
+            device,
+            f" / {name}" if name else "",
+            getattr(torch_directml, "__version__", "unknown"),
+            torch.__version__,
+        )
+        return device
+    except Exception as exc:
+        if allow_cpu_fallback:
+            logger.warning("Failed to initialize DirectML (%s); falling back to CPU.", exc)
+            return torch.device("cpu")
+        raise RuntimeError(f"DirectML requested but failed to initialize: {exc}") from exc
+
+
+def set_device(device: Union[str, torch.device]) -> torch.device:
+    """Force-set the global device cache (useful for entrypoints/tests)."""
+    global _GLOBAL_DEVICE
+    _GLOBAL_DEVICE = torch.device(device)
+    logging.getLogger(__name__).info("Global device override set to %s", _GLOBAL_DEVICE)
+    return _GLOBAL_DEVICE
+
+
+def resolve_device_from_config(cfg: Optional[object]) -> torch.device:
+    """
+    Resolve the device using a config object (expects cfg.device.prefer/allow_cpu_fallback).
+    Falls back to env vars and auto-detection.
+    """
+    device_cfg = getattr(cfg, "device", None)
+    prefer = None
+    allow_cpu_fallback = True
+    if device_cfg is not None:
+        prefer = getattr(device_cfg, "prefer", None) or getattr(device_cfg, "preference", None)
+        allow_cpu_fallback = bool(getattr(device_cfg, "allow_cpu_fallback", True))
+    return get_device(prefer=prefer, allow_cpu_fallback=allow_cpu_fallback, cache=True)
+
+
+def _device_matches_preference(device: torch.device, prefer: Optional[str]) -> bool:
+    if prefer is None:
+        return True
+    if prefer == "directml":
+        dev_str = str(device).lower()
+        return device.type in {"dml", "directml", "privateuseone"} or dev_str.startswith(("dml", "directml"))
+    return device.type == prefer
 
 
 def to_one_hot(indices: torch.Tensor, num_classes: int) -> torch.Tensor:
     """Convert a tensor of indices to a one-hot representation."""
+    target_device = indices.device
     if indices.dim() > 1:
         indices = indices.squeeze(-1)
-    indices = indices.to(dtype=torch.long)
+    safe_idx = indices.to(dtype=torch.long)
 
     # Mask valid classes
-    valid = (indices >= 0) & (indices < num_classes)
-    # Replace invalid with 0 for one_hot, then zero them out
-    safe_idx = indices.clone()
-    safe_idx[~valid] = 0
+    valid = (safe_idx >= 0) & (safe_idx < num_classes)
+    safe_idx = safe_idx.clamp(min=0, max=max(num_classes - 1, 0))
 
-    oh = F.one_hot(safe_idx, num_classes=num_classes).to(dtype=torch.float32)
-    # Make rows for invalid indices all zeros
-    if (~valid).any():
-        oh[~valid] = 0.0
+    # Build one-hot on CPU to avoid unsupported scatter on DirectML, then move back.
+    flat = safe_idx.view(-1).cpu()
+    oh_cpu = torch.zeros(flat.numel(), num_classes, dtype=torch.float32, device="cpu")
+    if flat.numel() > 0 and num_classes > 0:
+        oh_cpu[torch.arange(flat.numel()), flat] = 1.0
+    oh_cpu[~valid.view(-1).cpu()] = 0.0
+    oh = oh_cpu.view(*safe_idx.shape, num_classes).to(device=target_device)
     return oh
 
 

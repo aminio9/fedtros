@@ -7,7 +7,7 @@ from hydra.utils import get_original_cwd
 from omegaconf import DictConfig, OmegaConf
 
 try:
-    from src.utils import setup_logging
+    from src.utils import resolve_device_from_config, setup_logging
     from src.server import plot_reward_history, run_server
 except ImportError as e:
     print(f"Error: Could not import from 'src'. {e}", file=sys.stderr)
@@ -25,11 +25,13 @@ def main(cfg: DictConfig) -> None:
     setup_logging(log_file_path=str(log_file), log_level=log_level)
 
     logger = logging.getLogger("Run Server")
+    device = resolve_device_from_config(cfg)
     logger.info("--- Starting Federated Server ---")
+    logger.info("Resolved device: %s", device)
     logger.info(f"Full Configuration:\n{OmegaConf.to_yaml(cfg)}")
 
     try:
-        run_server(cfg)
+        run_server(cfg, device=device)
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt received. Shutting down gracefully...")
     finally:

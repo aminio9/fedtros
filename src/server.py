@@ -126,10 +126,12 @@ def aggregate_fit_metrics(
 class ClosedSetEvaluator:
     """Evaluate the aggregated global model on held-out closed-set data."""
 
-    def __init__(self, cfg: DictConfig):
-        self.device = get_device()
+    def __init__(self, cfg: DictConfig, device: Optional[torch.device] = None):
+        self.device = device if device is not None else get_device()
         self.cfg = cfg
         self.enabled = True
+        device_cfg = getattr(cfg, "device", None)
+        move_data_to_device = bool(getattr(device_cfg, "move_data_to_device", False)) if device_cfg else False
 
         data_path = _resolve_path(cfg.paths.closed_set_test_data)
         class_names_path = _resolve_path(cfg.paths.class_names)
@@ -137,9 +139,10 @@ class ClosedSetEvaluator:
         self.figure_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            data = torch.load(data_path, map_location="cpu")
-            features = data["features"].float()
-            labels = data["labels"].long()
+            data_device = self.device if move_data_to_device else torch.device("cpu")
+            data = torch.load(data_path, map_location="cpu", weights_only=True)
+            features = data["features"].to(device=data_device).float()
+            labels = data["labels"].to(device=data_device).long()
             self.loader = DataLoader(
                 TensorDataset(features, labels),
                 batch_size=cfg.training.batch_size,
@@ -349,10 +352,10 @@ def get_strategy(cfg: DictConfig, evaluator: Optional[ClosedSetEvaluator]) -> St
     return strategy
 
 
-def run_server(cfg: DictConfig) -> None:
+def run_server(cfg: DictConfig, device: Optional[torch.device] = None) -> None:
     """Start the Flower server."""
     reset_reward_history()
-    evaluator = ClosedSetEvaluator(cfg)
+    evaluator = ClosedSetEvaluator(cfg, device=device)
     strategy = get_strategy(cfg, evaluator)
 
     logger.info("Starting server at %s for %s rounds.", cfg.server.address, cfg.server.num_rounds)

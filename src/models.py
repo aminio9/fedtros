@@ -42,13 +42,18 @@ class SelfAttentionBlock(nn.Module):
             nn.Linear(num_tokens * token_dim, input_dim),
             nn.LayerNorm(input_dim),
         )
+        self._dml_fallback_enabled = True
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         batch_size = x.shape[0]
         tokens = self.proj(x).view(batch_size, self.num_tokens, self.token_dim)
-        attn_out, _ = self.attn(tokens, tokens, tokens)
-        attn_out = attn_out.reshape(batch_size, -1)
-        attn_out = self.out(attn_out)
+        if self._dml_fallback_enabled and x.device.type in {"dml", "directml", "privateuseone"}:
+            # DirectML does not support multi-head attention; keep projection only.
+            mixed = tokens.reshape(batch_size, -1)
+        else:
+            attn_out, _ = self.attn(tokens, tokens, tokens)
+            mixed = attn_out.reshape(batch_size, -1)
+        attn_out = self.out(mixed)
         return x + attn_out
 
 

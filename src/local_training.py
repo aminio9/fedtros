@@ -52,6 +52,7 @@ def run_local_training_round(
     total_td_loss = 0.0
     total_kl_loss = 0.0
     total_avg_q = 0.0
+    started_training = False
 
     episode_pbar = tqdm(
         range(local_episodes),
@@ -97,7 +98,14 @@ def run_local_training_round(
             total_steps += 1
 
             # Start training once buffer has enough samples
-            if len(buffer) > min_buffer_size:
+            if len(buffer) >= min_buffer_size:
+                if not started_training:
+                    # logger.info(
+                    #     "Replay buffer warm-up complete (size=%s >= min_buffer_size=%s). Starting updates.",
+                    #     len(buffer),
+                    #     min_buffer_size,
+                    # )
+                    started_training = True
                 batch = buffer.sample(batch_size, device)
                 td_loss, kl_loss, avg_q = agent.train_step(batch)
 
@@ -132,6 +140,14 @@ def run_local_training_round(
         )
 
     episode_pbar.close()
+
+    if total_train_steps == 0:
+        logger.warning(
+            "Round finished with no parameter updates (buffer size %s < min_buffer_size %s). "
+            "Increase steps_per_episode/local_episodes or lower min_buffer_size to start training earlier.",
+            len(buffer),
+            min_buffer_size,
+        )
 
     avg_round_td = total_td_loss / total_train_steps if total_train_steps else 0.0
     avg_round_kl = total_kl_loss / total_train_steps if total_train_steps else 0.0

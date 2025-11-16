@@ -56,18 +56,24 @@ def _resolve_project_path(path_like: Union[str, Path]) -> Path:
 class FlowerClient(fl.client.NumPyClient):
     """Flower NumPyClient implementing the Fed-Per agent."""
 
-    def __init__(self, cid: str, cfg: DictConfig, data_path: str):
+    def __init__(self, cid: str, cfg: DictConfig, data_path: str, device: Optional[torch.device] = None):
         self.cid = cid
         self.cfg = cfg
         self.data_path = data_path
-        self.device = get_device()
+        self.device = device if device is not None else get_device()
+
+        device_cfg = getattr(cfg, "device", None)
+        self._move_data_to_device = bool(getattr(device_cfg, "move_data_to_device", False)) if device_cfg else False
 
         logger.info("Client %s: Initializing...", cid)
+        logger.info("Client %s using device: %s", cid, self.device)
 
         self.model_factory = OpenSetQChainModelFactory(cfg.model)
         self.env = BlockchainIntrusionEnv(
             processed_data_path=self.data_path,
             steps_per_episode=cfg.training.steps_per_episode,
+            device=self.device,
+            move_data_to_device=self._move_data_to_device,
         )
 
         if (
@@ -243,9 +249,10 @@ class FlowerClient(fl.client.NumPyClient):
         figures_dir = _resolve_project_path(figures_dir_rel) / "clients" / f"client_{self.cid}"
 
         try:
-            data = torch.load(test_data_path, map_location="cpu")
-            features = data["features"].float()
-            labels = data["labels"].long()
+            data_device = self.device if self._move_data_to_device else torch.device("cpu")
+            data = torch.load(test_data_path, map_location="cpu", weights_only=True)
+            features = data["features"].to(device=data_device).float()
+            labels = data["labels"].to(device=data_device).long()
         except FileNotFoundError:
             logger.warning(
                 "Client %s: closed-set test data not found at %s; evaluation disabled.",
@@ -474,9 +481,17 @@ class FlowerClient(fl.client.NumPyClient):
             )
             return {}
 
-        data = torch.load(open_set_path, map_location="cpu")
-        open_features = data["features"].float()
-        open_labels = data["labels"].long()
+        data = torch.load(
+            open_set_path,
+            map_location="cpu",
+            weights_only=True,
+        )
+        open_features = data["features"].to(
+            device=self.device if self._move_data_to_device else torch.device("cpu")
+        ).float()
+        open_labels = data["labels"].to(
+            device=self.device if self._move_data_to_device else torch.device("cpu")
+        ).long()
 
         metrics = evaluate_open_set(
             features=open_features,

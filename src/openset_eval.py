@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from .evt import EVTModel, load_evt_collection, load_evt_meta, save_evt_collection, save_evt_meta
 from .models import OpenSetQChainModelFactory
-from .utils import get_device
+from .utils import resolve_device_from_config
 
 logger = logging.getLogger("OpenSetEval")
 
@@ -501,7 +501,9 @@ def _save_histograms(records, class_names: Dict[int, str], output_dir: Path) -> 
 
 def run_evaluate(cfg) -> Dict[str, float]:
     """Standalone evaluation entry-point mirroring the reference OpenSetQ-Chain script."""
-    device = get_device()
+    device = resolve_device_from_config(cfg)
+    device_cfg = getattr(cfg, "device", None)
+    move_data_to_device = bool(getattr(device_cfg, "move_data_to_device", False)) if device_cfg else False
     logger.info("--- Starting OpenSetQChain Evaluation ---")
 
     paths_cfg = cfg.paths
@@ -551,13 +553,14 @@ def run_evaluate(cfg) -> Dict[str, float]:
     else:
         evt_meta = {"global_delta": float(getattr(cfg.evt, "decision_threshold", 0.1))}
 
-    data = torch.load(test_data_path)
+    data_device = device if move_data_to_device else torch.device("cpu")
+    data = torch.load(test_data_path, map_location="cpu", weights_only=True)
     with open(class_names_path, "r", encoding="utf-8") as f:
         class_map = {int(k): v for k, v in json.load(f).items()}
 
     metrics = evaluate_open_set(
-        features=data["features"].float(),
-        labels=data["labels"].long(),
+        features=data["features"].to(device=data_device).float(),
+        labels=data["labels"].to(device=data_device).long(),
         batch_size=int(cfg.training.batch_size),
         prior_net=prior_net,
         recognition_net=recognition_net,

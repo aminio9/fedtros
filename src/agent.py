@@ -36,6 +36,67 @@ def _ensure_action_index(a: torch.Tensor, num_actions: int) -> torch.Tensor:
     return a.clamp_(0, num_actions - 1)
 
 
+class DirectMLAdam(optim.Optimizer):
+    """Adam variant that avoids unsupported ops on DirectML by using add/mul instead of lerp."""
+
+    def __init__(
+        self,
+        params,
+        lr: float = 1e-3,
+        betas=(0.9, 0.999),
+        eps: float = 1e-8,
+        weight_decay: float = 0.0,
+    ):
+        defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
+        super().__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        for group in self.param_groups:
+            beta1, beta2 = group["betas"]
+            eps = group["eps"]
+            lr = group["lr"]
+            weight_decay = group["weight_decay"]
+
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                grad = p.grad
+                state = self.state[p]
+
+                if len(state) == 0:
+                    state["step"] = 0
+                    state["exp_avg"] = torch.zeros_like(p)
+                    state["exp_avg_sq"] = torch.zeros_like(p)
+
+                exp_avg = state["exp_avg"]
+                exp_avg_sq = state["exp_avg_sq"]
+
+                state["step"] += 1
+
+                # Decay the first and second moment running average coefficients
+                exp_avg.mul_(beta1).add_(grad, alpha=1 - beta1)
+                exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1 - beta2)
+
+                if weight_decay != 0:
+                    grad = grad.add(p, alpha=weight_decay)
+
+                bias_correction1 = 1 - beta1 ** state["step"]
+                bias_correction2 = 1 - beta2 ** state["step"]
+
+                denom = exp_avg_sq.sqrt().add_(eps)
+                step_size = lr * (bias_correction2 ** 0.5) / bias_correction1
+
+                p.addcdiv_(exp_avg, denom, value=-step_size)
+
+        return loss
+
+
 class Agent:
     """
     Implements the core training logic for the CVAE-DQN agent,
@@ -71,11 +132,22 @@ class Agent:
         self.value_net_target.load_state_dict(self.value_net_main.state_dict())
         self.value_net_target.eval()
 
-        # Optimizers
-        self.optimizer_prior = optim.Adam(self.prior_net.parameters(), lr=train_cfg.lr_prior)
+        use_directml_safe = device.type in {"dml", "directml", "privateuseone"}
+        adam_cls = DirectMLAdam if use_directml_safe else optim.Adam
+
+        # Optimizers (DirectML-safe variant avoids unsupported lerp scatter ops)
+        if adam_cls is optim.Adam:
+            self.optimizer_prior = adam_cls(
+                self.prior_net.parameters(), lr=train_cfg.lr_prior, foreach=False
+            )
+        else:
+            self.optimizer_prior = adam_cls(self.prior_net.parameters(), lr=train_cfg.lr_prior)
         # RL optimizer trains *both* the local RecognitionNet and the global MainQNet
         rl_params = list(self.recognition_net.parameters()) + list(self.value_net_main.parameters())
-        self.optimizer_q_rl = optim.Adam(rl_params, lr=train_cfg.lr_q_rl)
+        if adam_cls is optim.Adam:
+            self.optimizer_q_rl = adam_cls(rl_params, lr=train_cfg.lr_q_rl, foreach=False)
+        else:
+            self.optimizer_q_rl = adam_cls(rl_params, lr=train_cfg.lr_q_rl)
 
         self.td_loss_fn = nn.SmoothL1Loss()
         logger.debug("Agent initialized with Double-DQN: %s", self.use_double_dqn)
@@ -328,7 +400,12 @@ class Agent:
         filtered_dataset = TensorDataset(features[correct_mask], labels[correct_mask])
         train_loader = DataLoader(filtered_dataset, batch_size=gen_batch_size, shuffle=True)
 
-        optimizer = optim.Adam(self.generation_net.parameters(), lr=gen_lr)
+        use_directml_safe = self.device.type in {"dml", "directml", "privateuseone"}
+        adam_cls = DirectMLAdam if use_directml_safe else optim.Adam
+        if adam_cls is optim.Adam:
+            optimizer = adam_cls(self.generation_net.parameters(), lr=gen_lr, foreach=False)
+        else:
+            optimizer = adam_cls(self.generation_net.parameters(), lr=gen_lr)
         loss_fn = nn.MSELoss()
 
         self.generation_net.train()

@@ -34,21 +34,29 @@ class BlockchainIntrusionEnv(gym.Env):
         processed_data_path: str,
         steps_per_episode: int,
         *,
+        device: Optional[torch.device] = None,
+        move_data_to_device: bool = False,
         indices: Optional[np.ndarray] = None,
         client_id: Optional[int] = None,
         num_clients: Optional[int] = None,
     ) -> None:
         super().__init__()
 
+        self.device = torch.device(device) if device is not None else torch.device("cpu")
+        target_device = self.device if move_data_to_device else torch.device("cpu")
+        self._data_device = target_device
+        self._move_data_to_device = move_data_to_device
+
         if not os.path.exists(processed_data_path):
             logger.error("Processed data not found at %s", processed_data_path)
             raise FileNotFoundError(f"Data not found: {processed_data_path}")
 
         try:
-            # Always load features/labels on CPU; agents will move batches to device as needed.
-            data = torch.load(processed_data_path, map_location=torch.device("cpu"))
-            self.all_features_s: torch.Tensor = data["features"].to(torch.float32)
-            self.all_labels_a_t: torch.Tensor = data["labels"].long()
+            data = torch.load(processed_data_path, map_location="cpu", weights_only=True)
+            self.all_features_s: torch.Tensor = data["features"].to(
+                device=target_device, dtype=torch.float32
+            )
+            self.all_labels_a_t: torch.Tensor = data["labels"].to(device=target_device).long()
         except Exception as exc:  # pragma: no cover - I/O error
             logger.error("Failed to load data from %s: %s", processed_data_path, exc, exc_info=True)
             raise
@@ -137,6 +145,8 @@ class BlockchainIntrusionEnv(gym.Env):
             self.feature_dim,
             self.num_actions_nt,
         )
+        if move_data_to_device:
+            logger.info("Environment tensors pinned to %s", target_device)
 
     # ------------------------------------------------------------------
     # Gym API
