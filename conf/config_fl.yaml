@@ -42,25 +42,25 @@ env_metadata:
 
 model:
   state_dim: ${env_metadata.state_dim}
-  latent_dim: 8
+  latent_dim: 16
   num_actions: ${env_metadata.num_actions}
 
 training:
-  local_episodes_per_round: 15
-  steps_per_episode: 100
+  local_episodes_per_round: 50
+  steps_per_episode: 200
   replay_buffer_size: 50000
-  min_buffer_size: 256
-  batch_size: 256
+  min_buffer_size: 1024
+  batch_size: 512
   gamma: 0.99
-  lr_prior: 0.0003
-  lr_q_rl: 0.0003
+  lr_prior: 0.001
+  lr_q_rl: 0.001
   tau: 0.01
-  target_update_freq: 5
+  target_update_freq: 100
   use_double_dqn: True
   prior_grad_clip_norm: 1.0
   epsilon_start: 1.0
-  epsilon_end: 0.05
-  epsilon_decay_rate: 0.90
+  epsilon_end: 0.01
+  epsilon_decay_rate: 0.995
 
 generator_training:
   enabled: false

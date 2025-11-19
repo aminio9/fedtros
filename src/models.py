@@ -13,15 +13,16 @@ logger = logging.getLogger("Models")
 
 
 class ResidualBlock(nn.Module):
-    """Simple fully-connected residual block with LayerNorm."""
+    """Wider fully-connected residual block."""
+
     def __init__(self, dim: int):
         super().__init__()
         self.block = nn.Sequential(
             nn.Linear(dim, dim),
-            nn.GELU(),
+            nn.LeakyReLU(0.2),  # Changed to LeakyReLU for better gradient flow
             nn.LayerNorm(dim),
             nn.Linear(dim, dim),
-            nn.GELU(),
+            nn.LeakyReLU(0.2),
             nn.LayerNorm(dim),
         )
 
@@ -29,95 +30,56 @@ class ResidualBlock(nn.Module):
         return x + self.block(x)
 
 
-# class SelfAttentionBlock(nn.Module):
-#     """Project features into tokens and mix them via multi-head self-attention."""
-
-#     def __init__(self, input_dim: int, num_tokens: int = 4, token_dim: int = 32, num_heads: int = 4):
-#         super().__init__()
-#         self.num_tokens = num_tokens
-#         self.token_dim = token_dim
-#         self.proj = nn.Linear(input_dim, num_tokens * token_dim)
-#         self.attn = nn.MultiheadAttention(token_dim, num_heads, batch_first=True)
-#         self.out = nn.Sequential(
-#             nn.Linear(num_tokens * token_dim, input_dim),
-#             nn.LayerNorm(input_dim),
-#         )
-#         self._dml_fallback_enabled = True
-
-#     def forward(self, x: torch.Tensor) -> torch.Tensor:
-#         batch_size = x.shape[0]
-#         tokens = self.proj(x).view(batch_size, self.num_tokens, self.token_dim)
-#         if self._dml_fallback_enabled and x.device.type in {"dml", "directml", "privateuseone"}:
-#             # DirectML does not support multi-head attention; keep projection only.
-#             mixed = tokens.reshape(batch_size, -1)
-#         else:
-#             attn_out, _ = self.attn(tokens, tokens, tokens)
-#             mixed = attn_out.reshape(batch_size, -1)
-#         attn_out = self.out(mixed)
-#         return x + attn_out
-
-
-class GatedMLPBlock(nn.Module):
-    """Feed-forward mixer with residual skip; replaces attention for light-weight mixing."""
-
-    def __init__(self, dim: int, hidden_mult: int = 4, dropout: float = 0.1):
-        super().__init__()
-        hidden_dim = dim * hidden_mult
-        self.net = nn.Sequential(
-            nn.LayerNorm(dim),
-            nn.Linear(dim, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x + self.net(x)
-
-
 class PriorNetwork(nn.Module):
-    """Encodes s -> (μ_p, log_var_p) with residual connections. GLOBAL component."""
+    """Encodes s -> (μ_p, log_var_p). GLOBAL component."""
+
     def __init__(self, s_dim: int, z_dim: int):
         super().__init__()
-        self.act = nn.GELU()
-        self.fc_in = nn.Linear(s_dim, 256)
-        self.res1 = ResidualBlock(256)
-        self.fc2 = nn.Linear(256, 128)
-        self.norm2 = nn.LayerNorm(128)
-        self.res2 = ResidualBlock(128)
-        self.mu_head = nn.Linear(128, z_dim)
-        self.logvar_head = nn.Linear(128, z_dim)
-        logger.debug("PriorNetwork initialized (Residual)")
+        # INCREASED SIZE: 256 -> 512 to capture more patterns
+        self.fc_in = nn.Linear(s_dim, 512)
+        self.res1 = ResidualBlock(512)
+        self.res2 = ResidualBlock(512)  # Added extra depth
+
+        self.fc2 = nn.Linear(512, 256)
+        self.norm2 = nn.LayerNorm(256)
+
+        self.mu_head = nn.Linear(256, z_dim)
+        self.logvar_head = nn.Linear(256, z_dim)
+        self.act = nn.LeakyReLU(0.2)
 
     def forward(self, s: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         x = self.act(self.fc_in(s))
         x = self.res1(x)
-        x = self.act(self.norm2(self.fc2(x)))
         x = self.res2(x)
+        x = self.act(self.norm2(self.fc2(x)))
         mu = self.mu_head(x)
         logvar = self.logvar_head(x).clamp(LOGVAR_MIN, LOGVAR_MAX)
         return mu, logvar
 
 
 class RecognitionNetwork(nn.Module):
-    """Encodes (s, a) -> (μ_q, log_var_q) with residual connections. LOCAL component."""
+    """Encodes (s, a) -> (μ_q, log_var_q). LOCAL component."""
+
     def __init__(self, s_dim: int, num_actions: int, z_dim: int):
         super().__init__()
         self.num_actions = num_actions
         in_dim = s_dim + num_actions
-        self.act = nn.GELU()
-        self.fc_in = nn.Linear(in_dim, 256)
-        self.res1 = ResidualBlock(256)
-        self.fc2 = nn.Linear(256, 128)
-        self.norm2 = nn.LayerNorm(128)
-        self.res2 = ResidualBlock(128)
-        self.mu_head = nn.Linear(128, z_dim)
-        self.logvar_head = nn.Linear(128, z_dim)
-        logger.debug("RecognitionNetwork initialized (Residual)")
-        
-    def forward(self, s: torch.Tensor, a: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+
+        # INCREASED SIZE: 256 -> 512
+        self.fc_in = nn.Linear(in_dim, 512)
+        self.res1 = ResidualBlock(512)
+        self.res2 = ResidualBlock(512)
+
+        self.fc2 = nn.Linear(512, 256)
+        self.norm2 = nn.LayerNorm(256)
+
+        self.mu_head = nn.Linear(256, z_dim)
+        self.logvar_head = nn.Linear(256, z_dim)
+        self.act = nn.LeakyReLU(0.2)
+
+    def forward(
+        self, s: torch.Tensor, a: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         if a.dim() == 1 or (a.dim() == 2 and a.shape[1] == 1):
             a_onehot = to_one_hot(a, self.num_actions)
         else:
@@ -125,15 +87,14 @@ class RecognitionNetwork(nn.Module):
         x = torch.cat([s, a_onehot], dim=-1)
         x = self.act(self.fc_in(x))
         x = self.res1(x)
-        x = self.act(self.norm2(self.fc2(x)))
         x = self.res2(x)
+        x = self.act(self.norm2(self.fc2(x)))
         mu = self.mu_head(x)
         logvar = self.logvar_head(x).clamp(LOGVAR_MIN, LOGVAR_MAX)
         return mu, logvar
 
 
 class Encoder(nn.Module):
-    """Container for the two encoder networks."""
     def __init__(self, s_dim: int, num_actions: int, z_dim: int):
         super().__init__()
         self.prior = PriorNetwork(s_dim, z_dim)
@@ -142,90 +103,94 @@ class Encoder(nn.Module):
     def prior_forward(self, s: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.prior(s)
 
-    def recognition_forward(self, s: torch.Tensor, a: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def recognition_forward(
+        self, s: torch.Tensor, a: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.recognition(s, a)
 
 
 class MainQNetwork(nn.Module):
-    """Decodes (z, s) -> Q-values with a dueling value/advantage head."""
+    """Decodes (z, s) -> Q-values with a wider dueling head."""
+
     def __init__(self, s_dim: int, z_dim: int, num_actions: int):
         super().__init__()
         in_dim = s_dim + z_dim
         self.num_actions = num_actions
-        self.act = nn.GELU()
-        self.fc1 = nn.Linear(in_dim, 256)
-        self.fc2 = nn.Linear(256, 128)
-        self.norm = nn.LayerNorm(128)
-        # self.attn_block = SelfAttentionBlock(128, num_tokens=4, token_dim=32, num_heads=4)  # kept for reference
-        self.feature_mixer = GatedMLPBlock(128, hidden_mult=4, dropout=0.1)
+        self.act = nn.LeakyReLU(0.2)
 
-        self.value_fc1 = nn.Linear(128, 64)
-        self.value_fc2 = nn.Linear(64, 1)
+        # INCREASED SIZE: 512 neurons for better decision boundaries
+        self.fc1 = nn.Linear(in_dim, 512)
+        self.res1 = ResidualBlock(512)
 
-        self.advantage_fc1 = nn.Linear(128, 64)
-        self.advantage_fc2 = nn.Linear(64, num_actions)
-        logger.debug("MainQNetwork initialized (Dueling)")
+        self.fc2 = nn.Linear(512, 256)
+        self.norm = nn.LayerNorm(256)
+
+        # Value Head
+        self.value_fc1 = nn.Linear(256, 128)
+        self.value_fc2 = nn.Linear(128, 1)
+
+        # Advantage Head
+        self.advantage_fc1 = nn.Linear(256, 128)
+        self.advantage_fc2 = nn.Linear(128, num_actions)
 
     def forward(self, z: torch.Tensor, s: torch.Tensor) -> torch.Tensor:
         x = torch.cat([z, s], dim=-1)
         x = self.act(self.fc1(x))
-        x = self.act(self.fc2(x))
-        x = self.norm(x)
-        # x = self.attn_block(x)  # self-attention disabled; using feed-forward mixer instead
-        x = self.feature_mixer(x)
+        x = self.res1(x)
+        x = self.norm(self.act(self.fc2(x)))
 
         value = self.act(self.value_fc1(x))
         value = self.value_fc2(value)
 
         advantage = self.act(self.advantage_fc1(x))
         advantage = self.advantage_fc2(advantage)
+
+        # Dueling DQN Logic
         q_values = value + (advantage - advantage.mean(dim=-1, keepdim=True))
         return q_values
 
 
 class TargetQNetwork(MainQNetwork):
-    """A copy of MainQNetwork for stable TD targets. This is the LOCAL component."""
     pass
 
 
 class Decoder(nn.Module):
-    """Container for the main and target Q-networks."""
     def __init__(self, s_dim: int, z_dim: int, num_actions: int):
         super().__init__()
         self.main_q = MainQNetwork(s_dim, z_dim, num_actions)
         self.target_q = TargetQNetwork(s_dim, z_dim, num_actions)
 
-    def forward(self, z: torch.Tensor, s: torch.Tensor, use_target: bool = False) -> torch.Tensor:
+    def forward(
+        self, z: torch.Tensor, s: torch.Tensor, use_target: bool = False
+    ) -> torch.Tensor:
         net = self.target_q if use_target else self.main_q
         return net(z, s)
 
 
 class ValueNetwork(nn.Module):
-    """The complete CVAE-DQN value network (Encoder + Decoder)."""
     def __init__(self, s_dim: int, z_dim: int, num_actions: int):
         super().__init__()
         self.encoder = Encoder(s_dim, num_actions, z_dim)
         self.decoder = Decoder(s_dim, z_dim, num_actions)
 
-    def forward(self, z: torch.Tensor, s: torch.Tensor, use_target: bool = False) -> torch.Tensor:
+    def forward(
+        self, z: torch.Tensor, s: torch.Tensor, use_target: bool = False
+    ) -> torch.Tensor:
         return self.decoder(z, s, use_target=use_target)
 
 
+# Kept GenerationNetwork simpler as it is for part 2 (Intrusion Recog)
 class GenerationNetwork(nn.Module):
-    """The decoder for the Unknown Attack Recognition module (Part 2 of paper)."""
     def __init__(self, z_dim: int, num_actions: int, s_dim: int):
         super().__init__()
         self.num_actions = num_actions
         in_dim = z_dim + num_actions
-        # Symmetrical (reversed) Balanced Architecture: 32 -> 64 -> 128 -> 256
-        self.fc1 = nn.Linear(in_dim, 32)
-        self.fc2 = nn.Linear(32, 64)
-        self.fc3 = nn.Linear(64, 128)
-        self.fc4 = nn.Linear(128, 256)
+        self.fc1 = nn.Linear(in_dim, 64)
+        self.fc2 = nn.Linear(64, 128)
+        self.fc3 = nn.Linear(128, 256)
         self.out = nn.Linear(256, s_dim)
         self.act = nn.ReLU()
-        self.final_act = nn.Sigmoid() # Assumes data is scaled 0-1
-        logger.debug("GenerationNetwork initialized (Balanced)")
+        self.final_act = nn.Sigmoid()
 
     def forward(self, z: torch.Tensor, a: torch.Tensor) -> torch.Tensor:
         if a.dim() == 1 or (a.dim() == 2 and a.shape[1] == 1):
@@ -233,29 +198,31 @@ class GenerationNetwork(nn.Module):
         else:
             a_onehot = a
         x = torch.cat([z, a_onehot], dim=-1)
-        x = self.act(self.fc1(x))   
+        x = self.act(self.fc1(x))
         x = self.act(self.fc2(x))
         x = self.act(self.fc3(x))
-        x = self.act(self.fc4(x))
         s_recon = self.final_act(self.out(x))
         return s_recon
 
 
 class OpenSetQChainModelFactory:
-    """Factory to create model components based on config."""
-    def __init__(self, cfg: DictConfig):
-        self.s_dim = cfg.state_dim
-        self.z_dim = cfg.latent_dim
-        self.num_actions = cfg.num_actions
-        logger.info(
-            "Initializing models with s_dim=%s, z_dim=%s, num_actions=%s",
-            self.s_dim,
-            self.z_dim,
-            self.num_actions,
-        )
+    """Simple factory to build value/generation networks using model config."""
+
+    def __init__(self, model_cfg: DictConfig):
+        self.state_dim = int(model_cfg.state_dim)
+        self.latent_dim = int(model_cfg.latent_dim)
+        self.num_actions = int(model_cfg.num_actions)
 
     def create_value_network(self) -> ValueNetwork:
-        return ValueNetwork(self.s_dim, self.z_dim, self.num_actions)
+        return ValueNetwork(
+            s_dim=self.state_dim,
+            z_dim=self.latent_dim,
+            num_actions=self.num_actions,
+        )
 
     def create_generation_network(self) -> GenerationNetwork:
-        return GenerationNetwork(self.z_dim, self.num_actions, self.s_dim)
+        return GenerationNetwork(
+            z_dim=self.latent_dim,
+            num_actions=self.num_actions,
+            s_dim=self.state_dim,
+        )

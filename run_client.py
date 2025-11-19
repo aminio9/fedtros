@@ -10,19 +10,29 @@ from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from omegaconf import DictConfig, OmegaConf
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+SRC_PATH = PROJECT_ROOT / "src"
+
+# Ensure both the project root and the src/ directory are importable when running as a script
+for candidate in (PROJECT_ROOT, SRC_PATH):
+    candidate_str = str(candidate)
+    if candidate_str not in sys.path:
+        sys.path.insert(0, candidate_str)
+
 try:
     from src.utils import resolve_device_from_config, setup_logging
     from src.client import FlowerClient
     from src.exceptions import ConfigMismatchError
 except ImportError as err:
-    print(f"Error: Could not import from 'src'. {err}", file=sys.stderr)
-    print("Please run this script from the project root directory (dcids_federated/).", file=sys.stderr)
-    sys.exit(1)
+    print("Error: Could not import project modules.", file=sys.stderr)
+    print(f"Root cause: {err}", file=sys.stderr)
+    print("Ensure you're running from the repository root and have installed dependencies via 'poetry install'.", file=sys.stderr)
+    raise
 
 
 def resolve_project_root() -> Path:
     """Return the project root path regardless of Hydra initialization."""
-    return Path(__file__).resolve().parent
+    return PROJECT_ROOT
 
 
 def load_config(overrides: List[str]) -> DictConfig:
