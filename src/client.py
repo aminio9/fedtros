@@ -13,7 +13,7 @@ import torch
 import torch.nn.functional as F
 from flwr.common import Parameters, parameters_to_ndarrays
 from omegaconf import DictConfig
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from torch.utils.data import DataLoader, TensorDataset
 
 # get_device helper
@@ -130,8 +130,10 @@ class FlowerClient(fl.client.NumPyClient):
         param_list = (
             parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
         )
+        # Initialize with global weights before local training
         self.set_parameters(param_list)
 
+        # 1. Local training round
         num_steps_trained, metrics = run_local_training_round(
             agent=self.agent,
             env=self.env,
@@ -142,59 +144,49 @@ class FlowerClient(fl.client.NumPyClient):
             device=self.device,
         )
 
+        # 2. Optional generator training
         generator_cfg = getattr(self.cfg, "generator_training", None)
-        generator_metrics: Dict[str, float] = {}
-        evt_metrics: Dict[str, float] = {}
         if generator_cfg and bool(getattr(generator_cfg, "enabled", False)):
-            round_val = config.get("server_round")
-            try:
-                round_index = int(round_val)
-            except (TypeError, ValueError):
-                round_index = -1
             try:
                 features = self.env.all_features_s.clone()
                 labels = self.env.all_labels_a_t.clone()
-            except AttributeError:
-                logger.warning(
-                    "Client %s: environment does not expose raw features; skipping generator training.",
-                    self.cid,
-                )
-            else:
-                if self.eval_enabled and self.eval_loader is not None:
-                    logger.info(
-                        "Client %s: running closed-set evaluation before generator training (round %s).",
-                        self.cid,
-                        round_index,
-                    )
-                    _, _, pre_gen_metrics = self._evaluate_closed_set(round_index)
-                    metrics.update(
-                        {
-                            "pre_generator_closed_acc": pre_gen_metrics.get("accuracy", 0.0),
-                            "pre_generator_closed_samples": len(self.eval_loader.dataset),
-                        }
-                    )
-                logger.info(
-                    "Client %s: training generation network on %s local samples (round %s).",
-                    self.cid,
-                    features.shape[0],
-                    round_index,
-                )
-                generator_metrics = self.agent.train_generation_network(
+                gen_metrics = self.agent.train_generation_network(
                     features, labels, generator_cfg
                 )
-                evt_cfg = getattr(self.cfg, "evt", None)
-                if evt_cfg and bool(getattr(evt_cfg, "enabled", False)):
-                    logger.info("Client %s: fitting EVT models for open-set evaluation.", self.cid)
-                    evt_metrics = self._fit_evt_and_run_openset_eval(features, labels, evt_cfg)
-                else:
-                    logger.debug("Client %s: EVT evaluation disabled.", self.cid)
+                metrics.update(gen_metrics)
+            except Exception as exc:
+                logger.warning("Client %s: Generator training failed: %s", self.cid, exc)
         else:
             logger.debug("Client %s: generator training disabled.", self.cid)
 
-        if generator_metrics:
-            metrics.update(generator_metrics)
-        if evt_metrics:
+        # 3. Pre-aggregation (local) evaluation
+        logger.info(
+            "--- Client %s [Fit] Evaluating LOCAL Model (Pre-Aggregation) ---", self.cid
+        )
+        try:
+            round_int = int(round_num)
+        except (TypeError, ValueError):
+            round_int = 0
+
+        if self.eval_enabled:
+            loss, _, local_metrics = self._evaluate_closed_set(
+                round_int, prefix="LOCAL_PRE_AGG"
+            )
+            metrics.update({f"local_{k}": v for k, v in local_metrics.items()})
+            metrics["local_loss"] = loss
+
+        evt_cfg = getattr(self.cfg, "evt", None)
+        if evt_cfg and bool(getattr(evt_cfg, "enabled", False)):
+            logger.info("[Client %s - LOCAL] Running Open-Set Eval...", self.cid)
+            features = self.env.all_features_s.clone()
+            labels = self.env.all_labels_a_t.clone()
+            evt_metrics = self._fit_evt_and_run_openset_eval(
+                features, labels, evt_cfg, prefix="LOCAL_PRE_AGG"
+            )
             metrics.update(evt_metrics)
+        else:
+            logger.debug("Client %s: EVT evaluation disabled.", self.cid)
+        metrics["cid"] = self.cid
 
         updated_parameters = self.get_parameters(config={})
         return updated_parameters, num_steps_trained, metrics
@@ -208,6 +200,7 @@ class FlowerClient(fl.client.NumPyClient):
         param_list = (
             parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
         )
+        # Load aggregated weights
         self.set_parameters(param_list)
 
         try:
@@ -215,13 +208,36 @@ class FlowerClient(fl.client.NumPyClient):
         except (TypeError, ValueError):
             round_index = 0
 
+        logger.info(
+            "--- Client %s [Evaluate] Evaluating GLOBAL Model (Post-Aggregation) ---",
+            self.cid,
+        )
+        metrics: Dict[str, float] = {}
+
         if not self.eval_enabled or self.eval_loader is None:
-            logger.info(
-                "Client %s: closed-set evaluation disabled; returning placeholder metrics.", self.cid
-            )
+            logger.info("Client %s: closed-set evaluation disabled.", self.cid)
             return 0.0, 0, {}
 
-        loss, num_examples, metrics = self._evaluate_closed_set(round_index)
+        loss, num_examples, cs_metrics = self._evaluate_closed_set(
+            round_index, prefix="GLOBAL_POST_AGG"
+        )
+        metrics.update(cs_metrics)
+
+        evt_cfg = getattr(self.cfg, "evt", None)
+        if evt_cfg and bool(getattr(evt_cfg, "enabled", False)):
+            logger.info("[Client %s - GLOBAL] Running Open-Set Eval...", self.cid)
+            try:
+                features = self.env.all_features_s.clone()
+                labels = self.env.all_labels_a_t.clone()
+                evt_metrics = self._fit_evt_and_run_openset_eval(
+                    features, labels, evt_cfg, prefix="GLOBAL_POST_AGG"
+                )
+                metrics.update(evt_metrics)
+            except Exception as exc:
+                logger.error("Client %s: Global Open-Set Eval failed: %s", self.cid, exc)
+        else:
+            logger.debug("Client %s: EVT evaluation disabled.", self.cid)
+
         return loss, num_examples, metrics
 
     # ------------------------------------------------------------------
@@ -232,38 +248,28 @@ class FlowerClient(fl.client.NumPyClient):
         """Prepare dataloader and output folder for closed-set evaluation."""
         paths_cfg = getattr(self.cfg, "paths", None)
         if paths_cfg is None:
-            logger.warning("Client %s: cfg.paths missing; closed-set evaluation disabled.", self.cid)
             return
 
-        test_data_rel = getattr(paths_cfg, "closed_set_test_data", None)
+        test_data_key = f"test_closed_client_{self.cid}"
+        test_data_rel = getattr(paths_cfg, test_data_key, None)
+        if not test_data_rel:
+            test_data_rel = getattr(paths_cfg, "closed_set_test_data", None)
+
         class_names_rel = getattr(paths_cfg, "class_names", None)
-        figures_dir_rel = getattr(paths_cfg, "figures_dir", None)
-        if not (test_data_rel and class_names_rel and figures_dir_rel):
-            logger.warning(
-                "Client %s: closed-set evaluation paths not fully specified; disabled.", self.cid
-            )
+        if not (test_data_rel and class_names_rel):
+            logger.warning("Client %s: paths for %s missing.", self.cid, test_data_key)
             return
 
         test_data_path = _resolve_project_path(test_data_rel)
         class_names_path = _resolve_project_path(class_names_rel)
-        figures_dir = _resolve_project_path(figures_dir_rel) / "clients" / f"client_{self.cid}"
 
         try:
             data_device = self.device if self._move_data_to_device else torch.device("cpu")
             data = torch.load(test_data_path, map_location="cpu", weights_only=True)
             features = data["features"].to(device=data_device).float()
             labels = data["labels"].to(device=data_device).long()
-        except FileNotFoundError:
-            logger.warning(
-                "Client %s: closed-set test data not found at %s; evaluation disabled.",
-                self.cid,
-                test_data_path,
-            )
-            return
         except Exception as exc:
-            logger.error(
-                "Client %s: failed to load closed-set test data: %s", self.cid, exc, exc_info=True
-            )
+            logger.error("Client %s: failed to load closed-set test data: %s", self.cid, exc)
             return
 
         dataset = TensorDataset(features, labels)
@@ -274,13 +280,9 @@ class FlowerClient(fl.client.NumPyClient):
             class_names_path, int(self.cfg.model.num_actions)
         )
 
-        figures_dir.mkdir(parents=True, exist_ok=True)
-        self.eval_output_dir = figures_dir
         self.eval_enabled = True
         logger.info(
-            "Client %s: closed-set evaluation enabled. Saving artifacts to %s",
-            self.cid,
-            figures_dir,
+            "Client %s: Closed-set eval enabled using %s", self.cid, test_data_path.name
         )
 
     @staticmethod
@@ -325,17 +327,17 @@ class FlowerClient(fl.client.NumPyClient):
         avg_loss = total_loss / total_samples if total_samples else 0.0
         return avg_loss, np.array(all_true), np.array(all_pred)
 
-    def _save_client_report(self, round_index: int, report: str) -> None:
+    def _save_client_report(self, round_index: int, report: str, prefix: str) -> None:
         if not self.eval_output_dir:
             return
-        path = self.eval_output_dir / f"client_{self.cid}_report_round_{round_index:03d}.txt"
+        path = self.eval_output_dir / f"report_{prefix}_round_{round_index:03d}.txt"
         try:
             path.write_text(report)
-        except Exception as exc:  # pragma: no cover - filesystem errors
-            logger.warning("Client %s: failed to write evaluation report: %s", self.cid, exc)
+        except Exception:
+            pass
 
     def _plot_client_confusion_matrix(
-        self, round_index: int, y_true: np.ndarray, y_pred: np.ndarray
+        self, round_index: int, y_true: np.ndarray, y_pred: np.ndarray, prefix: str
     ) -> None:
         if not self.eval_output_dir:
             return
@@ -354,7 +356,7 @@ class FlowerClient(fl.client.NumPyClient):
         ax.set_yticklabels(self.eval_class_names)
         ax.set_xlabel("Predicted label")
         ax.set_ylabel("True label")
-        ax.set_title(f"Client {self.cid} Confusion Matrix (Round {round_index})")
+        ax.set_title(f"Client {self.cid} {prefix} CM (Round {round_index})")
 
         for i in range(cm.shape[0]):
             for j in range(cm.shape[1]):
@@ -369,55 +371,51 @@ class FlowerClient(fl.client.NumPyClient):
                     fontsize=9,
                 )
 
-        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        cbar.ax.set_ylabel("Normalized Count", rotation=270, labelpad=12)
-
         fig.tight_layout()
-        fig_path = self.eval_output_dir / f"client_{self.cid}_cm_round_{round_index:03d}.png"
+        fig_path = self.eval_output_dir / f"cm_{prefix}_round_{round_index:03d}.png"
         fig.savefig(fig_path, dpi=300)
         plt.close(fig)
 
-    def _evaluate_closed_set(self, round_index: int) -> Tuple[float, int, Dict[str, float]]:
+    def _evaluate_closed_set(
+        self, round_index: int, prefix: str = "GLOBAL"
+    ) -> Tuple[float, int, Dict[str, float]]:
         loss, y_true, y_pred = self._run_closed_set_inference()
         num_examples = int(y_true.size)
         accuracy = float((y_true == y_pred).mean()) if num_examples else 0.0
+        f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
 
         if num_examples == 0:
-            logger.warning("Client %s: closed-set evaluation has no samples.", self.cid)
-            return loss, 0, {"accuracy": accuracy}
+            return loss, 0, {"accuracy": accuracy, "f1_macro": 0.0}
 
         report = classification_report(
             y_true, y_pred, target_names=self.eval_class_names, digits=4, zero_division=0
         )
-        self._save_client_report(round_index, report)
-        self._plot_client_confusion_matrix(round_index, y_true, y_pred)
+        self._save_client_report(round_index, report, prefix)
+        self._plot_client_confusion_matrix(round_index, y_true, y_pred, prefix)
 
-        logger.info(
-            "Client %s: closed-set evaluation round %s | loss=%.4f | accuracy=%.4f | samples=%s",
-            self.cid,
-            round_index,
-            loss,
-            accuracy,
-            num_examples,
-        )
-        logger.debug("Client %s evaluation report (round %s):\n%s", self.cid, round_index, report)
+        logger.info(f"\n[Client {self.cid} | {prefix}] Closed-Set Report:\n{report}")
 
-        return loss, num_examples, {"accuracy": accuracy}
+        return loss, num_examples, {"accuracy": accuracy, "f1_macro": f1}
 
     def _fit_evt_and_run_openset_eval(
-        self, features: torch.Tensor, labels: torch.Tensor, evt_cfg: DictConfig
+        self,
+        features: torch.Tensor,
+        labels: torch.Tensor,
+        evt_cfg: DictConfig,
+        prefix: str = "GLOBAL",
     ) -> Dict[str, float]:
         paths_cfg = getattr(self.cfg, "paths", None)
         if paths_cfg is None:
-            logger.warning("Client %s: cfg.paths missing; skipping EVT pipeline.", self.cid)
             return {}
 
-        open_set_rel = getattr(paths_cfg, "open_set_test_data", None)
+        test_open_key = f"test_open_client_{self.cid}"
+        open_set_rel = getattr(paths_cfg, test_open_key, None)
+        if not open_set_rel:
+            open_set_rel = getattr(paths_cfg, "open_set_test_data", None)
+
         class_names_rel = getattr(paths_cfg, "class_names", None)
         if not (open_set_rel and class_names_rel):
-            logger.warning(
-                "Client %s: open-set paths missing; skipping EVT-based evaluation.", self.cid
-            )
+            logger.warning("Client %s: open-set paths missing for %s", self.cid, test_open_key)
             return {}
 
         try:
@@ -436,7 +434,7 @@ class FlowerClient(fl.client.NumPyClient):
             logger.exception("Client %s: EVT fitting failed.", self.cid)
             return {}
 
-        evt_model_path = self.evt_output_dir / "evt_models.pkl"
+        evt_model_path = self.evt_output_dir / f"evt_models_{prefix}.pkl"
         save_evt_collection(evt_models, evt_model_path)
 
         try:
@@ -458,40 +456,25 @@ class FlowerClient(fl.client.NumPyClient):
 
         default_delta = float(getattr(evt_cfg, "decision_threshold", 0.1))
         meta.setdefault("global_delta", default_delta)
-        save_evt_meta(meta, self.evt_output_dir / "evt_meta.json")
+        save_evt_meta(meta, self.evt_output_dir / f"evt_meta_{prefix}.json")
 
         open_set_path = _resolve_project_path(open_set_rel)
-        if not open_set_path.exists():
-            logger.warning(
-                "Client %s: open-set test data missing at %s; skipping evaluation.",
-                self.cid,
-                open_set_path,
-            )
-            return {}
-
         class_names_path = _resolve_project_path(class_names_rel)
+
         try:
             with open(class_names_path, "r", encoding="utf-8") as fh:
                 class_map = {int(k): v for k, v in json.load(fh).items()}
-        except FileNotFoundError:
-            logger.warning(
-                "Client %s: class-names file missing at %s; skipping open-set evaluation.",
-                self.cid,
-                class_names_path,
-            )
-            return {}
 
-        data = torch.load(
-            open_set_path,
-            map_location="cpu",
-            weights_only=True,
-        )
-        open_features = data["features"].to(
-            device=self.device if self._move_data_to_device else torch.device("cpu")
-        ).float()
-        open_labels = data["labels"].to(
-            device=self.device if self._move_data_to_device else torch.device("cpu")
-        ).long()
+            data = torch.load(open_set_path, map_location="cpu", weights_only=True)
+            open_features = data["features"].to(
+                device=self.device if self._move_data_to_device else torch.device("cpu")
+            ).float()
+            open_labels = data["labels"].to(
+                device=self.device if self._move_data_to_device else torch.device("cpu")
+            ).long()
+        except Exception as exc:
+            logger.error("Client %s: Error loading open set data: %s", self.cid, exc)
+            return {}
 
         metrics = evaluate_open_set(
             features=open_features,
@@ -506,6 +489,12 @@ class FlowerClient(fl.client.NumPyClient):
             class_names=class_map,
             output_dir=self.openset_output_dir,
             device=self.device,
-            report_to_stdout=False,
+            report_to_stdout=True,
+        )
+        logger.info(
+            "[Client %s | %s] Open-Set AUROC: %.4f",
+            self.cid,
+            prefix,
+            metrics.get("openset_auroc", 0.0),
         )
         return metrics

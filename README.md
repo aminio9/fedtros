@@ -6,11 +6,11 @@ Optional subtitle: *A Privacy-Preserving Intrusion Detection Framework Using Dis
 ## Overview
 FedOSQ-Chain is a federated CVAE-DQN framework for intrusion detection on blockchain network traffic. Clients train locally, share weights via Flower (FedAvg/FedProx), and perform open-set recognition by reconstructing traffic and rejecting high reconstruction errors using EVT. No raw traffic leaves the node.
 
-**Key pieces**
+<!-- **Key pieces**
 - CVAE-DQN prior/encoder + dueling Q-head for action selection.
 - Federated training of prior, recognition, main Q, and generator weights.
 - Generator trains every round on correctly classified samples.
-- EVT on reconstruction errors for Unknown attack detection.
+- EVT on reconstruction errors for Unknown attack detection. -->
 
 ## Requirements
 - Python 3.12+
@@ -23,12 +23,38 @@ poetry install
 ```
 
 ## Data prep
-Place processed tensors in `data/processed/`:
-- `client_1_train.pt`, `client_2_train.pt`, `client_3_train.pt`
-- `closed_set_test.pt` (held-out known traffic)
-- `open_set_test.pt` (known + unknown for EVT/open-set eval)
+All tensors are produced by the refactored multi-source preprocessor. It reads raw CSVs,
+splits them per-client, and emits train/closed-set/open-set tensors plus the class map.
 
-Each file should be a PyTorch dict: `{"features": Tensor, "labels": Tensor}`.
+1. **Point the config at your raw data**
+   - Edit the `preprocess:` block in `conf/config_fl.yaml`.
+   - `sources` must map each logical client (`client_1`, `client_2`, …) to a CSV path.
+   - Update `numerical_cols`, `categorical_cols`, `label_column`, and `known_labels`
+     to match the schema of your CSVs.
+
+2. **Run the multi-source script**
+   ```bash
+   poetry run python preprocess_multisource.py
+   ```
+   Hydra loads `conf/config_fl.yaml`, so any overrides can be passed CLI-style
+   (e.g., `poetry run python preprocess_multisource.py preprocess.sources.client_1=/path/foo.csv`).
+
+   The script writes to `preprocess.output_dir` (default `data/processed/`):
+   - `client_<cid>_train.pt`
+   - `client_<cid>_test_closed.pt`
+   - `client_<cid>_test_open.pt`
+   - `class_names.json`
+
+   It prints the detected `state_dim` and `num_actions`; copy those values into the
+   `env_metadata` block before training.
+
+3. **Wire the tensors into the federated config**
+   - `paths.data_client_<cid>` must point to each client’s `*_train.pt`.
+   - `paths.test_closed_client_<cid>` and `paths.test_open_client_<cid>` must reference the
+     closed/open tensors produced for that client.
+   - `paths.class_names` should point to the generated `class_names.json`.
+
+Each `.pt` file is a PyTorch dict with `{"features": Tensor, "labels": Tensor}`.
 
 ## Configure
 Edit `conf/config_fl.yaml`:
@@ -60,7 +86,7 @@ poetry run python run_client.py --cid 3 --data_path data/processed/client_3_trai
 ```
 Logs go to `logs/`. Figures and reports go to `figures/` and `figures/clients/client_<cid>/`.
 
-## GPU usage
+<!-- ## GPU usage
 - Set `device.prefer: "cuda"` in `conf/config_fl.yaml` (or export `FEDOSQ_DEVICE=cuda`) to force GPU selection; set `allow_cpu_fallback: false` to fail fast if CUDA is missing.
 - Enable `device.move_data_to_device: true` if you want dataset tensors kept on GPU alongside models (uses more memory but avoids repeated host/device copies).
 - On AMD/Intel GPUs (e.g., Ryzen 3500U + Radeon Vega 8) install `torch-directml` and set `device.prefer: "directml"` (or `FEDOSQ_DEVICE=directml`). PyTorch will use DirectML, and logs will print the selected adapter name/version.
@@ -76,10 +102,10 @@ Logs go to `logs/`. Figures and reports go to `figures/` and `figures/clients/cl
 ## Open-set detection logic (EVT on reconstruction error)
 1. Predict class with main Q-network.
 2. Reconstruct using predicted label; compute reconstruction error.
-3. EVT models (per known class) score the error; if above threshold, relabel as Unknown.
+3. EVT models (per known class) score the error; if above threshold, relabel as Unknown. -->
 
-## Repository naming
-- Repository: **FedOSQ-Chain**
+<!-- ## Repository naming
+- Repository: **FedOSQ-Chain** -->
 <!-- - Python package: `fedosq_chain` (code currently lives under `src/`; keep the existing import paths).
 
 ## Citation (template)
