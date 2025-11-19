@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from .evt import EVTModel, load_evt_collection, load_evt_meta, save_evt_collection, save_evt_meta
 from .models import OpenSetQChainModelFactory
-from .utils import resolve_device_from_config
+from .utils import resolve_device_from_config, to_one_hot
 
 logger = logging.getLogger("OpenSetEval")
 
@@ -59,7 +59,7 @@ def _compute_reconstruction_errors(
             mu_p, _ = prior_net(states_s)
             preds = value_net_main(mu_p, states_s).argmax(dim=1)
 
-            a_onehot = F.one_hot(preds, num_classes=value_net_main.num_actions).float()
+            a_onehot = to_one_hot(preds, value_net_main.num_actions)
             mu_q, _ = recognition_net(states_s, a_onehot)
             s_recon = generation_net(mu_q, a_onehot)
             errs = loss_fn(s_recon, states_s).mean(dim=1)
@@ -158,7 +158,7 @@ def calibrate_evt_thresholds(
             lbls = lbls.to(device)
             mu_p, _ = prior_net(states_s)
             preds = value_net_main(mu_p, states_s).argmax(dim=1)
-            one_hot = F.one_hot(preds, num_classes=value_net_main.num_actions).float()
+            one_hot = to_one_hot(preds, value_net_main.num_actions)
             mu_r, _ = recognition_net(states_s, one_hot)
             recon = generation_net(mu_r, one_hot)
             errs = loss_fn(recon, states_s).mean(dim=1)
@@ -262,7 +262,7 @@ def evaluate_open_set(
             preds = value_net_main(mu_p, states_s).argmax(dim=1)
             pre_evt_preds.extend(preds.cpu().numpy())
 
-            one_hot = F.one_hot(preds, num_classes=value_net_main.num_actions).float()
+            one_hot = to_one_hot(preds, value_net_main.num_actions)
             mu_q, _ = recognition_net(states_s, one_hot)
             recon = generation_net(mu_q, one_hot)
             errs = loss_fn(recon, states_s).mean(dim=1)

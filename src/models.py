@@ -29,32 +29,52 @@ class ResidualBlock(nn.Module):
         return x + self.block(x)
 
 
-class SelfAttentionBlock(nn.Module):
-    """Project features into tokens and mix them via multi-head self-attention."""
+# class SelfAttentionBlock(nn.Module):
+#     """Project features into tokens and mix them via multi-head self-attention."""
 
-    def __init__(self, input_dim: int, num_tokens: int = 4, token_dim: int = 32, num_heads: int = 4):
+#     def __init__(self, input_dim: int, num_tokens: int = 4, token_dim: int = 32, num_heads: int = 4):
+#         super().__init__()
+#         self.num_tokens = num_tokens
+#         self.token_dim = token_dim
+#         self.proj = nn.Linear(input_dim, num_tokens * token_dim)
+#         self.attn = nn.MultiheadAttention(token_dim, num_heads, batch_first=True)
+#         self.out = nn.Sequential(
+#             nn.Linear(num_tokens * token_dim, input_dim),
+#             nn.LayerNorm(input_dim),
+#         )
+#         self._dml_fallback_enabled = True
+
+#     def forward(self, x: torch.Tensor) -> torch.Tensor:
+#         batch_size = x.shape[0]
+#         tokens = self.proj(x).view(batch_size, self.num_tokens, self.token_dim)
+#         if self._dml_fallback_enabled and x.device.type in {"dml", "directml", "privateuseone"}:
+#             # DirectML does not support multi-head attention; keep projection only.
+#             mixed = tokens.reshape(batch_size, -1)
+#         else:
+#             attn_out, _ = self.attn(tokens, tokens, tokens)
+#             mixed = attn_out.reshape(batch_size, -1)
+#         attn_out = self.out(mixed)
+#         return x + attn_out
+
+
+class GatedMLPBlock(nn.Module):
+    """Feed-forward mixer with residual skip; replaces attention for light-weight mixing."""
+
+    def __init__(self, dim: int, hidden_mult: int = 4, dropout: float = 0.1):
         super().__init__()
-        self.num_tokens = num_tokens
-        self.token_dim = token_dim
-        self.proj = nn.Linear(input_dim, num_tokens * token_dim)
-        self.attn = nn.MultiheadAttention(token_dim, num_heads, batch_first=True)
-        self.out = nn.Sequential(
-            nn.Linear(num_tokens * token_dim, input_dim),
-            nn.LayerNorm(input_dim),
+        hidden_dim = dim * hidden_mult
+        self.net = nn.Sequential(
+            nn.LayerNorm(dim),
+            nn.Linear(dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
         )
-        self._dml_fallback_enabled = True
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        batch_size = x.shape[0]
-        tokens = self.proj(x).view(batch_size, self.num_tokens, self.token_dim)
-        if self._dml_fallback_enabled and x.device.type in {"dml", "directml", "privateuseone"}:
-            # DirectML does not support multi-head attention; keep projection only.
-            mixed = tokens.reshape(batch_size, -1)
-        else:
-            attn_out, _ = self.attn(tokens, tokens, tokens)
-            mixed = attn_out.reshape(batch_size, -1)
-        attn_out = self.out(mixed)
-        return x + attn_out
+        return x + self.net(x)
 
 
 class PriorNetwork(nn.Module):
@@ -136,7 +156,8 @@ class MainQNetwork(nn.Module):
         self.fc1 = nn.Linear(in_dim, 256)
         self.fc2 = nn.Linear(256, 128)
         self.norm = nn.LayerNorm(128)
-        self.attn_block = SelfAttentionBlock(128, num_tokens=4, token_dim=32, num_heads=4)
+        # self.attn_block = SelfAttentionBlock(128, num_tokens=4, token_dim=32, num_heads=4)  # kept for reference
+        self.feature_mixer = GatedMLPBlock(128, hidden_mult=4, dropout=0.1)
 
         self.value_fc1 = nn.Linear(128, 64)
         self.value_fc2 = nn.Linear(64, 1)
@@ -150,7 +171,8 @@ class MainQNetwork(nn.Module):
         x = self.act(self.fc1(x))
         x = self.act(self.fc2(x))
         x = self.norm(x)
-        x = self.attn_block(x)
+        # x = self.attn_block(x)  # self-attention disabled; using feed-forward mixer instead
+        x = self.feature_mixer(x)
 
         value = self.act(self.value_fc1(x))
         value = self.value_fc2(value)
