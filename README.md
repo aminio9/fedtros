@@ -1,10 +1,10 @@
 ﻿# FedOSQ-Chain
 
 **FedOSQ-Chain: Federated Multi-Agent Reinforcement Deep Q-Learning for Open-Set Recognition in Blockchain Network Traffic**  
-Optional subtitle: *A Privacy-Preserving Intrusion Detection Framework Using Distributed Q-Learning and Conditional Variational Autoencoding*
+<!-- Optional subtitle: *A Privacy-Preserving Intrusion Detection Framework Using Distributed Q-Learning and Conditional Variational Autoencoding* -->
 
-## Overview
-FedOSQ-Chain is a federated CVAE-DQN framework for intrusion detection on blockchain network traffic. Clients train locally, share weights via Flower (FedAvg/FedProx), and perform open-set recognition by reconstructing traffic and rejecting high reconstruction errors using EVT. No raw traffic leaves the node.
+<!-- ## Overview
+FedOSQ-Chain is a federated CVAE-DQN framework for intrusion detection on blockchain network traffic. Clients train locally, share weights via Flower (FedAvg/FedProx), and perform open-set recognition by reconstructing traffic and rejecting high reconstruction errors using EVT. No raw traffic leaves the node. -->
 
 <!-- **Key pieces**
 - CVAE-DQN prior/encoder + dueling Q-head for action selection.
@@ -22,7 +22,7 @@ pip install poetry
 poetry install
 ```
 
-## Data prep
+<!-- ## Data prep
 All tensors are produced by the refactored multi-source preprocessor. It reads raw CSVs,
 splits them per-client, and emits train/closed-set/open-set tensors plus the class map.
 
@@ -54,9 +54,9 @@ splits them per-client, and emits train/closed-set/open-set tensors plus the cla
      closed/open tensors produced for that client.
    - `paths.class_names` should point to the generated `class_names.json`.
 
-Each `.pt` file is a PyTorch dict with `{"features": Tensor, "labels": Tensor}`.
+Each `.pt` file is a PyTorch dict with `{"features": Tensor, "labels": Tensor}`. -->
 
-## Configure
+<!-- ## Configure
 Edit `conf/config_fl.yaml`:
 ```yaml
 env_metadata:
@@ -67,7 +67,7 @@ server:
   num_rounds: 25   # federated rounds
   proximal_mu: 0.0 # FedAvg (set >0 for FedProx)
 ```
-Adjust `training`, `generator_training`, and `evt` blocks as needed. Paths must point to your processed data and artifact directories.
+Adjust `training`, `generator_training`, and `evt` blocks as needed. Paths must point to your processed data and artifact directories. -->
 
 ## Run (1 server + 3 clients)
 Use four terminals:
