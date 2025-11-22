@@ -25,7 +25,6 @@ except ImportError:  # pragma: no cover - standalone usage
 try:
     from .agent import Agent
     from .environment import BlockchainIntrusionEnv
-    from .exceptions import ConfigMismatchError
     from .local_training import run_local_training_round
     from .models import OpenSetQChainModelFactory
     from .openset_eval import calibrate_evt_thresholds, evaluate_open_set, fit_evt_models
@@ -35,7 +34,6 @@ try:
 except ImportError:  # pragma: no cover - standalone usage
     from agent import Agent
     from environment import BlockchainIntrusionEnv
-    from exceptions import ConfigMismatchError
     from local_training import run_local_training_round
     from models import OpenSetQChainModelFactory
     from openset_eval import calibrate_evt_thresholds, evaluate_open_set, fit_evt_models
@@ -80,11 +78,11 @@ class FlowerClient(fl.client.NumPyClient):
             cfg.model.state_dim != self.env.feature_dim
             or cfg.model.num_actions != self.env.num_actions_nt
         ):
-            raise ConfigMismatchError(
+            raise ValueError(
                 f"Config/Env mismatch on client {cid}. "
                 f"Config (s:{cfg.model.state_dim}, a:{cfg.model.num_actions}), "
                 f"Env (s:{self.env.feature_dim}, a:{self.env.num_actions_nt}). "
-            "Ensure 'env_metadata' in 'config_fl.yaml' matches your processed data."
+                "Ensure 'env_metadata' in 'config_fl.yaml' matches your processed data."
             )
 
         self.agent = Agent(self.model_factory, cfg.training, self.device)
