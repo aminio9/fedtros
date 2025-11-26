@@ -13,9 +13,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 # try:
-import torch_directml  # type: ignore
+# import torch_directml  # type: ignore
 # except ImportError:  # pragma: no cover - optional dependency
-# torch_directml = None  # type: ignore
+torch_directml = None  # type: ignore
 
 # --- VAE Constants ---
 LOGVAR_MIN, LOGVAR_MAX = -6.0, 2.0

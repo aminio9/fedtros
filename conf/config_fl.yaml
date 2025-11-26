@@ -81,7 +81,9 @@ preprocess:
   num_clients: 3
   num_shards: 3
   closed_set_test_size: 0.2
-  raw_file: "data/raw/Bnat.csv"
+  # raw_file: "data/raw/Bnat.csv"
+  raw_file: "/content/drive/MyDrive/Bnat.csv"
+
 
   # sources:
   #   client_1: "data/raw/w1.csv"
