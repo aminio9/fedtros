@@ -36,7 +36,7 @@ env_metadata:
 
 model:
   state_dim: ${env_metadata.state_dim}
-  latent_dim: 16
+  latent_dim: 32
   num_actions: ${env_metadata.num_actions}
 
 training:
@@ -45,7 +45,7 @@ training:
   replay_buffer_size: 50000
   min_buffer_size: 1024
   batch_size: 512
-  gamma: 0.99
+  gamma: 0.7
   lr_prior: 0.001
   lr_q_rl: 0.001
   tau: 0.01
