@@ -53,30 +53,12 @@ def run_preprocessing(cfg: DictConfig):
         output_dir = resolve_path(p_cfg.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Support both a single CSV (raw_file) and a dict/list of sources.
-        sources = []
-        if hasattr(p_cfg, "raw_file"):
-            sources.append(("single", resolve_path(p_cfg.raw_file)))
-        elif hasattr(p_cfg, "sources"):
-            src_cfg = p_cfg.sources
-            if isinstance(src_cfg, dict):
-                sources = [(str(k), resolve_path(v)) for k, v in src_cfg.items()]
-            else:
-                sources = [(str(i), resolve_path(path)) for i, path in enumerate(src_cfg)]
+        raw_file = resolve_path(p_cfg.raw_file)
+        if not raw_file.exists():
+            raise FileNotFoundError(f"Raw data file not found: {raw_file}")
 
-        if not sources:
-            raise FileNotFoundError("No raw_file or preprocess.sources provided.")
-
-        frames = []
-        for source_id, file_path in sources:
-            if not file_path.exists():
-                raise FileNotFoundError(f"Raw data file not found: {file_path}")
-            df_part = pd.read_csv(file_path, low_memory=False)
-            frames.append(df_part)
-            logger.info("Loaded %s (%s rows) from %s", source_id, len(df_part), file_path)
-
-        df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
-        logger.info("Combined dataset rows: %d (sources=%d)", len(df), len(frames))
+        df = pd.read_csv(raw_file, low_memory=False)
+        logger.info("Loaded %s with %d rows.", raw_file, len(df))
     except FileNotFoundError as exc:
         logger.critical(f"FATAL: Raw data file not found: {exc}")
         logger.critical("Please download the data and place it in 'data/raw/'.")
@@ -164,14 +146,14 @@ def run_preprocessing(cfg: DictConfig):
     # Explicit shared alias for clarity across clients
     save_as_torch(X_test_closed, y_test_closed, output_dir / "shared_closed_set_test.pt")
 
-    num_clients = p_cfg.num_clients
-    logger.info(f"Splitting KNOWN training data for {num_clients} clients...")
+    shard_count = int(getattr(p_cfg, "num_shards", p_cfg.num_clients))
+    logger.info(f"Splitting KNOWN training data into {shard_count} client shards...")
 
     indices = np.random.permutation(len(X_train_known))
     X_train_known, y_train_known = X_train_known[indices], y_train_known[indices]
-    client_indices = np.array_split(range(len(X_train_known)), num_clients)
+    client_indices = np.array_split(range(len(X_train_known)), shard_count)
 
-    for i in range(num_clients):
+    for i in range(shard_count):
         client_id = i + 1
         client_idx_set = client_indices[i]
         X_client = X_train_known[client_idx_set]
