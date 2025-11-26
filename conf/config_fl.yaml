@@ -130,7 +130,5 @@ hydra:
     subdir: "."
   output_subdir: null
   job_logging:
-    handlers:
-      file: null
     root:
       handlers: [console]
