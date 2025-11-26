@@ -29,8 +29,8 @@ splits them per-client, and emits train/closed-set/open-set tensors plus the cla
 1. **Point the config at your raw data**
    - Edit the `preprocess:` block in `conf/config_fl.yaml`.
    - `sources` must map each logical client (`client_1`, `client_2`, …) to a CSV path.
-   - Update `numerical_cols`, `categorical_cols`, `label_column`, and `known_labels`
-     to match the schema of your CSVs.
+   - Set `label_column` and `known_labels` to match your CSVs; numerical vs. categorical
+     features are inferred automatically from all other columns.
 
 2. **Run the multi-source script**
    ```bash

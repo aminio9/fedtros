@@ -1,7 +1,7 @@
 ﻿log_level: "INFO"
 
 device:
-  prefer: "directml" # Options: "cuda", "cpu", "directml"
+  prefer: "cuda" # Options: "cuda", "cpu", "directml"
   allow_cpu_fallback: true
   move_data_to_device: true
 
@@ -84,38 +84,7 @@ preprocess:
   # raw_file: "data/raw/Bnat.csv"
   raw_file: "/content/drive/MyDrive/Bnat.csv"
 
-
-  # sources:
-  #   client_1: "data/raw/w1.csv"
-  #   client_2: "data/raw/w2.csv"
-  #   client_3: "data/raw/w3.csv"
-
   label_column: "label"
-  
-  categorical_cols:
-    - "protocol_type"
-    - "service"
-    - "flag"
-    
-  numerical_cols:
-    - "duration"
-    - "src_bytes"
-    - "dst_bytes"
-    - "count"
-    - "srv_count"
-    - "serror_rate"
-    - "same_srv_rate"
-    - "diff_srv_rate"
-    - "srv_serror_rate"
-    - "srv_diff_host_rate"
-    - "dst_host_count"
-    - "dst_host_srv_count"
-    - "dst_host_same_srv_rate"
-    - "dst_host_diff_srv_rate"
-    - "dst_host_same_src_port_rate"
-    - "dst_host_serror_rate"
-    - "dst_host_srv_diff_host_rate"
-    - "dst_host_srv_serror_rate"
 
   known_labels:
     - "Normal"

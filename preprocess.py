@@ -20,6 +20,25 @@ except ImportError:
 logger = logging.getLogger("Preprocess")
 
 
+def _infer_feature_columns(df: pd.DataFrame, label_col: str, numeric_threshold: float = 0.9):
+    feature_cols = [c for c in df.columns if c != label_col]
+    if not feature_cols:
+        raise ValueError("No feature columns remain after excluding the label column.")
+
+    num_cols = []
+    cat_cols = []
+    for col in feature_cols:
+        series = df[col]
+        coerced = pd.to_numeric(series, errors="coerce")
+        non_null = int(series.notna().sum())
+        numeric_frac = (coerced.notna().sum() / max(non_null, 1)) if non_null else 0.0
+        if numeric_frac >= numeric_threshold:
+            num_cols.append(col)
+        else:
+            cat_cols.append(col)
+    return num_cols, cat_cols
+
+
 def save_as_torch(features: np.ndarray, labels: np.ndarray, path: Path):
     """Saves features and labels as a PyTorch tensor file."""
     try:
@@ -69,18 +88,18 @@ def run_preprocessing(cfg: DictConfig):
 
     try:
         label_col = p_cfg.label_column
-        cat_cols = list(p_cfg.categorical_cols)
-        num_cols = list(p_cfg.numerical_cols)
-        all_cols = [label_col] + cat_cols + num_cols
-
-        missing_cols = [col for col in all_cols if col not in df.columns]
-        if missing_cols:
-            logger.critical(f"FATAL: Columns from config not in CSV: {missing_cols}")
-            logger.critical("Please check 'preprocess' section in 'config_fl.yaml'.")
-            sys.exit(1)
-        logger.info("Column configuration validated.")
+        if label_col not in df.columns:
+            raise KeyError(f"Label column '{label_col}' not found in CSV.")
+        num_cols, cat_cols = _infer_feature_columns(df, label_col)
+        logger.info(
+            "Inferred feature columns | numerical=%d | categorical=%d",
+            len(num_cols),
+            len(cat_cols),
+        )
+        logger.debug("Numerical columns: %s", num_cols)
+        logger.debug("Categorical columns: %s", cat_cols)
     except Exception as e:
-        logger.critical(f"FATAL: Config error in column definitions: {e}")
+        logger.critical(f"FATAL: Failed to infer columns: {e}")
         sys.exit(1)
 
     known_labels_list = list(p_cfg.known_labels)
@@ -94,6 +113,12 @@ def run_preprocessing(cfg: DictConfig):
     logger.info("Total data split:")
     logger.info(f"  -> {len(df_known)} samples for 'Known' (Closed-Set) Training/Testing")
     logger.info(f"  -> {len(df_unknown)} samples for 'Unknown' (Open-Set) Testing")
+    logger.info(
+        "Dataset features inferred: %d numerical, %d categorical, label='%s'",
+        len(num_cols),
+        len(cat_cols),
+        label_col,
+    )
 
     if len(df_known) == 0:
         logger.critical("FATAL: No 'Known' samples found. Check 'known_labels' in config.")
@@ -108,24 +133,43 @@ def run_preprocessing(cfg: DictConfig):
         logger.error(f"Failed to save class_names.json: {exc}", exc_info=True)
 
     logger.info("Fitting Scaler and Encoder on KNOWN data...")
-    scaler = MinMaxScaler()
-    encoder = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
+    scaler = MinMaxScaler() if num_cols else None
+    encoder = OneHotEncoder(handle_unknown="ignore", sparse_output=False) if cat_cols else None
 
-    scaler.fit(df_known[num_cols])
-    encoder.fit(df_known[cat_cols])
+    def _num_array(frame: pd.DataFrame) -> np.ndarray:
+        if not num_cols:
+            return np.empty((len(frame), 0), dtype=np.float32)
+        return (
+            frame[num_cols]
+            .apply(pd.to_numeric, errors="coerce")
+            .fillna(0.0)
+            .to_numpy(dtype=np.float32)
+        )
 
-    cat_feature_count = encoder.get_feature_names_out().shape[0]
+    def _cat_array(frame: pd.DataFrame) -> pd.DataFrame:
+        if not cat_cols:
+            return pd.DataFrame(index=frame.index)
+        return frame[cat_cols].fillna("UNK").astype(str)
+
+    if scaler:
+        scaler.fit(_num_array(df_known))
+    if encoder:
+        encoder.fit(_cat_array(df_known))
+
+    cat_feature_count = encoder.get_feature_names_out().shape[0] if encoder else 0
     state_dim = len(num_cols) + cat_feature_count
     logger.info(f"Scaler fit on {len(num_cols)} numerical features.")
-    logger.info(f"Encoder fit on {len(cat_cols)} categorical features, resulting in {cat_feature_count} one-hot features.")
+    logger.info(
+        f"Encoder fit on {len(cat_cols)} categorical features, resulting in {cat_feature_count} one-hot features."
+    )
 
     logger.info("Processing KNOWN data...")
-    num_scaled_known = scaler.transform(df_known[num_cols])
-    cat_encoded_known = encoder.transform(df_known[cat_cols])
-    features_known = np.concatenate(
-        [num_scaled_known, cat_encoded_known],
-        axis=1,
-    ).astype(np.float32)
+    num_scaled_known = scaler.transform(_num_array(df_known)) if scaler else _num_array(df_known)
+    cat_encoded_known = encoder.transform(_cat_array(df_known)) if encoder else np.empty((len(df_known), 0))
+    parts_known = [arr for arr in (num_scaled_known, cat_encoded_known) if arr.shape[1] > 0]
+    if not parts_known:
+        raise RuntimeError("No usable feature columns found after preprocessing (known split).")
+    features_known = np.concatenate(parts_known, axis=1).astype(np.float32)
     labels_known = df_known[label_col].map(label_map).values
 
     X_train_known, X_test_closed, y_train_known, y_test_closed = train_test_split(
@@ -176,13 +220,15 @@ def run_preprocessing(cfg: DictConfig):
 
     if len(df_unknown) > 0:
         logger.info("Processing UNKNOWN data for open-set evaluation...")
-        num_scaled_unknown = scaler.transform(df_unknown[num_cols])
-        cat_encoded_unknown = encoder.transform(df_unknown[cat_cols])
+        num_scaled_unknown = scaler.transform(_num_array(df_unknown)) if scaler else _num_array(df_unknown)
+        cat_encoded_unknown = (
+            encoder.transform(_cat_array(df_unknown)) if encoder else np.empty((len(df_unknown), 0))
+        )
 
-        features_unknown = np.concatenate(
-            [num_scaled_unknown, cat_encoded_unknown],
-            axis=1,
-        ).astype(np.float32)
+        parts_unknown = [arr for arr in (num_scaled_unknown, cat_encoded_unknown) if arr.shape[1] > 0]
+        if not parts_unknown:
+            raise RuntimeError("No usable feature columns found after preprocessing (unknown split).")
+        features_unknown = np.concatenate(parts_unknown, axis=1).astype(np.float32)
         labels_unknown = np.full(len(df_unknown), -1, dtype=np.int64)
 
         open_features = np.concatenate([open_features, features_unknown], axis=0)
