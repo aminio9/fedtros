@@ -6,20 +6,14 @@ device:
   move_data_to_device: true
 
 paths:
-  # Client 1
+  # Shared evaluation tensors (identical for all clients)
+  closed_set_test_data: "data/processed/shared_closed_set_test.pt"
+  open_set_test_data: "data/processed/shared_open_set_test.pt"
+
+  # Client training splits
   data_client_1: "data/processed/client_1_train.pt"
-  test_closed_client_1: "data/processed/client_1_test_closed.pt"
-  test_open_client_1: "data/processed/client_1_test_open.pt"
-
-  # Client 2
   data_client_2: "data/processed/client_2_train.pt"
-  test_closed_client_2: "data/processed/client_2_test_closed.pt"
-  test_open_client_2: "data/processed/client_2_test_open.pt"
-
-  # Client 3
   data_client_3: "data/processed/client_3_train.pt"
-  test_closed_client_3: "data/processed/client_3_test_closed.pt"
-  test_open_client_3: "data/processed/client_3_test_open.pt"
 
   model_dir: "models/federated_global" 
   class_names: "data/processed/class_names.json"
@@ -87,8 +81,6 @@ preprocess:
   num_clients: 3
   closed_set_test_size: 0.2
 
-  # --- NEW SECTION: Source Files Map ---
-  # Maps client_id to source CSV path
   sources:
     client_1: "data/raw/w1.csv"
     client_2: "data/raw/w2.csv"
@@ -127,3 +119,16 @@ preprocess:
     - "DoS"
     - "FoT"
     - "MitM"
+
+hydra:
+  run:
+    dir: .
+  sweep:
+    dir: .
+    subdir: "."
+  output_subdir: null
+  job_logging:
+    handlers:
+      file: null
+    root:
+      handlers: [console]

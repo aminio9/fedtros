@@ -93,13 +93,13 @@ class FlowerClient(fl.client.NumPyClient):
         self.epsilon_scheduler = EpsilonScheduler(cfg.training)
 
         figures_root = _resolve_project_path(getattr(cfg.paths, "figures_dir", "figures"))
-        self.client_figure_dir = figures_root / "clients" / f"client_{cid}"
+        self.client_figure_dir: Path = figures_root / "clients" / f"client_{cid}"
         self.client_figure_dir.mkdir(parents=True, exist_ok=True)
 
         evt_root = _resolve_project_path(getattr(cfg.paths, "evt_dir", "evt"))
-        self.evt_output_dir = evt_root / f"client_{cid}"
+        self.evt_output_dir: Path = evt_root / f"client_{cid}"
         self.evt_output_dir.mkdir(parents=True, exist_ok=True)
-        self.openset_output_dir = self.client_figure_dir / "openset"
+        self.openset_output_dir: Path = self.client_figure_dir / "openset"
         self.openset_output_dir.mkdir(parents=True, exist_ok=True)
 
         # Closed-set evaluation artifacts
@@ -107,6 +107,8 @@ class FlowerClient(fl.client.NumPyClient):
         self.eval_loader: Optional[DataLoader] = None
         self.eval_class_names: List[str] = []
         self.eval_output_dir: Optional[Path] = self.client_figure_dir
+        self.closed_set_data_path: Optional[Path] = None
+        self.open_set_data_path: Optional[Path] = None
         self._init_closed_set_evaluation()
 
         logger.info("Client %s: Initialization complete.", cid)
@@ -172,6 +174,9 @@ class FlowerClient(fl.client.NumPyClient):
             )
             metrics.update({f"local_{k}": v for k, v in local_metrics.items()})
             metrics["local_loss"] = loss
+            metrics["local_closed_examples"] = local_metrics.get("num_examples", 0)
+            if self.closed_set_data_path:
+                metrics["closed_set_dataset"] = self.closed_set_data_path.name
 
         evt_cfg = getattr(self.cfg, "evt", None)
         if evt_cfg and bool(getattr(evt_cfg, "enabled", False)):
@@ -220,6 +225,9 @@ class FlowerClient(fl.client.NumPyClient):
             round_index, prefix="GLOBAL_POST_AGG"
         )
         metrics.update(cs_metrics)
+        metrics["global_closed_examples"] = cs_metrics.get("num_examples", 0)
+        if self.closed_set_data_path:
+            metrics["closed_set_dataset"] = self.closed_set_data_path.name
 
         evt_cfg = getattr(self.cfg, "evt", None)
         if evt_cfg and bool(getattr(evt_cfg, "enabled", False)):
@@ -236,6 +244,7 @@ class FlowerClient(fl.client.NumPyClient):
         else:
             logger.debug("Client %s: EVT evaluation disabled.", self.cid)
 
+        metrics["cid"] = self.cid
         return loss, num_examples, metrics
 
     # ------------------------------------------------------------------
@@ -249,9 +258,15 @@ class FlowerClient(fl.client.NumPyClient):
             return
 
         test_data_key = f"test_closed_client_{self.cid}"
-        test_data_rel = getattr(paths_cfg, test_data_key, None)
-        if not test_data_rel:
-            test_data_rel = getattr(paths_cfg, "closed_set_test_data", None)
+        shared_rel = getattr(paths_cfg, "shared_closed_set_test_data", None)
+        generic_rel = getattr(paths_cfg, "closed_set_test_data", None)
+        client_rel = getattr(paths_cfg, test_data_key, None)
+
+        test_data_rel = None
+        for candidate in (shared_rel, generic_rel, client_rel):
+            if candidate:
+                test_data_rel = candidate
+                break
 
         class_names_rel = getattr(paths_cfg, "class_names", None)
         if not (test_data_rel and class_names_rel):
@@ -260,6 +275,7 @@ class FlowerClient(fl.client.NumPyClient):
 
         test_data_path = _resolve_project_path(test_data_rel)
         class_names_path = _resolve_project_path(class_names_rel)
+        self.closed_set_data_path = test_data_path
 
         try:
             data_device = self.device if self._move_data_to_device else torch.device("cpu")
@@ -276,6 +292,12 @@ class FlowerClient(fl.client.NumPyClient):
         )
         self.eval_class_names = self._load_class_names(
             class_names_path, int(self.cfg.model.num_actions)
+        )
+        logger.info(
+            "Client %s: Closed-set eval data loaded (%s) | samples=%d",
+            self.cid,
+            test_data_path.name,
+            len(dataset),
         )
 
         self.eval_enabled = True
@@ -383,7 +405,7 @@ class FlowerClient(fl.client.NumPyClient):
         f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
 
         if num_examples == 0:
-            return loss, 0, {"accuracy": accuracy, "f1_macro": 0.0}
+            return loss, 0, {"accuracy": accuracy, "f1_macro": 0.0, "num_examples": 0}
 
         report = classification_report(
             y_true, y_pred, target_names=self.eval_class_names, digits=4, zero_division=0
@@ -393,7 +415,11 @@ class FlowerClient(fl.client.NumPyClient):
 
         logger.info(f"\n[Client {self.cid} | {prefix}] Closed-Set Report:\n{report}")
 
-        return loss, num_examples, {"accuracy": accuracy, "f1_macro": f1}
+        return loss, num_examples, {
+            "accuracy": accuracy,
+            "f1_macro": f1,
+            "num_examples": num_examples,
+        }
 
     def _fit_evt_and_run_openset_eval(
         self,
@@ -407,9 +433,15 @@ class FlowerClient(fl.client.NumPyClient):
             return {}
 
         test_open_key = f"test_open_client_{self.cid}"
-        open_set_rel = getattr(paths_cfg, test_open_key, None)
-        if not open_set_rel:
-            open_set_rel = getattr(paths_cfg, "open_set_test_data", None)
+        shared_open_rel = getattr(paths_cfg, "shared_open_set_test_data", None)
+        generic_open_rel = getattr(paths_cfg, "open_set_test_data", None)
+        client_open_rel = getattr(paths_cfg, test_open_key, None)
+
+        open_set_rel = None
+        for candidate in (shared_open_rel, generic_open_rel, client_open_rel):
+            if candidate:
+                open_set_rel = candidate
+                break
 
         class_names_rel = getattr(paths_cfg, "class_names", None)
         if not (open_set_rel and class_names_rel):
@@ -458,6 +490,7 @@ class FlowerClient(fl.client.NumPyClient):
 
         open_set_path = _resolve_project_path(open_set_rel)
         class_names_path = _resolve_project_path(class_names_rel)
+        self.open_set_data_path = open_set_path
 
         try:
             with open(class_names_path, "r", encoding="utf-8") as fh:
@@ -470,6 +503,15 @@ class FlowerClient(fl.client.NumPyClient):
             open_labels = data["labels"].to(
                 device=self.device if self._move_data_to_device else torch.device("cpu")
             ).long()
+            openset_examples = int(open_labels.numel())
+            num_unknown = int((open_labels == -1).sum().item())
+            logger.info(
+                "Client %s: Open-set eval data loaded (%s) | total=%d | unknown=%d",
+                self.cid,
+                open_set_path.name,
+                openset_examples,
+                num_unknown,
+            )
         except Exception as exc:
             logger.error("Client %s: Error loading open set data: %s", self.cid, exc)
             return {}
@@ -489,6 +531,9 @@ class FlowerClient(fl.client.NumPyClient):
             device=self.device,
             report_to_stdout=True,
         )
+        metrics["openset_examples"] = openset_examples
+        metrics["openset_unknown"] = num_unknown
+        metrics["open_set_dataset"] = open_set_path.name
         logger.info(
             "[Client %s | %s] Open-Set AUROC: %.4f",
             self.cid,

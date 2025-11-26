@@ -50,14 +50,35 @@ def run_preprocessing(cfg: DictConfig):
 
     try:
         p_cfg = cfg.preprocess
-        raw_file = resolve_path(p_cfg.raw_file)
         output_dir = resolve_path(p_cfg.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        df = pd.read_csv(raw_file)
-        logger.info(f"Loaded {raw_file} with {len(df)} rows.")
-    except FileNotFoundError:
-        logger.critical(f"FATAL: Raw data file not found at {raw_file}")
+        # Support both a single CSV (raw_file) and a dict/list of sources.
+        sources = []
+        if hasattr(p_cfg, "raw_file"):
+            sources.append(("single", resolve_path(p_cfg.raw_file)))
+        elif hasattr(p_cfg, "sources"):
+            src_cfg = p_cfg.sources
+            if isinstance(src_cfg, dict):
+                sources = [(str(k), resolve_path(v)) for k, v in src_cfg.items()]
+            else:
+                sources = [(str(i), resolve_path(path)) for i, path in enumerate(src_cfg)]
+
+        if not sources:
+            raise FileNotFoundError("No raw_file or preprocess.sources provided.")
+
+        frames = []
+        for source_id, file_path in sources:
+            if not file_path.exists():
+                raise FileNotFoundError(f"Raw data file not found: {file_path}")
+            df_part = pd.read_csv(file_path, low_memory=False)
+            frames.append(df_part)
+            logger.info("Loaded %s (%s rows) from %s", source_id, len(df_part), file_path)
+
+        df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+        logger.info("Combined dataset rows: %d (sources=%d)", len(df), len(frames))
+    except FileNotFoundError as exc:
+        logger.critical(f"FATAL: Raw data file not found: {exc}")
         logger.critical("Please download the data and place it in 'data/raw/'.")
         sys.exit(1)
     except Exception as e:
@@ -140,6 +161,8 @@ def run_preprocessing(cfg: DictConfig):
         label_dist_str = ", ".join([f"'{idx_to_label[l]}' (ID {l}): {c}" for l, c in zip(unique_labels, counts)])
         logger.info(f"Label Distribution: {label_dist_str}")
     save_as_torch(X_test_closed, y_test_closed, output_dir / "closed_set_test.pt")
+    # Explicit shared alias for clarity across clients
+    save_as_torch(X_test_closed, y_test_closed, output_dir / "shared_closed_set_test.pt")
 
     num_clients = p_cfg.num_clients
     logger.info(f"Splitting KNOWN training data for {num_clients} clients...")
@@ -199,12 +222,17 @@ def run_preprocessing(cfg: DictConfig):
         )
         logger.info(f"Label Distribution: {label_dist_str}")
     save_as_torch(open_features, open_labels, output_dir / "open_set_test.pt")
+    # Explicit shared alias for clarity across clients
+    save_as_torch(open_features, open_labels, output_dir / "shared_open_set_test.pt")
     logger.info("--- ? Preprocessing Pipeline FINISHED ---")
     print("\n" + "=" * 60)
     print("  ACTION REQUIRED: Update 'conf/config_fl.yaml' file!")
     print("  Copy these values into the 'env_metadata' section:")
     print(f"\n    state_dim: {state_dim}")
     print(f"    num_actions: {num_actions}")
+    print("\n  Shared eval tensors:")
+    print("    closed_set_test.pt  (alias: shared_closed_set_test.pt)")
+    print("    open_set_test.pt    (alias: shared_open_set_test.pt)")
     print("\n" + "=" * 60 + "\n")
 
 

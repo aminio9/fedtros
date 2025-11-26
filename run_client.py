@@ -22,7 +22,6 @@ for candidate in (PROJECT_ROOT, SRC_PATH):
 try:
     from src.utils import resolve_device_from_config, setup_logging
     from src.client import FlowerClient
-    from src.exceptions import ConfigMismatchError
 except ImportError as err:
     print("Error: Could not import project modules.", file=sys.stderr)
     print(f"Root cause: {err}", file=sys.stderr)
@@ -49,7 +48,7 @@ def run_client(cfg: DictConfig, cid: str, data_path: Path, device: Optional[torc
     try:
         client = FlowerClient(cid=cid, cfg=cfg, data_path=str(data_path), device=device)
         fl.client.start_client(server_address=cfg.server.address, client=client.to_client())
-    except ConfigMismatchError as exc:
+    except ValueError as exc:
         logging.getLogger(__name__).critical("Configuration Error: %s", exc, exc_info=True)
         print(f"\nFATAL: Configuration mismatch. {exc}", file=sys.stderr)
         print("Please check your 'conf/config_fl.yaml' and 'data/processed' files.", file=sys.stderr)

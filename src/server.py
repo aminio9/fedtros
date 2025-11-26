@@ -83,25 +83,40 @@ def aggregate_fit_metrics(
         "generator_loss",
         "generator_correct_frac",
     ]
+    closed_metric_keys = {"local_loss", "local_accuracy", "local_f1_macro"}
+    open_metric_keys = {
+        "openset_f1_macro",
+        "openset_auroc",
+        "openset_unknown_recall",
+        "openset_known_acc",
+        "openset_overall_acc",
+    }
 
     # Log individual client metrics before aggregation
     logger.info("-" * 60)
-    logger.info("PER-CLIENT METRICS")
+    logger.info("PER-CLIENT METRICS (LOCAL/PRE-AGG)")
     logger.info("-" * 60)
     for num_examples, metrics in fit_metrics:
         client_id = metrics.get("cid", "unknown")
         msg_parts = [f"client={client_id}", f"samples={num_examples}"]
+        if metrics.get("closed_set_dataset"):
+            msg_parts.append(f"closed_ds={metrics['closed_set_dataset']}")
+        if metrics.get("open_set_dataset"):
+            msg_parts.append(f"open_ds={metrics['open_set_dataset']}")
         for key in ("local_accuracy", "local_f1_macro", "local_loss"):
             if key in metrics:
                 msg_parts.append(f"{key}={metrics[key]:.4f}")
         for key in ("openset_auroc", "openset_unknown_recall", "openset_known_acc"):
             if key in metrics:
                 msg_parts.append(f"{key}={metrics[key]:.4f}")
+        if metrics.get("openset_examples") is not None:
+            msg_parts.append(f"open_n={metrics['openset_examples']}")
         logger.info(" | ".join(msg_parts))
     logger.info("-" * 60)
 
     for key in metric_keys:
         weighted_sum = 0.0
+        weight_total = 0.0
         present = False
         for num_examples, metrics in fit_metrics:
             metric_val = metrics.get(key)
@@ -111,13 +126,20 @@ def aggregate_fit_metrics(
                 metric_float = float(metric_val)
             except (TypeError, ValueError):
                 continue
-            weighted_sum += metric_float * num_examples
+            if key in open_metric_keys:
+                weight = float(metrics.get("openset_examples", num_examples))
+            elif key in closed_metric_keys:
+                weight = float(metrics.get("local_closed_examples", num_examples))
+            else:
+                weight = float(num_examples)
+            weighted_sum += metric_float * weight
+            weight_total += weight
             present = True
-        if present:
-            aggregated[key] = weighted_sum / total_examples
+        if present and weight_total > 0:
+            aggregated[key] = weighted_sum / weight_total
 
     logger.info("=" * 60)
-    logger.info("AGGREGATED METRICS (Weighted Avg)")
+    logger.info("AGGREGATED METRICS (Weighted Avg, Pre-Agg)")
     logger.info("=" * 60)
     if "local_accuracy" in aggregated:
         logger.info("Local (Pre-Agg) Accuracy    : %.4f", aggregated["local_accuracy"])
@@ -159,6 +181,112 @@ def aggregate_fit_metrics(
     return aggregated
 
 
+def aggregate_evaluate_metrics(
+    eval_metrics: List[Tuple[int, Dict[str, fl.common.Scalar]]]
+) -> Dict[str, float]:
+    """
+    Aggregate metrics reported from client.evaluate (post-aggregation).
+    Mirrors aggregate_fit_metrics but uses the GLOBAL model scores.
+    """
+    if not eval_metrics:
+        logger.warning("No evaluation metrics to aggregate; skipping.")
+        return {}
+
+    total_examples = sum(num_examples for num_examples, _ in eval_metrics)
+    if total_examples == 0:
+        logger.warning("Evaluation metrics reported zero examples; skipping aggregation.")
+        return {}
+
+    metric_keys = [
+        "accuracy",
+        "f1_macro",
+        "openset_f1_macro",
+        "openset_auroc",
+        "openset_unknown_recall",
+        "openset_known_acc",
+        "openset_overall_acc",
+    ]
+    closed_metric_keys = {"accuracy", "f1_macro"}
+    open_metric_keys = {
+        "openset_f1_macro",
+        "openset_auroc",
+        "openset_unknown_recall",
+        "openset_known_acc",
+        "openset_overall_acc",
+    }
+
+    logger.info("-" * 60)
+    logger.info("PER-CLIENT EVALUATION (GLOBAL MODEL)")
+    logger.info("-" * 60)
+    for num_examples, metrics in eval_metrics:
+        client_id = metrics.get("cid", "unknown")
+        msg_parts = [f"client={client_id}", f"closed_n={num_examples}"]
+        if metrics.get("closed_set_dataset"):
+            msg_parts.append(f"closed_ds={metrics['closed_set_dataset']}")
+        if metrics.get("open_set_dataset"):
+            msg_parts.append(f"open_ds={metrics['open_set_dataset']}")
+        if metrics.get("openset_examples") is not None:
+            msg_parts.append(f"open_n={metrics['openset_examples']}")
+        for key in ("accuracy", "f1_macro"):
+            if key in metrics:
+                msg_parts.append(f"{key}={float(metrics[key]):.4f}")
+        for key in ("openset_auroc", "openset_unknown_recall", "openset_known_acc"):
+            if key in metrics:
+                msg_parts.append(f"{key}={float(metrics[key]):.4f}")
+        logger.info(" | ".join(msg_parts))
+    logger.info("-" * 60)
+
+    aggregated: Dict[str, float] = {}
+    for key in metric_keys:
+        weighted_sum = 0.0
+        weight_total = 0.0
+        present = False
+        for num_examples, metrics in eval_metrics:
+            metric_val = metrics.get(key)
+            if metric_val is None:
+                continue
+            try:
+                metric_float = float(metric_val)
+            except (TypeError, ValueError):
+                continue
+            if key in open_metric_keys:
+                weight = float(metrics.get("openset_examples", num_examples))
+            elif key in closed_metric_keys:
+                weight = float(metrics.get("global_closed_examples", num_examples))
+            else:
+                weight = float(num_examples)
+            weighted_sum += metric_float * weight
+            weight_total += weight
+            present = True
+        if present and weight_total > 0:
+            aggregated[key] = weighted_sum / weight_total
+
+    logger.info("=" * 60)
+    logger.info("AGGREGATED EVALUATION (GLOBAL MODEL)")
+    logger.info("=" * 60)
+    if "accuracy" in aggregated:
+        logger.info("Closed-set Accuracy         : %.4f", aggregated["accuracy"])
+    if "f1_macro" in aggregated:
+        logger.info("Closed-set F1 Macro         : %.4f", aggregated["f1_macro"])
+    if "openset_auroc" in aggregated:
+        logger.info("-" * 46)
+        logger.info("Open-Set AUROC              : %.4f", aggregated["openset_auroc"])
+        if "openset_f1_macro" in aggregated:
+            logger.info("Open-Set F1 Macro           : %.4f", aggregated["openset_f1_macro"])
+        if "openset_unknown_recall" in aggregated:
+            logger.info(
+                "Open-Set Unknown Recall     : %.4f",
+                aggregated["openset_unknown_recall"],
+            )
+        if "openset_known_acc" in aggregated:
+            logger.info("Open-Set Known Accuracy     : %.4f", aggregated["openset_known_acc"])
+        if "openset_overall_acc" in aggregated:
+            logger.info("Open-Set Overall Accuracy   : %.4f", aggregated["openset_overall_acc"])
+    logger.info("=" * 60)
+
+    return aggregated
+
+
 def get_strategy(cfg: DictConfig) -> Strategy:
     """Create the server's federated learning strategy."""
     proximal_mu = float(cfg.server.get("proximal_mu", 0.1))
@@ -170,6 +298,7 @@ def get_strategy(cfg: DictConfig) -> Strategy:
         min_available_clients=cfg.server.min_available_clients,
         on_fit_config_fn=fit_config_fn,
         fit_metrics_aggregation_fn=aggregate_fit_metrics,
+        evaluate_metrics_aggregation_fn=aggregate_evaluate_metrics,
         proximal_mu=proximal_mu,
     )
 

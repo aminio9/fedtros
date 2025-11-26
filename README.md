@@ -86,6 +86,11 @@ poetry run python run_client.py --cid 3 --data_path data/processed/client_3_trai
 ```
 Logs go to `logs/`. Figures and reports go to `figures/` and `figures/clients/client_<cid>/`.
 
+## Shared test data
+- Run `poetry run python preprocess.py` to emit per-client train splits plus shared closed/open test sets (`data/processed/shared_closed_set_test.pt`, `data/processed/shared_open_set_test.pt`) and the class map.
+- The defaults in `conf/config_fl.yaml` already point `paths.closed_set_test_data` and `paths.open_set_test_data` to those shared tensors so every client evaluates on the exact same datasets both before and after aggregation.
+- Detailed client reports/plots are written under `figures/clients/client_<cid>/` for both stages; server logs print per-client and aggregated scores for closed-set and open-set tests using the shared files.
+
 <!-- ## GPU usage
 - Set `device.prefer: "cuda"` in `conf/config_fl.yaml` (or export `FEDOSQ_DEVICE=cuda`) to force GPU selection; set `allow_cpu_fallback: false` to fail fast if CUDA is missing.
 - Enable `device.move_data_to_device: true` if you want dataset tensors kept on GPU alongside models (uses more memory but avoids repeated host/device copies).
