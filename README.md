@@ -73,16 +73,19 @@ Adjust `training`, `generator_training`, and `evt` blocks as needed. Paths must 
 Use four terminals:
 ```bash
 # Terminal 1
-poetry run python run_server.py
+cd FedOSQ-Chain && poetry run python run_server.py
 
 # Terminal 2
-poetry run python run_client.py --cid 1 --data_path data/processed/client_1_train.pt
+cd FedOSQ-Chain && poetry run python run_client.py --cid 1 --data_path data/processed/client_1_train.pt
 
 # Terminal 3
-poetry run python run_client.py --cid 2 --data_path data/processed/client_2_train.pt
+cd FedOSQ-Chain && poetry run python run_client.py --cid 2 --data_path data/processed/client_2_train.pt
 
 # Terminal 4
-poetry run python run_client.py --cid 3 --data_path data/processed/client_3_train.pt
+cd FedOSQ-Chain && poetry run python run_client.py --cid 3 --data_path data/processed/client_3_train.pt
+
+# Run Multiple Node like clients 1 to 50
+python run_client.py --cid_range "1-50" --data_path "data/processed/client_{cid}.pt"
 ```
 Logs go to `logs/`. Figures and reports go to `figures/` and `figures/clients/client_<cid>/`.
 
