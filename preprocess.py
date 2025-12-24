@@ -12,15 +12,15 @@ from omegaconf import DictConfig
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
 
-try:
-    from src.utils import setup_logging
-except ImportError:
-    from utils import setup_logging
+from src.utils import setup_logging
+
 
 logger = logging.getLogger("Preprocess")
 
 
-def _infer_feature_columns(df: pd.DataFrame, label_col: str, numeric_threshold: float = 0.9):
+def _infer_feature_columns(
+    df: pd.DataFrame, label_col: str, numeric_threshold: float = 0.9
+):
     feature_cols = [c for c in df.columns if c != label_col]
     if not feature_cols:
         raise ValueError("No feature columns remain after excluding the label column.")
@@ -52,16 +52,40 @@ def save_as_torch(features: np.ndarray, labels: np.ndarray, path: Path):
         logger.error(f"Failed to save data to {path}: {e}", exc_info=True)
 
 
+def dirichlet_split(
+    y_train: np.ndarray, num_clients: int, alpha: float, num_classes: int
+) -> dict:
+    client_indices = {i: [] for i in range(num_clients)}
+
+    for k in range(num_classes):
+        idx_k = np.where(y_train == k)[0]
+        np.random.shuffle(idx_k)  # Shuffle specific class indices
+
+        proportions = np.random.dirichlet(np.repeat(alpha, num_clients))
+
+        # proportions = np.array(
+        #     [p * (len(idx_k) < len(y_train) / num_clients) for p in proportions]
+        # )
+        # proportions = proportions / proportions.sum()
+        split_points = (np.cumsum(proportions) * len(idx_k)).astype(int)[:-1]
+
+        idx_batch = np.split(idx_k, split_points)
+
+        for i in range(num_clients):
+            client_indices[i].extend(idx_batch[i])
+
+    return client_indices
+
+
 @hydra.main(config_path="conf", config_name="config_fl", version_base=None)
 def run_preprocessing(cfg: DictConfig):
-    """Main preprocessing pipeline."""
 
     project_root = Path(get_original_cwd())
     log_file = project_root / "logs" / "preprocess.log"
     log_level = str(cfg.get("log_level", "INFO")).upper()
     setup_logging(log_file_path=str(log_file), log_level=log_level)
 
-    logger.info("--- ?? Starting Preprocessing Pipeline ---")
+    logger.info("---  Starting Preprocessing Pipeline ---")
 
     def resolve_path(path_like) -> Path:
         path = Path(path_like)
@@ -111,7 +135,9 @@ def run_preprocessing(cfg: DictConfig):
     df_unknown = df[~df[label_col].isin(known_labels_list)].copy()
 
     logger.info("Total data split:")
-    logger.info(f"  -> {len(df_known)} samples for 'Known' (Closed-Set) Training/Testing")
+    logger.info(
+        f"  -> {len(df_known)} samples for 'Known' (Closed-Set) Training/Testing"
+    )
     logger.info(f"  -> {len(df_unknown)} samples for 'Unknown' (Open-Set) Testing")
     logger.info(
         "Dataset features inferred: %d numerical, %d categorical, label='%s'",
@@ -121,20 +147,28 @@ def run_preprocessing(cfg: DictConfig):
     )
 
     if len(df_known) == 0:
-        logger.critical("FATAL: No 'Known' samples found. Check 'known_labels' in config.")
+        logger.critical(
+            "FATAL: No 'Known' samples found. Check 'known_labels' in config."
+        )
         sys.exit(1)
 
     class_names_path = output_dir / "class_names.json"
     try:
         with open(class_names_path, "w", encoding="utf-8") as f:
-            json.dump({int(idx): name for idx, name in idx_to_label.items()}, f, indent=2)
+            json.dump(
+                {int(idx): name for idx, name in idx_to_label.items()}, f, indent=2
+            )
         logger.info(f"Saved class-name mapping to {class_names_path}")
     except Exception as exc:
         logger.error(f"Failed to save class_names.json: {exc}", exc_info=True)
 
     logger.info("Fitting Scaler and Encoder on KNOWN data...")
     scaler = MinMaxScaler() if num_cols else None
-    encoder = OneHotEncoder(handle_unknown="ignore", sparse_output=False) if cat_cols else None
+    encoder = (
+        OneHotEncoder(handle_unknown="ignore", sparse_output=False)
+        if cat_cols
+        else None
+    )
 
     def _num_array(frame: pd.DataFrame) -> np.ndarray:
         if not num_cols:
@@ -164,11 +198,21 @@ def run_preprocessing(cfg: DictConfig):
     )
 
     logger.info("Processing KNOWN data...")
-    num_scaled_known = scaler.transform(_num_array(df_known)) if scaler else _num_array(df_known)
-    cat_encoded_known = encoder.transform(_cat_array(df_known)) if encoder else np.empty((len(df_known), 0))
-    parts_known = [arr for arr in (num_scaled_known, cat_encoded_known) if arr.shape[1] > 0]
+    num_scaled_known = (
+        scaler.transform(_num_array(df_known)) if scaler else _num_array(df_known)
+    )
+    cat_encoded_known = (
+        encoder.transform(_cat_array(df_known))
+        if encoder
+        else np.empty((len(df_known), 0))
+    )
+    parts_known = [
+        arr for arr in (num_scaled_known, cat_encoded_known) if arr.shape[1] > 0
+    ]
     if not parts_known:
-        raise RuntimeError("No usable feature columns found after preprocessing (known split).")
+        raise RuntimeError(
+            "No usable feature columns found after preprocessing (known split)."
+        )
     features_known = np.concatenate(parts_known, axis=1).astype(np.float32)
     labels_known = df_known[label_col].map(label_map).values
 
@@ -180,54 +224,81 @@ def run_preprocessing(cfg: DictConfig):
         random_state=42,
     )
 
-    logger.info("--- ?? Closed-Set Test Data (closed_set_test.pt) ---")
+    logger.info("---  Closed-Set Test Data (closed_set_test.pt) ---")
     logger.info(f"Shape: {X_test_closed.shape}")
     if len(y_test_closed) > 0:
         unique_labels, counts = np.unique(y_test_closed, return_counts=True)
-        label_dist_str = ", ".join([f"'{idx_to_label[l]}' (ID {l}): {c}" for l, c in zip(unique_labels, counts)])
+        label_dist_str = ", ".join(
+            [
+                f"'{idx_to_label[l]}' (ID {l}): {c}"
+                for l, c in zip(unique_labels, counts)
+            ]
+        )
         logger.info(f"Label Distribution: {label_dist_str}")
     save_as_torch(X_test_closed, y_test_closed, output_dir / "closed_set_test.pt")
     # Explicit shared alias for clarity across clients
-    save_as_torch(X_test_closed, y_test_closed, output_dir / "shared_closed_set_test.pt")
+    save_as_torch(
+        X_test_closed, y_test_closed, output_dir / "shared_closed_set_test.pt"
+    )
+
 
     shard_count = int(getattr(p_cfg, "num_shards", p_cfg.num_clients))
-    logger.info(f"Splitting KNOWN training data into {shard_count} client shards...")
+    alpha = getattr(p_cfg, "alpha", 0.5) 
+    
+    logger.info(f"Splitting KNOWN training data into {shard_count} shards using Dirichlet (alpha={alpha})...")
 
-    indices = np.random.permutation(len(X_train_known))
-    X_train_known, y_train_known = X_train_known[indices], y_train_known[indices]
-    client_indices = np.array_split(range(len(X_train_known)), shard_count)
+    client_indices_map = dirichlet_split(
+        y_train_known, 
+        shard_count, 
+        alpha, 
+        num_actions  
+    )
 
     for i in range(shard_count):
         client_id = i + 1
-        client_idx_set = client_indices[i]
+        
+        client_idx_set = np.array(client_indices_map[i])
+        np.random.shuffle(client_idx_set)
+        
         X_client = X_train_known[client_idx_set]
         y_client = y_train_known[client_idx_set]
 
-        logger.info(f"--- ?? Client {client_id} Training Data (client_{client_id}_train.pt) ---")
+        logger.info(f"---  Client {client_id} Training Data (client_{client_id}_train.pt) ---")
         logger.info(f"Shape: {X_client.shape}")
+        
         if len(y_client) > 0:
             unique_labels, counts = np.unique(y_client, return_counts=True)
             label_dist_str = ", ".join([f"'{idx_to_label[l]}' (ID {l}): {c}" for l, c in zip(unique_labels, counts)])
             logger.info(f"Label Distribution: {label_dist_str}")
         else:
-            logger.warning(f"Client {client_id} has no data.")
+            logger.warning(f"Client {client_id} has no data (Dirichlet variance might be too high).")
 
         save_path = output_dir / f"client_{client_id}_train.pt"
         save_as_torch(X_client, y_client, save_path)
-
+        
     open_features = np.copy(X_test_closed)
     open_labels = np.copy(y_test_closed)
 
     if len(df_unknown) > 0:
         logger.info("Processing UNKNOWN data for open-set evaluation...")
-        num_scaled_unknown = scaler.transform(_num_array(df_unknown)) if scaler else _num_array(df_unknown)
+        num_scaled_unknown = (
+            scaler.transform(_num_array(df_unknown))
+            if scaler
+            else _num_array(df_unknown)
+        )
         cat_encoded_unknown = (
-            encoder.transform(_cat_array(df_unknown)) if encoder else np.empty((len(df_unknown), 0))
+            encoder.transform(_cat_array(df_unknown))
+            if encoder
+            else np.empty((len(df_unknown), 0))
         )
 
-        parts_unknown = [arr for arr in (num_scaled_unknown, cat_encoded_unknown) if arr.shape[1] > 0]
+        parts_unknown = [
+            arr for arr in (num_scaled_unknown, cat_encoded_unknown) if arr.shape[1] > 0
+        ]
         if not parts_unknown:
-            raise RuntimeError("No usable feature columns found after preprocessing (unknown split).")
+            raise RuntimeError(
+                "No usable feature columns found after preprocessing (unknown split)."
+            )
         features_unknown = np.concatenate(parts_unknown, axis=1).astype(np.float32)
         labels_unknown = np.full(len(df_unknown), -1, dtype=np.int64)
 
@@ -239,20 +310,25 @@ def run_preprocessing(cfg: DictConfig):
             len(open_labels),
         )
     else:
-        logger.warning("No 'Unknown' samples found; open_set_test will contain only closed-set data.")
+        logger.warning(
+            "No 'Unknown' samples found; open_set_test will contain only closed-set data."
+        )
 
-    logger.info("--- ?? Open-Set Evaluation Data (open_set_test.pt) ---")
+    logger.info("---  Open-Set Evaluation Data (open_set_test.pt) ---")
     logger.info(f"Shape: {open_features.shape}")
     if len(open_labels) > 0:
         unique_labels, counts = np.unique(open_labels, return_counts=True)
         label_dist_str = ", ".join(
-            [f"'{idx_to_label.get(l, 'Unknown')}' (ID {l}): {c}" for l, c in zip(unique_labels, counts)]
+            [
+                f"'{idx_to_label.get(l, 'Unknown')}' (ID {l}): {c}"
+                for l, c in zip(unique_labels, counts)
+            ]
         )
         logger.info(f"Label Distribution: {label_dist_str}")
     save_as_torch(open_features, open_labels, output_dir / "open_set_test.pt")
     # Explicit shared alias for clarity across clients
     save_as_torch(open_features, open_labels, output_dir / "shared_open_set_test.pt")
-    logger.info("--- ? Preprocessing Pipeline FINISHED ---")
+    logger.info("---  Preprocessing Pipeline FINISHED ---")
     print("\n" + "=" * 60)
     print("  ACTION REQUIRED: Update 'conf/config_fl.yaml' file!")
     print("  Copy these values into the 'env_metadata' section:")
@@ -266,4 +342,3 @@ def run_preprocessing(cfg: DictConfig):
 
 if __name__ == "__main__":
     run_preprocessing()
-

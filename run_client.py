@@ -235,11 +235,11 @@ def main() -> None:
             # Default fallback if user forgot data_path in multi-mode
             args.data_path = "data/processed/client_{cid}_train.pt"
         
-        launch_multiple_clients(start, end, args.data_path, hydra_overrides)
+        run_multiple_clients(start, end, args.data_path, hydra_overrides)
         return
 
     # --- SINGLE CLIENT MODE (Standard) ---
-    if not args.cid or not args.data_path:
+    if not args.cid or not args.data_path:  
         print("Error: --cid and --data_path are required for single client mode.", file=sys.stderr)
         sys.exit(1)
 

@@ -78,14 +78,16 @@ evt:
 
 preprocess:
   output_dir: "data/processed"
-  num_clients: 3
-  num_shards: 3
+  num_clients: 5
+  num_shards: 5
   closed_set_test_size: 0.2
-  # raw_file: "data/raw/Bnat.csv"
-  raw_file: "/content/drive/MyDrive/Bnat.csv"
+  raw_file: "data/raw/Bnat.csv"
+  # raw_file: "/content/drive/MyDrive/Bnat.csv"
 
   label_column: "label"
 
+  alpha: 0.5  # 0.1 = Very Non-IID, 100.0 = IID (Balanced)
+  
   known_labels:
     - "Normal"
     - "BP"
