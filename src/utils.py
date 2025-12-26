@@ -12,11 +12,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# try:
-# import torch_directml  # type: ignore
-# except ImportError:  # pragma: no cover - optional dependency
-torch_directml = None  # type: ignore
-
 # --- VAE Constants ---
 LOGVAR_MIN, LOGVAR_MAX = -6.0, 2.0
 EPS = 1e-12
@@ -166,9 +161,9 @@ def get_device(
         if torch.cuda.is_available():
             device = torch.device("cuda")
             logger.info("Using CUDA device (torch %s)", torch.__version__)
-        elif torch_directml is not None:
-            logger.warning("CUDA requested but unavailable; trying DirectML as fallback.")
-            device = _resolve_directml_device(logger, allow_cpu_fallback)
+        # elif torch_directml is not None:
+        #     logger.warning("CUDA requested but unavailable; trying DirectML as fallback.")
+        #     device = _resolve_directml_device(logger, allow_cpu_fallback)
         elif allow_cpu_fallback:
             logger.warning("CUDA requested but unavailable; falling back to CPU.")
             device = torch.device("cpu")
@@ -180,8 +175,8 @@ def get_device(
         if torch.cuda.is_available():
             device = torch.device("cuda")
             logger.info("Auto-selected CUDA device (torch %s)", torch.__version__)
-        elif torch_directml is not None:
-            device = _resolve_directml_device(logger, allow_cpu_fallback)
+        # elif torch_directml is not None:
+        #     device = _resolve_directml_device(logger, allow_cpu_fallback)
         else:
             device = torch.device("cpu")
 
@@ -194,6 +189,11 @@ def get_device(
 
 def _resolve_directml_device(logger: logging.Logger, allow_cpu_fallback: bool) -> torch.device:
     """Try to return a DirectML device if torch-directml is installed."""
+    try:
+        import torch_directml  # type: ignore
+    except ImportError:  # pragma: no cover - optional dependency
+        torch_directml = None  # type: ignore
+        
     if torch_directml is None:
         if allow_cpu_fallback:
             logger.warning("torch-directml not installed; falling back to CPU.")
