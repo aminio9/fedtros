@@ -27,7 +27,11 @@ try:
     from .environment import BlockchainIntrusionEnv
     from .local_training import run_local_training_round
     from .models import OpenSetQChainModelFactory
-    from .openset_eval import calibrate_evt_thresholds, evaluate_open_set, fit_evt_models
+    from .openset_eval import (
+        calibrate_evt_thresholds,
+        evaluate_open_set,
+        fit_evt_models,
+    )
     from .policy import EpsilonGreedyPolicy, EpsilonScheduler
     from .replay_buffer import ExperienceReplayBuffer
     from .evt import save_evt_collection, save_evt_meta
@@ -52,16 +56,26 @@ def _resolve_project_path(path_like: Union[str, Path]) -> Path:
 
 
 class FlowerClient(fl.client.NumPyClient):
-    """Flower NumPyClient implementing the Fed-Per agent."""
+    """Flower NumPyClient implementing the Fed-Per agent with Two-Phase FMRL logic."""
 
-    def __init__(self, cid: str, cfg: DictConfig, data_path: str, device: Optional[torch.device] = None):
+    def __init__(
+        self,
+        cid: str,
+        cfg: DictConfig,
+        data_path: str,
+        device: Optional[torch.device] = None,
+    ):
         self.cid = cid
         self.cfg = cfg
         self.data_path = data_path
         self.device = device if device is not None else get_device()
 
         device_cfg = getattr(cfg, "device", None)
-        self._move_data_to_device = bool(getattr(device_cfg, "move_data_to_device", False)) if device_cfg else False
+        self._move_data_to_device = (
+            bool(getattr(device_cfg, "move_data_to_device", False))
+            if device_cfg
+            else False
+        )
 
         logger.info("Client %s: Initializing...", cid)
         logger.info("Client %s using device: %s", cid, self.device)
@@ -88,11 +102,21 @@ class FlowerClient(fl.client.NumPyClient):
         self.agent = Agent(self.model_factory, cfg.training, self.device)
         self.buffer = ExperienceReplayBuffer(cfg.training.replay_buffer_size)
         self.policy = EpsilonGreedyPolicy(
-            self.agent.prior_net, self.agent.value_net_main, cfg.model.num_actions, self.device
+            self.agent.prior_net,
+            self.agent.value_net_main,
+            cfg.model.num_actions,
+            self.device,
         )
         self.epsilon_scheduler = EpsilonScheduler(cfg.training)
 
-        figures_root = _resolve_project_path(getattr(cfg.paths, "figures_dir", "figures"))
+        # --- TWO-PHASE CACHE ---
+        self.cached_weights: List[np.ndarray] = []
+        self.cached_metrics: Dict[str, float] = {}
+        self.lifetime_reward = 0.0
+
+        figures_root = _resolve_project_path(
+            getattr(cfg.paths, "figures_dir", "figures")
+        )
         self.client_figure_dir: Path = figures_root / "clients" / f"client_{cid}"
         self.client_figure_dir.mkdir(parents=True, exist_ok=True)
 
@@ -114,60 +138,126 @@ class FlowerClient(fl.client.NumPyClient):
         logger.info("Client %s: Initialization complete.", cid)
 
     def get_parameters(self, config: Dict[str, Any]) -> List[np.ndarray]:
-        logger.debug("Client %s: get_parameters called", self.cid)
         return self.agent.get_federated_parameters()
 
     def set_parameters(self, parameters: List[np.ndarray]) -> None:
-        logger.debug("Client %s: set_parameters called", self.cid)
         self.agent.set_federated_parameters(parameters, hard_target_update=True)
 
     def fit(
         self, parameters: Union[List[np.ndarray], Parameters], config: Dict[str, Any]
     ) -> Tuple[List[np.ndarray], int, Dict[str, float]]:
+        # 1. Determine Phase
+        phase = config.get(
+            "phase", "train"
+        )  # Default to train if using standard strategy
         round_num = config.get("server_round", "?")
-        logger.info("Client %s: fit() called for round %s", self.cid, round_num)
 
-        param_list = (
-            parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
-        )
-        # Initialize with global weights before local training
-        self.set_parameters(param_list)
+        # =========================================================
+        # PHASE A: TRAIN & AUDIT
+        # =========================================================
+        if phase == "train":
+            logger.info(f"Client {self.cid} [Phase A - Round {round_num}]: Training...")
 
-        # 1. Local training round
-        num_steps_trained, metrics = run_local_training_round(
-            agent=self.agent,
-            env=self.env,
-            buffer=self.buffer,
-            policy=self.policy,
-            epsilon_scheduler=self.epsilon_scheduler,
-            cfg_training=self.cfg.training,
-            device=self.device,
-        )
+            # A. Update Global Model
+            param_list = (
+                parameters
+                if isinstance(parameters, list)
+                else parameters_to_ndarrays(parameters)
+            )
+            self.set_parameters(param_list)
 
-        # 2. Optional generator training
-        generator_cfg = getattr(self.cfg, "generator_training", None)
-        if generator_cfg and bool(getattr(generator_cfg, "enabled", False)):
-            try:
-                features = self.env.all_features_s.clone()
-                labels = self.env.all_labels_a_t.clone()
-                gen_metrics = self.agent.train_generation_network(
-                    features, labels, generator_cfg
-                )
-                metrics.update(gen_metrics)
-            except Exception as exc:
-                logger.warning("Client %s: Generator training failed: %s", self.cid, exc)
+            # B. Train (This is where computation happens)
+            num_steps_trained, metrics = run_local_training_round(
+                agent=self.agent,
+                env=self.env,
+                buffer=self.buffer,
+                policy=self.policy,
+                epsilon_scheduler=self.epsilon_scheduler,
+                cfg_training=self.cfg.training,
+                device=self.device,
+            )
+
+            # C. Optional: Generator Training (kept from original)
+            generator_cfg = getattr(self.cfg, "generator_training", None)
+            if generator_cfg and bool(getattr(generator_cfg, "enabled", False)):
+                try:
+                    features = self.env.all_features_s.clone()
+                    labels = self.env.all_labels_a_t.clone()
+                    gen_metrics = self.agent.train_generation_network(
+                        features, labels, generator_cfg
+                    )
+                    metrics.update(gen_metrics)
+                except Exception as exc:
+                    logger.warning(
+                        f"Client {self.cid}: Generator training failed: {exc}"
+                    )
+
+            # D. Optional: Local Eval (kept from original)
+            self._run_local_eval_logic(metrics, round_num)
+
+            # E. Update History & Generate Audit Metadata
+            self.lifetime_reward += metrics.get("total_reward", 0.0)
+
+            # Generate Hidden State (h) for Audit
+            state, _ = self.env.reset()
+            if not isinstance(state, torch.Tensor):
+                state = torch.tensor(state, dtype=torch.float32, device=self.device)
+            if state.dim() == 1:
+                state = state.unsqueeze(0)
+
+            with torch.no_grad():
+                mu, _ = self.agent.prior_net(state)
+                h_vec = mu.cpu().numpy().flatten().tolist()
+
+            # F. CACHE EVERYTHING (Do NOT upload weights yet)
+            self.cached_weights = self.agent.get_federated_parameters()
+            self.cached_metrics = metrics.copy()
+
+            # Add audit data
+            self.cached_metrics["hidden_state"] = json.dumps(h_vec)
+            self.cached_metrics["recent_reward"] = metrics.get(
+                "avg_reward_per_episode", 0.0
+            )
+            self.cached_metrics["history_reward"] = self.lifetime_reward
+            self.cached_metrics["total_steps"] = float(num_steps_trained)
+            self.cached_metrics["cid"] = self.cid
+
+            logger.info(
+                f"   > Client {self.cid}: Training done. Caching weights. Sending Metadata only."
+            )
+
+            # Return EMPTY weights to save bandwidth
+            return [], num_steps_trained, self.cached_metrics
+
+        # =========================================================
+        # PHASE B: UPLOAD
+        # =========================================================
+        elif phase == "upload":
+            logger.info(
+                f"Client {self.cid} [Phase B - Round {round_num}]: Selected! Uploading Weights."
+            )
+
+            if not self.cached_weights:
+                logger.error("   > Error: No cached weights found! Did Phase A run?")
+                # Fallback: return current agent parameters
+                return self.agent.get_federated_parameters(), 0, {"error": 1.0}
+
+            # Return the HEAVY weights now
+            steps = int(self.cached_metrics.get("total_steps", 0))
+            return self.cached_weights, steps, self.cached_metrics
+
         else:
-            logger.debug("Client %s: generator training disabled.", self.cid)
+            logger.warning(f"Unknown Phase: {phase}")
+            return [], 0, {}
 
-        # 3. Pre-aggregation (local) evaluation
-        logger.info(
-            "--- Client %s [Fit] Evaluating LOCAL Model (Pre-Aggregation) ---", self.cid
-        )
+    def _run_local_eval_logic(self, metrics: Dict[str, float], round_num: str):
+        """Helper to run the pre-aggregation evaluation logic inside Phase A."""
         try:
             round_int = int(round_num)
         except (TypeError, ValueError):
             round_int = 0
 
+        # Pre-aggregation (local) evaluation
         if self.eval_enabled:
             loss, _, local_metrics = self._evaluate_closed_set(
                 round_int, prefix="LOCAL_PRE_AGG"
@@ -187,12 +277,6 @@ class FlowerClient(fl.client.NumPyClient):
                 features, labels, evt_cfg, prefix="LOCAL_PRE_AGG"
             )
             metrics.update(evt_metrics)
-        else:
-            logger.debug("Client %s: EVT evaluation disabled.", self.cid)
-        metrics["cid"] = self.cid
-
-        updated_parameters = self.get_parameters(config={})
-        return updated_parameters, num_steps_trained, metrics
 
     def evaluate(
         self, parameters: Union[List[np.ndarray], Parameters], config: Dict[str, Any]
@@ -201,7 +285,9 @@ class FlowerClient(fl.client.NumPyClient):
         logger.info("Client %s: evaluate() called for round %s", self.cid, round_num)
 
         param_list = (
-            parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
+            parameters
+            if isinstance(parameters, list)
+            else parameters_to_ndarrays(parameters)
         )
         # Load aggregated weights
         self.set_parameters(param_list)
@@ -240,7 +326,9 @@ class FlowerClient(fl.client.NumPyClient):
                 )
                 metrics.update(evt_metrics)
             except Exception as exc:
-                logger.error("Client %s: Global Open-Set Eval failed: %s", self.cid, exc)
+                logger.error(
+                    "Client %s: Global Open-Set Eval failed: %s", self.cid, exc
+                )
         else:
             logger.debug("Client %s: EVT evaluation disabled.", self.cid)
 
@@ -278,12 +366,16 @@ class FlowerClient(fl.client.NumPyClient):
         self.closed_set_data_path = test_data_path
 
         try:
-            data_device = self.device if self._move_data_to_device else torch.device("cpu")
+            data_device = (
+                self.device if self._move_data_to_device else torch.device("cpu")
+            )
             data = torch.load(test_data_path, map_location="cpu", weights_only=True)
             features = data["features"].to(device=data_device).float()
             labels = data["labels"].to(device=data_device).long()
         except Exception as exc:
-            logger.error("Client %s: failed to load closed-set test data: %s", self.cid, exc)
+            logger.error(
+                "Client %s: failed to load closed-set test data: %s", self.cid, exc
+            )
             return
 
         dataset = TensorDataset(features, labels)
@@ -311,7 +403,9 @@ class FlowerClient(fl.client.NumPyClient):
             try:
                 with open(path, "r", encoding="utf-8") as fp:
                     raw = json.load(fp)
-                sorted_items = sorted(((int(k), v) for k, v in raw.items()), key=lambda x: x[0])
+                sorted_items = sorted(
+                    ((int(k), v) for k, v in raw.items()), key=lambda x: x[0]
+                )
                 return [name for _, name in sorted_items]
             except Exception as exc:
                 logger.warning("Client class-names load failed (%s): %s", path, exc)
@@ -408,18 +502,26 @@ class FlowerClient(fl.client.NumPyClient):
             return loss, 0, {"accuracy": accuracy, "f1_macro": 0.0, "num_examples": 0}
 
         report = classification_report(
-            y_true, y_pred, target_names=self.eval_class_names, digits=4, zero_division=0
+            y_true,
+            y_pred,
+            target_names=self.eval_class_names,
+            digits=4,
+            zero_division=0,
         )
         self._save_client_report(round_index, report, prefix)
         self._plot_client_confusion_matrix(round_index, y_true, y_pred, prefix)
 
         logger.info(f"\n[Client {self.cid} | {prefix}] Closed-Set Report:\n{report}")
 
-        return loss, num_examples, {
-            "accuracy": accuracy,
-            "f1_macro": f1,
-            "num_examples": num_examples,
-        }
+        return (
+            loss,
+            num_examples,
+            {
+                "accuracy": accuracy,
+                "f1_macro": f1,
+                "num_examples": num_examples,
+            },
+        )
 
     def _fit_evt_and_run_openset_eval(
         self,
@@ -445,7 +547,9 @@ class FlowerClient(fl.client.NumPyClient):
 
         class_names_rel = getattr(paths_cfg, "class_names", None)
         if not (open_set_rel and class_names_rel):
-            logger.warning("Client %s: open-set paths missing for %s", self.cid, test_open_key)
+            logger.warning(
+                "Client %s: open-set paths missing for %s", self.cid, test_open_key
+            )
             return {}
 
         try:
@@ -497,12 +601,24 @@ class FlowerClient(fl.client.NumPyClient):
                 class_map = {int(k): v for k, v in json.load(fh).items()}
 
             data = torch.load(open_set_path, map_location="cpu", weights_only=True)
-            open_features = data["features"].to(
-                device=self.device if self._move_data_to_device else torch.device("cpu")
-            ).float()
-            open_labels = data["labels"].to(
-                device=self.device if self._move_data_to_device else torch.device("cpu")
-            ).long()
+            open_features = (
+                data["features"]
+                .to(
+                    device=self.device
+                    if self._move_data_to_device
+                    else torch.device("cpu")
+                )
+                .float()
+            )
+            open_labels = (
+                data["labels"]
+                .to(
+                    device=self.device
+                    if self._move_data_to_device
+                    else torch.device("cpu")
+                )
+                .long()
+            )
             openset_examples = int(open_labels.numel())
             num_unknown = int((open_labels == -1).sum().item())
             logger.info(

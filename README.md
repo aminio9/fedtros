@@ -92,7 +92,7 @@ cd FedOSQ-Chain && poetry run python run_client.py --cid 2 --data_path data/proc
 cd FedOSQ-Chain && poetry run python run_client.py --cid 3 --data_path data/processed/client_3_train.pt
 
 # Run Multiple Node like clients 1 to 50
-python run_client.py --cid_range "1-50" --data_path "FedOSQ-Chain/data/processed/client_{cid}.pt"
+python run_client.py --cid_range "1-5" --data_path "./data/processed/client_{cid}_train.pt"
 ```
 Logs go to `logs/`. Figures and reports go to `figures/` and `figures/clients/client_<cid>/`.
 
@@ -132,3 +132,45 @@ If you use FedOSQ-Chain, please cite:
   year={2025}
 }
 ``` -->
+
+
+
+<!-- note about fmrl_la
+Round 2 is the "Upload Phase".
+
+Here is exactly what is happening in your logs:
+1. Round 1 (Phase A) = Training Happened Here
+
+    Log: ROUND 1 [PHASE A]: Training & Auditing
+
+    Action: All 3 clients trained locally. They sent their metadata (rewards) to the server.
+
+    Result: The server selected Client 2 (3457...) and rejected the others.
+
+2. Round 2 (Phase B) = Upload Only (No Training)
+
+    Log: ROUND 2 [PHASE B]: Uploading & Aggregation
+
+    Action: The server asked only the selected Client 2 to upload the weights it already trained in Round 1.
+
+    Why no training? The client does not need to train again. It just uploads the files it cached during Round 1.
+
+    Log: Requesting heavy weights from 1 clients → This confirms the client is uploading.
+
+    Log: Using Standard FedAvg (w=1.0) → This confirms the server received the weights and updated the global model.
+
+3. Round 3 (Phase A) = Training Happens Again
+
+    Log: ROUND 3 [PHASE A]: Training & Auditing
+
+    Action: The server sends the new global model (created in Round 2) to all clients.
+
+    Next Step: You will see "Local training finished" logs appear for Round 3.
+
+Summary
+
+    Odd Rounds (1, 3, 5...): Training & Audit.
+
+    Even Rounds (2, 4, 6...): Upload & Aggregation.
+
+ -->
