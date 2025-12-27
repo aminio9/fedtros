@@ -92,7 +92,7 @@ cd FedOSQ-Chain && poetry run python run_client.py --cid 2 --data_path data/proc
 cd FedOSQ-Chain && poetry run python run_client.py --cid 3 --data_path data/processed/client_3_train.pt
 
 # Run Multiple Node like clients 1 to 50
-python run_client.py --cid_range "1-5" --data_path "./data/processed/client_{cid}_train.pt"
+poetry run python run_client.py --cid_range "1-5" --data_path "./data/processed/client_{cid}_train.pt"
 ```
 Logs go to `logs/`. Figures and reports go to `figures/` and `figures/clients/client_<cid>/`.
 
