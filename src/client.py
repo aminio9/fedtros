@@ -297,28 +297,30 @@ class FlowerClient(fl.client.NumPyClient):
 
             # 3. Reconstruction: Calculate "Surprise" (Utility)
             # Sample z using reparameterization
-            std = torch.exp(0.5 * logvar)
-            eps = torch.randn_like(std)
-            z = mu + eps * std
+            # std = torch.exp(0.5 * logvar)
+            # eps = torch.randn_like(std)
+            # z = mu + eps * std
 
             # Decode
-            recon_states = self.agent.generation_net(z, actions)
+            # recon_states = self.agent.generation_net(z, actions)
 
             # Calculate MSE Loss (High loss = Agent doesn't understand this data = High Utility)
-            loss = F.mse_loss(recon_states, states, reduction="none")
-            avg_loss = loss.mean().item()
+            # loss = F.mse_loss(recon_states, states, reduction="none")
+            # avg_loss = loss.mean().item()
 
             # 4. Average the batch to get a single vector for the Server
             avg_mu = mu.mean(dim=0).cpu().numpy().flatten().tolist()
-            avg_logvar = logvar.mean().item()  # Scalar uncertainty score
+            # avg_logvar = logvar.mean().item()  # Scalar uncertainty score
 
         self.agent.prior_net.train()
-        self.agent.generation_net.train()
+        # self.agent.generation_net.train()
 
         return {
             "mu_vector": avg_mu,  # This is 'h' (vector)
-            "uncertainty": avg_logvar,  # Scalar
-            "recon_loss": avg_loss,  # Scalar (Utility Proxy)
+            # "uncertainty": avg_logvar,  # Scalar
+            # "recon_loss": avg_loss,  # Scalar (Utility Proxy)
+            "uncertainty": 0.0,       # <--- HARDCODE TO 0.0
+            "recon_loss": 0.0         # <--- HARDCODE TO 0.0
         }
 
     def _run_local_eval_logic(self, metrics: Dict[str, float], prefix: str):

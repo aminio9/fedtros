@@ -195,8 +195,12 @@ class FMRL_LA_Strategy(FedAvg):
 
                 # --- FIX 2: Unpack New CVAE Signals ---
                 # Default to 0.0 if missing (backward compatibility)
-                uncertainty = float(metrics.get("uncertainty", 0.0))
-                recon_loss = float(metrics.get("utility_loss", 0.0))
+                # uncertainty = float(metrics.get("uncertainty", 0.0))
+                # recon_loss = float(metrics.get("utility_loss", 0.0))
+                
+                # FORCE ZEROS (So AsyncCritic inputs stay valid)
+                uncertainty = 0.0
+                recon_loss = 0.0
 
             except Exception as e:
                 logger.warning(f"Client {client.cid} sent bad metadata: {e}")
