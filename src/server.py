@@ -193,29 +193,28 @@ class FMRL_LA_Strategy(FedAvg):
                 r_val = float(metrics["recent_reward"])
                 r_hist = float(metrics["history_reward"])
 
-                # --- FIX 2: Unpack New CVAE Signals ---
-                # Default to 0.0 if missing (backward compatibility)
-                # uncertainty = float(metrics.get("uncertainty", 0.0))
-                # recon_loss = float(metrics.get("utility_loss", 0.0))
-                
-                # FORCE ZEROS (So AsyncCritic inputs stay valid)
-                uncertainty = 0.0
-                recon_loss = 0.0
+                # --- FIX 2: Unpack "Perfect Payload" Signals ---
+                # 'utility_loss' maps to Reconstruction Loss (Novelty)
+                # 'td_error' maps to TD Error (Learning)
+                # We use .get(..., 0.0) for backward compatibility
+                recon_loss = float(metrics.get("utility_loss", 0.0))
+                td_error = float(metrics.get("td_error", 0.0))
 
             except Exception as e:
                 logger.warning(f"Client {client.cid} sent bad metadata: {e}")
                 continue
 
-            # 2. Prepare Tensors (Add 'unc' and 'loss')
+            # 2. Prepare Tensors (5 Inputs for Critic)
+            # Keys: h, r, rh, recon, td
             data = {
                 "h": torch.tensor([h_vec], dtype=torch.float32, device=self.device),
                 "r": torch.tensor([[r_val]], dtype=torch.float32, device=self.device),
                 "rh": torch.tensor([[r_hist]], dtype=torch.float32, device=self.device),
-                "unc": torch.tensor(
-                    [[uncertainty]], dtype=torch.float32, device=self.device
-                ),
-                "loss": torch.tensor(
+                "recon": torch.tensor(
                     [[recon_loss]], dtype=torch.float32, device=self.device
+                ),
+                "td": torch.tensor(
+                    [[td_error]], dtype=torch.float32, device=self.device
                 ),
             }
             self.stage1_data_cache[client.cid] = data
@@ -224,9 +223,9 @@ class FMRL_LA_Strategy(FedAvg):
             critic = self._get_critic(client.cid)
             critic.eval()
             with torch.no_grad():
-                # --- FIX 3: Match AsyncCritic signature ---
+                # --- FIX 3: Match AsyncCritic signature (h, r, rh, recon, td) ---
                 w_i = critic(
-                    data["h"], data["r"], data["rh"], data["unc"], data["loss"]
+                    data["h"], data["r"], data["rh"], data["recon"], data["td"]
                 ).item()
 
             # 4. Selection (Logic remains same)
@@ -242,17 +241,15 @@ class FMRL_LA_Strategy(FedAvg):
                     client.cid,
                     f"{r_val:.2f}",
                     f"{w_i:.4f}",
-                    f"L:{recon_loss:.3f}",
+                    f"TD:{td_error:.3f}",
                     "YES" if is_selected else "NO",
                 ]
             )
 
-        # ... (Rest of logic remains same) ...
-
         # Update Table Header for clarity
         logger.info(f"\n{'-' * 60}")
         logger.info(
-            f"{'Client':<8} | {'Reward':<8} | {'Utility':<8} | {'Loss':<8} | {'Selected'}"
+            f"{'Client':<8} | {'Reward':<8} | {'Utility':<8} | {'TD Err':<8} | {'Selected'}"
         )
         logger.info(f"{'-' * 60}")
         for row in selection_log:
@@ -260,49 +257,6 @@ class FMRL_LA_Strategy(FedAvg):
                 f"{row[0]:<8} | {row[1]:<8} | {row[2]:<8} | {row[3]:<8} | {row[4]}"
             )
         logger.info(f"{'-' * 60}\n")
-
-    def _phase_b_logic(self, results, server_round):
-        weighted_weights = []
-        total_utility = 0.0
-        global_reward = 0.0
-        is_warmup = server_round <= self.warmup_rounds
-
-        if is_warmup:
-            logger.info(
-                f"   > [Warmup Round {server_round}] Using Standard FedAvg (w=1.0)"
-            )
-
-        for client, fit_res in results:
-            if is_warmup:
-                w_i = 1.0
-            else:
-                w_i = self.utilities_cache.get(client.cid, 1.0)
-                w_i = max(0.001, min(w_i, 100.0))
-
-            weights = parameters_to_ndarrays(fit_res.parameters)
-            weighted_weights.append((weights, w_i))
-            total_utility += w_i
-            global_reward += fit_res.metrics.get("recent_reward", 0.0)
-
-        # AGGREGATION
-        if weighted_weights:
-            normalized_weights = [
-                (w, util / total_utility) for w, util in weighted_weights
-            ]
-            new_weights = [np.zeros_like(w) for w in weighted_weights[0][0]]
-            for weights, norm_w in normalized_weights:
-                for i, layer in enumerate(weights):
-                    new_weights[i] += layer * norm_w
-
-            avg_reward = global_reward / len(results) if results else 0.0
-            self._train_server_models(results, avg_reward)
-
-            if avg_reward != 0:
-                REWARD_HISTORY.append((len(REWARD_HISTORY) + 1, avg_reward))
-
-            return ndarrays_to_parameters(new_weights)
-
-        return self.saved_global_parameters
 
     def _train_server_models(self, results, actual_reward):
         try:
@@ -320,7 +274,10 @@ class FMRL_LA_Strategy(FedAvg):
                 critic.train()
 
                 # --- FIX 4: Pass all 5 cached tensors to train the critic ---
-                w = critic(data["h"], data["r"], data["rh"], data["unc"], data["loss"])
+                # Must match the order in AsyncCritic.forward
+                w = critic(
+                    data["h"], data["r"], data["rh"], data["recon"], data["td"]
+                )
 
                 utils_list.append(w)
                 hidden_list.append(data["h"])
@@ -331,7 +288,7 @@ class FMRL_LA_Strategy(FedAvg):
             w_cat = torch.cat(utils_list, dim=1)
             s_cat = torch.cat(hidden_list, dim=1)
 
-            # Safe padding logic (same as before)
+            # Safe padding logic
             curr_dim = s_cat.shape[1]
             if curr_dim < self.state_dim:
                 s_cat = F.pad(s_cat, (0, self.state_dim - curr_dim))
@@ -348,8 +305,8 @@ class FMRL_LA_Strategy(FedAvg):
 
         except Exception as e:
             logger.error(f"Server model training failed: {e}")
-
-
+            
+            
 def aggregate_fit_metrics(
     fit_metrics: List[Tuple[int, Dict[str, fl.common.Scalar]]],
 ) -> Dict[str, float]:

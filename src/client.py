@@ -143,7 +143,7 @@ class FlowerClient(fl.client.NumPyClient):
     def fit(
         self, parameters: Union[List[np.ndarray], Parameters], config: Dict[str, Any]
     ) -> Tuple[List[np.ndarray], int, Dict[str, float]]:
-
+        
         # 1. Determine Phase
         phase = config.get("phase", "standard")
         round_num = config.get("server_round", "?")
@@ -153,12 +153,8 @@ class FlowerClient(fl.client.NumPyClient):
         # =========================================================
         if phase == "standard":
             logger.info(f"Client {self.cid} [Standard FedAvg]: Round {round_num}")
-
-            param_list = (
-                parameters
-                if isinstance(parameters, list)
-                else parameters_to_ndarrays(parameters)
-            )
+            
+            param_list = parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
             self.set_parameters(param_list)
             num_steps_trained, metrics = self._perform_training_loop()
             updated_params = self.agent.get_federated_parameters()
@@ -171,50 +167,47 @@ class FlowerClient(fl.client.NumPyClient):
             logger.info(f"Client {self.cid} [FMRL Phase A]: Round {round_num}")
 
             # A. Update Global Model
-            param_list = (
-                parameters
-                if isinstance(parameters, list)
-                else parameters_to_ndarrays(parameters)
-            )
+            param_list = parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
             self.set_parameters(param_list)
 
             # B. Train
             num_steps_trained, metrics = self._perform_training_loop()
 
-            # C. Generate Audit Metadata (The "Hidden State" and "Utility")
+            # C. Generate Audit Metadata
             self.lifetime_reward += metrics.get("total_reward", 0.0)
-
-            # --- NEW LOGIC START ---
-            # We calculate specific CVAE metrics to help the Server Critic
-            audit_signals = self._calculate_audit_signals()
-            # --- NEW LOGIC END ---
+            
+            # --- CALCULATE PERFECT PAYLOAD SIGNALS ---
+            # Returns: {'mu_vector', 'td_error', 'recon_loss'}
+            audit_signals = self._calculate_audit_signals() 
 
             # D. Cache Everything
             self.cached_weights = self.agent.get_federated_parameters()
             self.cached_metrics = metrics.copy()
-
+            
             # Prepare the payload for the server critic
-            self.cached_metrics.update(
-                {
-                    "cid": self.cid,
-                    "total_steps": float(num_steps_trained),
-                    # 1. Hidden Info (h_i): The latent features of recent experience
-                    "hidden_info": json.dumps(audit_signals["mu_vector"]),
-                    # 2. Reward (r_i): Recent performance
-                    "recent_reward": metrics.get("avg_reward_per_episode", 0.0),
-                    "history_reward": self.lifetime_reward,
-                    # 3. Utility Proxies (Optional, but good for your CVAE)
-                    "uncertainty": audit_signals["uncertainty"],  # LogVar
-                    "utility_loss": audit_signals[
-                        "recon_loss"
-                    ],  # Reconstruction Error (Surprise)
-                }
-            )
+            self.cached_metrics.update({
+                "cid": self.cid,
+                "total_steps": float(num_steps_trained),
+                
+                # 1. Hidden State (Context)
+                "hidden_info": json.dumps(audit_signals["mu_vector"]), 
+                
+                # 2. Performance Metrics
+                "recent_reward": metrics.get("avg_reward_per_episode", 0.0),
+                "history_reward": self.lifetime_reward,
+                
+                # 3. Novelty/Utility Metrics (The "Perfect Payload" components)
+                # Map internal keys to what Server expects
+                "utility_loss": audit_signals["recon_loss"], # Maps to 'recon' input in server
+                "td_error": audit_signals["td_error"],       # Maps to 'td' input in server
+            })
 
             logger.info(
-                f"   > Client {self.cid}: Caching weights. Sending Signals (Loss: {audit_signals['recon_loss']:.4f})."
+                f"   > Client {self.cid}: Caching weights. Signals -> "
+                f"Reward: {metrics.get('avg_reward_per_episode', 0):.2f}, "
+                f"TD: {audit_signals['td_error']:.4f}"
             )
-
+            
             # E. Return EMPTY weights (Server decides if it wants them later)
             return [], num_steps_trained, self.cached_metrics
 
@@ -223,7 +216,7 @@ class FlowerClient(fl.client.NumPyClient):
         # =========================================================
         elif phase == "upload":
             logger.info(f"Client {self.cid} [FMRL Phase B]: Selected! Uploading.")
-
+            
             if not self.cached_weights:
                 logger.error("   > Error: No cached weights found!")
                 return self.agent.get_federated_parameters(), 0, {"error": 1.0}
@@ -235,7 +228,8 @@ class FlowerClient(fl.client.NumPyClient):
         else:
             logger.warning(f"Unknown Phase: {phase}")
             return [], 0, {}
-
+        
+        
     # --- INTERNAL TRAINING HELPER ---
     def _perform_training_loop(self) -> Tuple[int, Dict[str, float]]:
         """Shared training logic for both Standard and FMRL modes."""
@@ -268,61 +262,89 @@ class FlowerClient(fl.client.NumPyClient):
 
     def _calculate_audit_signals(self) -> Dict[str, Any]:
         """
-        Calculates the Hidden State (h) and Utility metrics using the CVAE.
-        Instead of a random reset state, we sample the Replay Buffer to get
-        a representation of the ACTUAL distribution this client is facing.
+        Calculates the 'Perfect Payload' for the Server Critic:
+        1. Hidden State (Mu): The agent's compressed belief of the context.
+        2. TD-Error: How much the agent is currently 'learning' (RL Surprise).
+        3. Recon Loss: Novelty/Anomaly score (Commented out for now).
         """
-        # 1. Get a batch of recent experiences
+        # 1. Sample Batch (Safe unpacking with *_)
         if len(self.buffer) < self.cfg.training.batch_size:
-            # Fallback for very first round if buffer is empty
-            state, _ = self.env.reset()
-            if not isinstance(state, torch.Tensor):
-                state = torch.tensor(state, dtype=torch.float32, device=self.device)
-            if state.dim() == 1:
-                states = state.unsqueeze(0)
-            actions = torch.zeros((1, 1), device=self.device)  # Dummy action
-        else:
-            # Sample from buffer to get representative data
-            states, actions, _, _, _ = self.buffer.sample(
-                self.cfg.training.batch_size, self.device
-            )
+             # Fallback for empty buffer
+             return {"mu_vector": [0.0] * self.cfg.model.latent_dim, 
+                     "td_error": 0.0, 
+                     "recon_loss": 0.0}
+        
+        batch = self.buffer.sample(self.cfg.training.batch_size, self.device)
+        # Unpack: states, actions, rewards, next_states, dones, true_actions...
+        states, actions, rewards, next_states, dones, *_ = batch
 
+        # Prepare Networks
         self.agent.prior_net.eval()
-        self.agent.generation_net.eval()
+        self.agent.value_net_main.eval()
+        self.agent.value_net_target.eval()
+        # self.agent.generation_net.eval() # <--- COMMENTED OUT
 
         with torch.no_grad():
-            # 2. Encoder: Get Latent Distribution (The "Hidden State")
-            # We use Prior (s->z) because it represents state belief independent of action
-            mu, logvar = self.agent.prior_net(states)
+            # ---------------------------------------------------------
+            # 1. Hidden State: Prior Network Mu (What the agent "sees")
+            # ---------------------------------------------------------
+            # We use the Prior because it represents the state encoding s -> z
+            mu_prior, logvar_prior = self.agent.prior_net(states)
+            
+            # This vector represents the agent's context (h_i)
+            # We take the mean across the batch to get a representative vector
+            avg_mu_vector = mu_prior.mean(dim=0).cpu().numpy().tolist()
 
-            # 3. Reconstruction: Calculate "Surprise" (Utility)
-            # Sample z using reparameterization
-            # std = torch.exp(0.5 * logvar)
-            # eps = torch.randn_like(std)
-            # z = mu + eps * std
+            # ---------------------------------------------------------
+            # 2. Utility Signal: TD-Error (RL Learning/Surprise)
+            # ---------------------------------------------------------
+            # Logic: High TD error = High "Surprise" = High Learning Potential
+            
+            # Current Q(s, a)
+            # Note: Your decoder takes (z, s). We use mu_prior as z.
+            q_values = self.agent.value_net_main(mu_prior, states)
+            current_q = q_values.gather(1, actions)
 
-            # Decode
-            # recon_states = self.agent.generation_net(z, actions)
+            # Target Q(s', a')
+            next_mu, _ = self.agent.prior_net(next_states)
+            next_q_values = self.agent.value_net_target(next_mu, next_states)
+            max_next_q = next_q_values.max(1)[0].unsqueeze(1)
+            
+            # Bellman Target
+            target_q = rewards + (self.cfg.training.gamma * max_next_q * (1 - dones))
+            
+            # Calculate TD Error (L1 Loss is robust)
+            td_error = F.l1_loss(current_q, target_q).item()
 
-            # Calculate MSE Loss (High loss = Agent doesn't understand this data = High Utility)
-            # loss = F.mse_loss(recon_states, states, reduction="none")
-            # avg_loss = loss.mean().item()
+            # ---------------------------------------------------------
+            # 3. Utility Signal: Reconstruction Error (Novelty)
+            # ---------------------------------------------------------
+            # COMMENTED OUT FOR NOW (as requested)
+            """
+            # Reparameterize
+            std = torch.exp(0.5 * logvar_prior)
+            eps = torch.randn_like(std)
+            z = mu_prior + eps * std
+            
+            # Reconstruct s (z + a -> s_hat)
+            recon_states = self.agent.generation_net(z, actions)
+            recon_loss_batch = F.mse_loss(recon_states, states)
+            recon_loss = recon_loss_batch.item()
+            """
+            recon_loss = 0.0 # Placeholder
 
-            # 4. Average the batch to get a single vector for the Server
-            avg_mu = mu.mean(dim=0).cpu().numpy().flatten().tolist()
-            # avg_logvar = logvar.mean().item()  # Scalar uncertainty score
-
+        # Restore Training Mode
         self.agent.prior_net.train()
-        # self.agent.generation_net.train()
+        self.agent.value_net_main.train()
+        self.agent.value_net_target.train()
+        # self.agent.generation_net.train() # <--- COMMENTED OUT
 
         return {
-            "mu_vector": avg_mu,  # This is 'h' (vector)
-            # "uncertainty": avg_logvar,  # Scalar
-            # "recon_loss": avg_loss,  # Scalar (Utility Proxy)
-            "uncertainty": 0.0,       # <--- HARDCODE TO 0.0
-            "recon_loss": 0.0         # <--- HARDCODE TO 0.0
+            "mu_vector": avg_mu_vector,  # The State (h)
+            "recon_loss": recon_loss,    # Novelty (Currently 0.0)
+            "td_error": td_error         # RL Surprise
         }
-
+        
     def _run_local_eval_logic(self, metrics: Dict[str, float], prefix: str):
         if self.eval_enabled:
             loss, _, local_metrics = self._evaluate_closed_set(
