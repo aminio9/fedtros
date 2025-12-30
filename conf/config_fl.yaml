@@ -31,7 +31,7 @@ strategy:
 
 server:
   address: "127.0.0.1:8090"
-  num_rounds: 100
+  num_rounds: 31
   fraction_fit: 1.0
   fraction_evaluate: 1.0
   min_fit_clients: 10
@@ -90,12 +90,12 @@ preprocess:
   num_clients: 10
   num_shards: 10
   closed_set_test_size: 0.2
-  # raw_file: "data/raw/Bnat.csv"
-  raw_file: "/content/drive/MyDrive/Bnat.csv"
+  raw_file: "data/raw/Bnat.csv"
+  # raw_file: "/content/drive/MyDrive/Bnat.csv"
 
   label_column: "label"
 
-  alpha: 100 # 0.1 = Very Non-IID, 100.0 = IID (Balanced)
+  alpha: 1 # 0.1 = Very Non-IID, 100.0 = IID (Balanced)
 
   known_labels:
     - "Normal"

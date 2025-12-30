@@ -25,19 +25,6 @@ from omegaconf import DictConfig
 
 from .utils import get_device
 
-# Try importing server-side specific models
-try:
-    from .server_models import AsyncCritic, CentralizedAggregator
-except ImportError:
-    # Fallback if running from a different context
-    try:
-        from server_models import AsyncCritic, CentralizedAggregator
-    except ImportError:
-        logger = logging.getLogger("Server")
-        logger.warning(
-            "Could not import server_models. FMRL-LA strategy will fail if selected."
-        )
-
 logger = logging.getLogger("Server")
 
 REWARD_HISTORY: List[Tuple[int, float]] = []
@@ -66,28 +53,52 @@ def get_reward_history() -> List[Tuple[int, float]]:
 
 
 def fit_config_fn(server_round: int) -> Dict[str, fl.common.Scalar]:
-    """Pass the server round number to the client's fit method (Default behavior)."""
-    return {"server_round": server_round}
+    """
+    Pass configuration to the client's fit method.
+    CRITICAL FIX: We sets 'phase' to 'standard' so the client knows
+    it is NOT in the special FMRL two-phase mode.
+    """
+    return {
+        "server_round": server_round,
+        "phase": "standard" 
+    }
 
 
 # ==============================================================================
 # FMRL-LA STRATEGY (Strict Two-Phase Implementation)
-# Matches Paper Fig 2: Broadcast -> Train -> Audit (Stage 1) -> Select -> Upload (Stage 2)
 # ==============================================================================
 class FMRL_LA_Strategy(FedAvg):
     def __init__(self, cfg: DictConfig, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        
+        # --- LAZY IMPORT ---
+        # Only import these models if we are ACTUALLY using this strategy.
+        try:
+            from .server_models import AsyncCritic, CentralizedAggregator
+        except ImportError:
+            try:
+                from server_models import AsyncCritic, CentralizedAggregator
+            except ImportError:
+                logger.error("Could not import server_models. FMRL-LA strategy will fail.")
+                raise
+
         self.cfg = cfg
         self.device = get_device()
 
         self.state_dim = int(cfg.model.latent_dim * cfg.strategy.max_agents)
         self.critics = {}
+        
+        # Initialize Server Models
         self.aggregator = CentralizedAggregator(
             cfg.strategy.max_agents, self.state_dim
         ).to(self.device)
+        
         self.optimizer = optim.Adam(
             self.aggregator.parameters(), lr=cfg.strategy.fmrl_lr
         )
+        
+        # Store the AsyncCritic class for dynamic instantiation later
+        self._AsyncCriticClass = AsyncCritic
 
         # State Machine
         self.is_training_phase = True
@@ -99,7 +110,7 @@ class FMRL_LA_Strategy(FedAvg):
 
     def _get_critic(self, cid):
         if cid not in self.critics:
-            c = AsyncCritic(
+            c = self._AsyncCriticClass(
                 self.cfg.strategy.critic_hidden_dim, self.cfg.model.latent_dim
             ).to(self.device)
             self.optimizer.add_param_group({"params": c.parameters()})
@@ -121,6 +132,7 @@ class FMRL_LA_Strategy(FedAvg):
             )
             self.saved_global_parameters = parameters
 
+            # Explicitly set phase to 'train' for FMRL
             config = {"server_round": server_round, "phase": "train"}
             fit_ins = FitIns(parameters, config)
             return [(client, fit_ins) for client in clients]
@@ -131,12 +143,10 @@ class FMRL_LA_Strategy(FedAvg):
             logger.info(f" ROUND {server_round} [PHASE B]: Uploading & Aggregation")
             logger.info(f"{'=' * 60}")
 
-            # Send instructions ONLY to selected clients
             selected_instructions = []
+            # Explicitly set phase to 'upload' for FMRL
             config = {"server_round": server_round, "phase": "upload"}
-            fit_ins = FitIns(
-                parameters, config
-            )  # Send dummy params (client uses cache)
+            fit_ins = FitIns(parameters, config) 
 
             for client in self.selected_clients_cache:
                 selected_instructions.append((client, fit_ins))
@@ -161,9 +171,7 @@ class FMRL_LA_Strategy(FedAvg):
 
         # === PHASE B RESULT: WEIGHTED AGGREGATION ===
         else:
-            # CHANGE HERE: Pass server_round to phase_b_logic
             new_params = self._phase_b_logic(results, server_round)
-
             self.is_training_phase = True
             return new_params, {}
 
@@ -173,7 +181,6 @@ class FMRL_LA_Strategy(FedAvg):
         self.selected_clients_cache = []
         self.utilities_cache = {}
         self.stage1_data_cache = {}
-
         selection_log = []
 
         for client, fit_res in results:
@@ -201,7 +208,7 @@ class FMRL_LA_Strategy(FedAvg):
             with torch.no_grad():
                 w_i = critic(data["h"], data["r"], data["rh"]).item()
 
-            # 4. Selection (Paper Logic)
+            # 4. Selection
             threshold = getattr(self.cfg.strategy, "utility_threshold", 0.0)
             is_selected = w_i > threshold
 
@@ -210,26 +217,19 @@ class FMRL_LA_Strategy(FedAvg):
                 self.utilities_cache[client.cid] = w_i
 
             selection_log.append(
-                [
-                    client.cid,
-                    f"{r_val:.2f}",
-                    f"{w_i:.4f}",
-                    "YES" if is_selected else "NO",
-                ]
+                [client.cid, f"{r_val:.2f}", f"{w_i:.4f}", "YES" if is_selected else "NO"]
             )
 
-        # Force select at least 1 to avoid crash
+        # Force select at least 1
         if not self.selected_clients_cache and results:
             logger.warning("   ! All clients rejected. Force-selecting random one.")
-            best_c = results[0][0]  # Simple fallback
+            best_c = results[0][0]
             self.selected_clients_cache.append(best_c)
             self.utilities_cache[best_c.cid] = 1.0
 
         # PRINT TABLE
         logger.info(f"\n{'-' * 50}")
-        logger.info(
-            f"{'Client':<10} | {'Reward':<10} | {'Utility(w)':<12} | {'Selected'}"
-        )
+        logger.info(f"{'Client':<10} | {'Reward':<10} | {'Utility(w)':<12} | {'Selected'}")
         logger.info(f"{'-' * 50}")
         for row in selection_log:
             logger.info(f"{row[0]:<10} | {row[1]:<10} | {row[2]:<12} | {row[3]}")
@@ -239,24 +239,16 @@ class FMRL_LA_Strategy(FedAvg):
         weighted_weights = []
         total_utility = 0.0
         global_reward = 0.0
-
-        # CHECK: Are we in the warmup period?
         is_warmup = server_round <= self.warmup_rounds
 
         if is_warmup:
-            logger.info(
-                f"   > [Warmup Round {server_round}/{self.warmup_rounds}] Using Standard FedAvg (w=1.0)"
-            )
+            logger.info(f"   > [Warmup Round {server_round}] Using Standard FedAvg (w=1.0)")
 
         for client, fit_res in results:
-            # LOGIC:
-            # If Warmup -> Force w_i = 1.0 (Standard FedAvg)
-            # If Normal -> Use Critic's w_i (FMRL-LA)
             if is_warmup:
                 w_i = 1.0
             else:
                 w_i = self.utilities_cache.get(client.cid, 1.0)
-                # Safety Clip to prevent explosion after warmup
                 w_i = max(0.001, min(w_i, 100.0))
 
             weights = parameters_to_ndarrays(fit_res.parameters)
@@ -269,14 +261,11 @@ class FMRL_LA_Strategy(FedAvg):
             normalized_weights = [
                 (w, util / total_utility) for w, util in weighted_weights
             ]
-
             new_weights = [np.zeros_like(w) for w in weighted_weights[0][0]]
             for weights, norm_w in normalized_weights:
                 for i, layer in enumerate(weights):
                     new_weights[i] += layer * norm_w
 
-            # CRITICAL: We still TRAIN the server models even during warmup!
-            # This allows them to "learn" the environment before they are allowed to "touch" the weights.
             avg_reward = global_reward / len(results) if results else 0.0
             self._train_server_models(results, avg_reward)
 
@@ -296,16 +285,14 @@ class FMRL_LA_Strategy(FedAvg):
 
             for client, _ in results:
                 data = self.stage1_data_cache.get(client.cid)
-                if not data:
-                    continue
+                if not data: continue
                 critic = self._get_critic(client.cid)
                 critic.train()
                 w = critic(data["h"], data["r"], data["rh"])
                 utils_list.append(w)
                 hidden_list.append(data["h"])
 
-            if not utils_list:
-                return
+            if not utils_list: return
 
             w_cat = torch.cat(utils_list, dim=1)
             s_cat = torch.cat(hidden_list, dim=1)
@@ -318,65 +305,45 @@ class FMRL_LA_Strategy(FedAvg):
                 s_cat = s_cat[:, : self.state_dim]
 
             q_tot = self.aggregator(w_cat, s_cat)
-            loss = F.mse_loss(
-                q_tot, torch.tensor([[actual_reward]], device=self.device)
-            )
+            loss = F.mse_loss(q_tot, torch.tensor([[actual_reward]], device=self.device))
             loss.backward()
-
-            # Clip Gradients to prevent critic explosion
             torch.nn.utils.clip_grad_norm_(self.aggregator.parameters(), 1.0)
             self.optimizer.step()
         except Exception as e:
             logger.error(f"Server model training failed: {e}")
 
 
-def aggregate_fit_metrics(
-    fit_metrics: List[Tuple[int, Dict[str, fl.common.Scalar]]],
-) -> Dict[str, float]:
-    """Simple aggregation for standard FedAvg/FedProx."""
-    if not fit_metrics:
-        return {}
-
-    total_examples = sum(num_examples for num_examples, _ in fit_metrics)
-    if total_examples == 0:
-        return {}
-
+def aggregate_fit_metrics(fit_metrics: List[Tuple[int, Dict[str, fl.common.Scalar]]]) -> Dict[str, float]:
+    if not fit_metrics: return {}
+    total_examples = sum(num for num, _ in fit_metrics)
+    if total_examples == 0: return {}
     aggregated = {}
     for num, metrics in fit_metrics:
         for k, v in metrics.items():
             if isinstance(v, (int, float)):
                 aggregated[k] = aggregated.get(k, 0.0) + (float(v) * num)
-
     return {k: v / total_examples for k, v in aggregated.items()}
 
 
-def aggregate_evaluate_metrics(
-    eval_metrics: List[Tuple[int, Dict[str, fl.common.Scalar]]],
-) -> Dict[str, float]:
-    """Aggregate evaluation metrics."""
-    if not eval_metrics:
-        return {}
-
-    total_examples = sum(num_examples for num_examples, _ in eval_metrics)
-    if total_examples == 0:
-        return {}
-
+def aggregate_evaluate_metrics(eval_metrics: List[Tuple[int, Dict[str, fl.common.Scalar]]]) -> Dict[str, float]:
+    if not eval_metrics: return {}
+    total_examples = sum(num for num, _ in eval_metrics)
+    if total_examples == 0: return {}
     aggregated = {}
     for num, metrics in eval_metrics:
         for k, v in metrics.items():
             if isinstance(v, (int, float)):
                 aggregated[k] = aggregated.get(k, 0.0) + (float(v) * num)
-
     return {k: v / total_examples for k, v in aggregated.items()}
 
 
 def get_strategy(cfg: DictConfig) -> Strategy:
     """
-    Factory to return the appropriate strategy (FMRL-LA, FedProx, or FedAvg).
+    Factory to return the appropriate strategy.
     """
     strat_name = getattr(cfg.strategy, "name", "fedavg").lower()
 
-    # Common arguments for all strategies
+    # Common arguments
     args = dict(
         fraction_fit=cfg.server.fraction_fit,
         fraction_evaluate=cfg.server.fraction_evaluate,
@@ -401,21 +368,15 @@ def get_strategy(cfg: DictConfig) -> Strategy:
         )
 
     else:
-        # Default to FedAvg
         logger.info("--- Strategy: FedAvg (Simple) ---")
         return FedAvg(fit_metrics_aggregation_fn=aggregate_fit_metrics, **args)
 
 
 def run_server(cfg: DictConfig, device: Optional[torch.device] = None) -> None:
-    """Start the Flower server."""
     reset_reward_history()
     strategy = get_strategy(cfg)
 
-    logger.info(
-        "Starting server at %s for %s rounds.",
-        cfg.server.address,
-        cfg.server.num_rounds,
-    )
+    logger.info("Starting server at %s for %s rounds.", cfg.server.address, cfg.server.num_rounds)
     try:
         fl.server.start_server(
             server_address=cfg.server.address,
@@ -424,19 +385,15 @@ def run_server(cfg: DictConfig, device: Optional[torch.device] = None) -> None:
         )
     except RuntimeError as exc:
         if "Failed to bind to address" in str(exc):
-            logger.error(
-                "Unable to bind to %s. Port in use.",
-                cfg.server.address,
-            )
+            logger.error("Unable to bind to %s. Port in use.", cfg.server.address)
             raise SystemExit(1) from exc
         raise
 
 
 def plot_reward_history(cfg: DictConfig) -> None:
-    """Plot the aggregated reward per round and save it to the figures directory."""
     history = get_reward_history()
     if not history:
-        logger.warning("No reward history collected; skipping reward plot.")
+        logger.warning("No reward history collected.")
         return
 
     figure_dir = _resolve_path(cfg.paths.figures_dir)
