@@ -54,6 +54,7 @@ def _resolve_project_path(path_like: Union[str, Path]) -> Path:
     path = Path(path_like)
     return path if path.is_absolute() else PROJECT_ROOT / path
 
+
 class FlowerClient(fl.client.NumPyClient):
     """Flower NumPyClient implementing Fed-Per/FedAvg with hybrid logic."""
 
@@ -71,7 +72,9 @@ class FlowerClient(fl.client.NumPyClient):
 
         device_cfg = getattr(cfg, "device", None)
         self._move_data_to_device = (
-            bool(getattr(device_cfg, "move_data_to_device", False)) if device_cfg else False
+            bool(getattr(device_cfg, "move_data_to_device", False))
+            if device_cfg
+            else False
         )
 
         logger.info("Client %s: Initializing...", cid)
@@ -108,7 +111,9 @@ class FlowerClient(fl.client.NumPyClient):
         self.lifetime_reward = 0.0
 
         # Directories
-        figures_root = _resolve_project_path(getattr(cfg.paths, "figures_dir", "figures"))
+        figures_root = _resolve_project_path(
+            getattr(cfg.paths, "figures_dir", "figures")
+        )
         self.client_figure_dir: Path = figures_root / "clients" / f"client_{cid}"
         self.client_figure_dir.mkdir(parents=True, exist_ok=True)
 
@@ -138,9 +143,8 @@ class FlowerClient(fl.client.NumPyClient):
     def fit(
         self, parameters: Union[List[np.ndarray], Parameters], config: Dict[str, Any]
     ) -> Tuple[List[np.ndarray], int, Dict[str, float]]:
-        
+
         # 1. Determine Phase
-        # FIX: Default to 'standard' if no phase key is present (standard FedAvg)
         phase = config.get("phase", "standard")
         round_num = config.get("server_round", "?")
 
@@ -149,62 +153,83 @@ class FlowerClient(fl.client.NumPyClient):
         # =========================================================
         if phase == "standard":
             logger.info(f"Client {self.cid} [Standard FedAvg]: Round {round_num}")
-            
-            # A. Update Global Model
-            param_list = parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
+
+            param_list = (
+                parameters
+                if isinstance(parameters, list)
+                else parameters_to_ndarrays(parameters)
+            )
             self.set_parameters(param_list)
-
-            # B. Train
             num_steps_trained, metrics = self._perform_training_loop()
-
-            # C. Return Weights IMMEDIATELY
             updated_params = self.agent.get_federated_parameters()
             return updated_params, num_steps_trained, metrics
 
         # =========================================================
-        # FMRL PHASE A: TRAIN & AUDIT
+        # FMRL PHASE A: TRAIN & AUDIT (Calculate H_i and W_i)
         # =========================================================
         elif phase == "train":
             logger.info(f"Client {self.cid} [FMRL Phase A]: Round {round_num}")
 
             # A. Update Global Model
-            param_list = parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
+            param_list = (
+                parameters
+                if isinstance(parameters, list)
+                else parameters_to_ndarrays(parameters)
+            )
             self.set_parameters(param_list)
 
             # B. Train
             num_steps_trained, metrics = self._perform_training_loop()
 
-            # C. Generate Audit Metadata
+            # C. Generate Audit Metadata (The "Hidden State" and "Utility")
             self.lifetime_reward += metrics.get("total_reward", 0.0)
-            h_vec = self._get_hidden_state_for_audit()
+
+            # --- NEW LOGIC START ---
+            # We calculate specific CVAE metrics to help the Server Critic
+            audit_signals = self._calculate_audit_signals()
+            # --- NEW LOGIC END ---
 
             # D. Cache Everything
             self.cached_weights = self.agent.get_federated_parameters()
             self.cached_metrics = metrics.copy()
-            self.cached_metrics.update({
-                "hidden_state": json.dumps(h_vec),
-                "recent_reward": metrics.get("avg_reward_per_episode", 0.0),
-                "history_reward": self.lifetime_reward,
-                "total_steps": float(num_steps_trained),
-                "cid": self.cid
-            })
 
-            logger.info(f"   > Client {self.cid}: Caching weights. Sending Metadata only.")
-            
-            # E. Return EMPTY weights
+            # Prepare the payload for the server critic
+            self.cached_metrics.update(
+                {
+                    "cid": self.cid,
+                    "total_steps": float(num_steps_trained),
+                    # 1. Hidden Info (h_i): The latent features of recent experience
+                    "hidden_info": json.dumps(audit_signals["mu_vector"]),
+                    # 2. Reward (r_i): Recent performance
+                    "recent_reward": metrics.get("avg_reward_per_episode", 0.0),
+                    "history_reward": self.lifetime_reward,
+                    # 3. Utility Proxies (Optional, but good for your CVAE)
+                    "uncertainty": audit_signals["uncertainty"],  # LogVar
+                    "utility_loss": audit_signals[
+                        "recon_loss"
+                    ],  # Reconstruction Error (Surprise)
+                }
+            )
+
+            logger.info(
+                f"   > Client {self.cid}: Caching weights. Sending Signals (Loss: {audit_signals['recon_loss']:.4f})."
+            )
+
+            # E. Return EMPTY weights (Server decides if it wants them later)
             return [], num_steps_trained, self.cached_metrics
 
         # =========================================================
-        # FMRL PHASE B: UPLOAD
+        # FMRL PHASE B: UPLOAD (If selected by Critic)
         # =========================================================
         elif phase == "upload":
             logger.info(f"Client {self.cid} [FMRL Phase B]: Selected! Uploading.")
-            
+
             if not self.cached_weights:
                 logger.error("   > Error: No cached weights found!")
                 return self.agent.get_federated_parameters(), 0, {"error": 1.0}
 
             steps = int(self.cached_metrics.get("total_steps", 0))
+            # Return the weights we cached in Phase A
             return self.cached_weights, steps, self.cached_metrics
 
         else:
@@ -230,7 +255,9 @@ class FlowerClient(fl.client.NumPyClient):
             try:
                 features = self.env.all_features_s.clone()
                 labels = self.env.all_labels_a_t.clone()
-                gen_metrics = self.agent.train_generation_network(features, labels, generator_cfg)
+                gen_metrics = self.agent.train_generation_network(
+                    features, labels, generator_cfg
+                )
                 metrics.update(gen_metrics)
             except Exception as exc:
                 logger.warning(f"Generator training failed: {exc}")
@@ -239,19 +266,66 @@ class FlowerClient(fl.client.NumPyClient):
         self._run_local_eval_logic(metrics, "LOCAL")
         return num_steps_trained, metrics
 
-    def _get_hidden_state_for_audit(self) -> List[float]:
-        state, _ = self.env.reset()
-        if not isinstance(state, torch.Tensor):
-            state = torch.tensor(state, dtype=torch.float32, device=self.device)
-        if state.dim() == 1:
-            state = state.unsqueeze(0)
+    def _calculate_audit_signals(self) -> Dict[str, Any]:
+        """
+        Calculates the Hidden State (h) and Utility metrics using the CVAE.
+        Instead of a random reset state, we sample the Replay Buffer to get
+        a representation of the ACTUAL distribution this client is facing.
+        """
+        # 1. Get a batch of recent experiences
+        if len(self.buffer) < self.cfg.training.batch_size:
+            # Fallback for very first round if buffer is empty
+            state, _ = self.env.reset()
+            if not isinstance(state, torch.Tensor):
+                state = torch.tensor(state, dtype=torch.float32, device=self.device)
+            if state.dim() == 1:
+                states = state.unsqueeze(0)
+            actions = torch.zeros((1, 1), device=self.device)  # Dummy action
+        else:
+            # Sample from buffer to get representative data
+            states, actions, _, _, _ = self.buffer.sample(
+                self.cfg.training.batch_size, self.device
+            )
+
+        self.agent.prior_net.eval()
+        self.agent.generation_net.eval()
+
         with torch.no_grad():
-            mu, _ = self.agent.prior_net(state)
-            return mu.cpu().numpy().flatten().tolist()
+            # 2. Encoder: Get Latent Distribution (The "Hidden State")
+            # We use Prior (s->z) because it represents state belief independent of action
+            mu, logvar = self.agent.prior_net(states)
+
+            # 3. Reconstruction: Calculate "Surprise" (Utility)
+            # Sample z using reparameterization
+            std = torch.exp(0.5 * logvar)
+            eps = torch.randn_like(std)
+            z = mu + eps * std
+
+            # Decode
+            recon_states = self.agent.generation_net(z, actions)
+
+            # Calculate MSE Loss (High loss = Agent doesn't understand this data = High Utility)
+            loss = F.mse_loss(recon_states, states, reduction="none")
+            avg_loss = loss.mean().item()
+
+            # 4. Average the batch to get a single vector for the Server
+            avg_mu = mu.mean(dim=0).cpu().numpy().flatten().tolist()
+            avg_logvar = logvar.mean().item()  # Scalar uncertainty score
+
+        self.agent.prior_net.train()
+        self.agent.generation_net.train()
+
+        return {
+            "mu_vector": avg_mu,  # This is 'h' (vector)
+            "uncertainty": avg_logvar,  # Scalar
+            "recon_loss": avg_loss,  # Scalar (Utility Proxy)
+        }
 
     def _run_local_eval_logic(self, metrics: Dict[str, float], prefix: str):
         if self.eval_enabled:
-            loss, _, local_metrics = self._evaluate_closed_set(0, prefix="LOCAL_PRE_AGG")
+            loss, _, local_metrics = self._evaluate_closed_set(
+                0, prefix="LOCAL_PRE_AGG"
+            )
             metrics.update({f"local_{k}": v for k, v in local_metrics.items()})
 
     def evaluate(
@@ -260,7 +334,11 @@ class FlowerClient(fl.client.NumPyClient):
         round_num = config.get("server_round", "?")
         logger.info("Client %s: evaluate() called for round %s", self.cid, round_num)
 
-        param_list = parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
+        param_list = (
+            parameters
+            if isinstance(parameters, list)
+            else parameters_to_ndarrays(parameters)
+        )
         self.set_parameters(param_list)
 
         try:
@@ -273,16 +351,20 @@ class FlowerClient(fl.client.NumPyClient):
         if not self.eval_enabled or self.eval_loader is None:
             return 0.0, 0, {}
 
-        loss, num_examples, cs_metrics = self._evaluate_closed_set(round_index, prefix="GLOBAL_POST_AGG")
+        loss, num_examples, cs_metrics = self._evaluate_closed_set(
+            round_index, prefix="GLOBAL_POST_AGG"
+        )
         metrics.update(cs_metrics)
-        
+
         # EVT Logic (Optional)
         evt_cfg = getattr(self.cfg, "evt", None)
         if evt_cfg and bool(getattr(evt_cfg, "enabled", False)):
             try:
                 features = self.env.all_features_s.clone()
                 labels = self.env.all_labels_a_t.clone()
-                evt_metrics = self._fit_evt_and_run_openset_eval(features, labels, evt_cfg, prefix="GLOBAL")
+                evt_metrics = self._fit_evt_and_run_openset_eval(
+                    features, labels, evt_cfg, prefix="GLOBAL"
+                )
                 metrics.update(evt_metrics)
             except Exception as e:
                 logger.error(f"EVT Eval failed: {e}")
@@ -559,18 +641,22 @@ class FlowerClient(fl.client.NumPyClient):
             open_features = (
                 data["features"]
                 .to(
-                    device=self.device
-                    if self._move_data_to_device
-                    else torch.device("cpu")
+                    device=(
+                        self.device
+                        if self._move_data_to_device
+                        else torch.device("cpu")
+                    )
                 )
                 .float()
             )
             open_labels = (
                 data["labels"]
                 .to(
-                    device=self.device
-                    if self._move_data_to_device
-                    else torch.device("cpu")
+                    device=(
+                        self.device
+                        if self._move_data_to_device
+                        else torch.device("cpu")
+                    )
                 )
                 .long()
             )
