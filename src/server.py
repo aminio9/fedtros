@@ -177,8 +177,8 @@ class FMRL_LA_Strategy(FedAvg):
                 
                 # 1. Parse Basic Info
                 h_vec = json.loads(metrics["hidden_info"])
-                r_val = float(metrics["recent_reward"])
-                r_hist = float(metrics["history_reward"])
+                r_val = float(metrics["recent_reward"]) / 100.0 
+                r_hist = float(metrics["history_reward"]) / (100.0 * max(1, self.cfg.server.num_rounds))
 
                 # 2. Parse New Signals (F1 / TD Error)
                 # Note: 'utility_loss' now carries the F1 score (or Recon Loss)
