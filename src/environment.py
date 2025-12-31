@@ -39,6 +39,8 @@ class BlockchainIntrusionEnv(gym.Env):
         indices: Optional[np.ndarray] = None,
         client_id: Optional[int] = None,
         num_clients: Optional[int] = None,
+        # NON-IID FIX: Accept global number of actions
+        global_num_actions: Optional[int] = None,
     ) -> None:
         super().__init__()
 
@@ -77,8 +79,25 @@ class BlockchainIntrusionEnv(gym.Env):
 
         self.num_total_samples = self.all_features_s.shape[0]
         self.feature_dim = self.all_features_s.shape[1]
-        self.num_actions_nt = int(torch.unique(self.all_labels_a_t).numel())
         self.steps_per_episode = int(steps_per_episode)
+
+        # ------------------------------------------------------------------
+        # NON-IID FIX: Determine Action Space Size
+        # ------------------------------------------------------------------
+        if global_num_actions is not None:
+            # Force the environment to use the global configuration
+            self.num_actions_nt = int(global_num_actions)
+            
+            # Safety Check: Ensure local data doesn't contain labels outside global universe
+            max_label = self.all_labels_a_t.max().item()
+            if max_label >= self.num_actions_nt:
+                raise ValueError(
+                    f"Data contains label {max_label} which is >= global_num_actions ({self.num_actions_nt}). "
+                    "Check your config or data mapping."
+                )
+        else:
+            # Fallback: Infer from data (Only works for IID or single-agent)
+            self.num_actions_nt = int(torch.unique(self.all_labels_a_t).numel())
 
         # ------------------------------------------------------------------
         # Determine which indices belong to THIS env/agent

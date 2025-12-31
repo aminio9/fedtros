@@ -36,7 +36,7 @@ try:
     from .replay_buffer import ExperienceReplayBuffer
     from .evt import save_evt_collection, save_evt_meta
 except ImportError:  # pragma: no cover - standalone usage
-    from agent import Agent
+    from Agent import Agent
     from environment import BlockchainIntrusionEnv
     from local_training import run_local_training_round
     from models import OpenSetQChainModelFactory
@@ -79,20 +79,37 @@ class FlowerClient(fl.client.NumPyClient):
 
         logger.info("Client %s: Initializing...", cid)
         self.model_factory = OpenSetQChainModelFactory(cfg.model)
+
+        # NON-IID FIX: Pass global number of actions to Environment
         self.env = BlockchainIntrusionEnv(
             processed_data_path=self.data_path,
             steps_per_episode=cfg.training.steps_per_episode,
             device=self.device,
             move_data_to_device=self._move_data_to_device,
+            global_num_actions=cfg.model.num_actions,
         )
 
-        if (
-            cfg.model.state_dim != self.env.feature_dim
-            or cfg.model.num_actions != self.env.num_actions_nt
-        ):
+        # -----------------------------------------------------------
+        # VALIDATION: Relaxed for Non-IID
+        # -----------------------------------------------------------
+        if cfg.model.state_dim != self.env.feature_dim:
             raise ValueError(
-                f"Config/Env mismatch on client {cid}. "
-                f"Config (s:{cfg.model.state_dim}), Env (s:{self.env.feature_dim})"
+                f"State Dim mismatch on client {cid}: "
+                f"Config({cfg.model.state_dim}) != Env({self.env.feature_dim})"
+            )
+
+        # It is CRITICAL if env has MORE actions than the model can predict
+        if self.env.num_actions_nt > cfg.model.num_actions:
+            raise ValueError(
+                f"CRITICAL: Environment has more classes ({self.env.num_actions_nt}) "
+                f"than Model output nodes ({cfg.model.num_actions}). Increase config.model.num_actions!"
+            )
+
+        # It is OKAY (Non-IID) if env has FEWER actions. Just warn.
+        if self.env.num_actions_nt < cfg.model.num_actions:
+            logger.warning(
+                f"Client {cid} Non-IID: Env has {self.env.num_actions_nt} classes, "
+                f"Model has {cfg.model.num_actions}. Missing classes will have 0 reward locally."
             )
 
         self.agent = Agent(self.model_factory, cfg.training, self.device)
@@ -143,7 +160,6 @@ class FlowerClient(fl.client.NumPyClient):
     def fit(
         self, parameters: Union[List[np.ndarray], Parameters], config: Dict[str, Any]
     ) -> Tuple[List[np.ndarray], int, Dict[str, float]]:
-        
         # 1. Determine Phase
         phase = config.get("phase", "standard")
         round_num = config.get("server_round", "?")
@@ -153,8 +169,12 @@ class FlowerClient(fl.client.NumPyClient):
         # =========================================================
         if phase == "standard":
             logger.info(f"Client {self.cid} [Standard FedAvg]: Round {round_num}")
-            
-            param_list = parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
+
+            param_list = (
+                parameters
+                if isinstance(parameters, list)
+                else parameters_to_ndarrays(parameters)
+            )
             self.set_parameters(param_list)
             num_steps_trained, metrics = self._perform_training_loop()
             updated_params = self.agent.get_federated_parameters()
@@ -167,7 +187,11 @@ class FlowerClient(fl.client.NumPyClient):
             logger.info(f"Client {self.cid} [FMRL Phase A]: Round {round_num}")
 
             # A. Update Global Model
-            param_list = parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
+            param_list = (
+                parameters
+                if isinstance(parameters, list)
+                else parameters_to_ndarrays(parameters)
+            )
             self.set_parameters(param_list)
 
             # B. Train
@@ -175,39 +199,42 @@ class FlowerClient(fl.client.NumPyClient):
 
             # C. Generate Audit Metadata
             self.lifetime_reward += metrics.get("total_reward", 0.0)
-            
+
             # --- CALCULATE PERFECT PAYLOAD SIGNALS ---
             # Returns: {'mu_vector', 'td_error', 'recon_loss'}
-            audit_signals = self._calculate_audit_signals() 
+            audit_signals = self._calculate_audit_signals()
 
             # D. Cache Everything
             self.cached_weights = self.agent.get_federated_parameters()
             self.cached_metrics = metrics.copy()
-            
+
             # Prepare the payload for the server critic
-            self.cached_metrics.update({
-                "cid": self.cid,
-                "total_steps": float(num_steps_trained),
-                
-                # 1. Hidden State (Context)
-                "hidden_info": json.dumps(audit_signals["mu_vector"]), 
-                
-                # 2. Performance Metrics
-                "recent_reward": metrics.get("avg_reward_per_episode", 0.0),
-                "history_reward": self.lifetime_reward,
-                
-                # 3. Novelty/Utility Metrics (The "Perfect Payload" components)
-                # Map internal keys to what Server expects
-                "utility_loss": audit_signals["recon_loss"], # Maps to 'recon' input in server
-                "td_error": audit_signals["td_error"],       # Maps to 'td' input in server
-            })
+            self.cached_metrics.update(
+                {
+                    "cid": self.cid,
+                    "total_steps": float(num_steps_trained),
+                    # 1. Hidden State (Context)
+                    "hidden_info": json.dumps(audit_signals["mu_vector"]),
+                    # 2. Performance Metrics
+                    "recent_reward": metrics.get("avg_reward_per_episode", 0.0),
+                    "history_reward": self.lifetime_reward,
+                    # 3. Novelty/Utility Metrics (The "Perfect Payload" components)
+                    # Map internal keys to what Server expects
+                    "utility_loss": audit_signals[
+                        "recon_loss"
+                    ],  # Maps to 'recon' input in server
+                    "td_error": audit_signals[
+                        "td_error"
+                    ],  # Maps to 'td' input in server
+                }
+            )
 
             logger.info(
                 f"   > Client {self.cid}: Caching weights. Signals -> "
                 f"Reward: {metrics.get('avg_reward_per_episode', 0):.2f}, "
                 f"TD: {audit_signals['td_error']:.4f}"
             )
-            
+
             # E. Return EMPTY weights (Server decides if it wants them later)
             return [], num_steps_trained, self.cached_metrics
 
@@ -216,7 +243,7 @@ class FlowerClient(fl.client.NumPyClient):
         # =========================================================
         elif phase == "upload":
             logger.info(f"Client {self.cid} [FMRL Phase B]: Selected! Uploading.")
-            
+
             if not self.cached_weights:
                 logger.error("   > Error: No cached weights found!")
                 return self.agent.get_federated_parameters(), 0, {"error": 1.0}
@@ -228,8 +255,7 @@ class FlowerClient(fl.client.NumPyClient):
         else:
             logger.warning(f"Unknown Phase: {phase}")
             return [], 0, {}
-        
-        
+
     # --- INTERNAL TRAINING HELPER ---
     def _perform_training_loop(self) -> Tuple[int, Dict[str, float]]:
         """Shared training logic for both Standard and FMRL modes."""
@@ -269,11 +295,13 @@ class FlowerClient(fl.client.NumPyClient):
         """
         # 1. Sample Batch (Safe unpacking with *_)
         if len(self.buffer) < self.cfg.training.batch_size:
-             # Fallback for empty buffer
-             return {"mu_vector": [0.0] * self.cfg.model.latent_dim, 
-                     "td_error": 0.0, 
-                     "recon_loss": 0.0}
-        
+            # Fallback for empty buffer
+            return {
+                "mu_vector": [0.0] * self.cfg.model.latent_dim,
+                "td_error": 0.0,
+                "recon_loss": 0.0,
+            }
+
         batch = self.buffer.sample(self.cfg.training.batch_size, self.device)
         # Unpack: states, actions, rewards, next_states, dones, true_actions...
         states, actions, rewards, next_states, dones, *_ = batch
@@ -290,7 +318,7 @@ class FlowerClient(fl.client.NumPyClient):
             # ---------------------------------------------------------
             # We use the Prior because it represents the state encoding s -> z
             mu_prior, logvar_prior = self.agent.prior_net(states)
-            
+
             # This vector represents the agent's context (h_i)
             # We take the mean across the batch to get a representative vector
             avg_mu_vector = mu_prior.mean(dim=0).cpu().numpy().tolist()
@@ -299,7 +327,7 @@ class FlowerClient(fl.client.NumPyClient):
             # 2. Utility Signal: TD-Error (RL Learning/Surprise)
             # ---------------------------------------------------------
             # Logic: High TD error = High "Surprise" = High Learning Potential
-            
+
             # Current Q(s, a)
             # Note: Your decoder takes (z, s). We use mu_prior as z.
             q_values = self.agent.value_net_main(mu_prior, states)
@@ -309,10 +337,10 @@ class FlowerClient(fl.client.NumPyClient):
             next_mu, _ = self.agent.prior_net(next_states)
             next_q_values = self.agent.value_net_target(next_mu, next_states)
             max_next_q = next_q_values.max(1)[0].unsqueeze(1)
-            
+
             # Bellman Target
             target_q = rewards + (self.cfg.training.gamma * max_next_q * (1 - dones))
-            
+
             # Calculate TD Error (L1 Loss is robust)
             td_error = F.l1_loss(current_q, target_q).item()
 
@@ -331,7 +359,7 @@ class FlowerClient(fl.client.NumPyClient):
             recon_loss_batch = F.mse_loss(recon_states, states)
             recon_loss = recon_loss_batch.item()
             """
-            recon_loss = 0.0 # Placeholder
+            recon_loss = 0.0  # Placeholder
 
         # Restore Training Mode
         self.agent.prior_net.train()
@@ -341,10 +369,10 @@ class FlowerClient(fl.client.NumPyClient):
 
         return {
             "mu_vector": avg_mu_vector,  # The State (h)
-            "recon_loss": recon_loss,    # Novelty (Currently 0.0)
-            "td_error": td_error         # RL Surprise
+            "recon_loss": recon_loss,  # Novelty (Currently 0.0)
+            "td_error": td_error,  # RL Surprise
         }
-        
+
     def _run_local_eval_logic(self, metrics: Dict[str, float], prefix: str):
         if self.eval_enabled:
             loss, _, local_metrics = self._evaluate_closed_set(
