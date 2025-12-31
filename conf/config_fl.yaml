@@ -23,11 +23,11 @@ paths:
 strategy:
   name: "fedavg" # Options: "fedavg", "fedprox", "fmrl_la"
   fmrl_lr: 0.01 # LR for Server Critics
-  utility_threshold: 0.6 # Cutoff for selection
+  utility_threshold: 0.5 # Cutoff for selection
   critic_hidden_dim: 64
   # Max agents used to initialize Aggregator size
   max_agents: 10
-  warmup_rounds: 4 # Rounds before using utility-based selection
+  warmup_rounds: 2 # Rounds before using utility-based selection
 
 server:
   address: "127.0.0.1:8090"

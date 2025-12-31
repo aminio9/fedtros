@@ -60,30 +60,24 @@ def fit_config_fn(server_round: int) -> Dict[str, fl.common.Scalar]:
     """
     return {"server_round": server_round, "phase": "standard"}
 
-
-# ==============================================================================
-# FMRL-LA STRATEGY (Strict Two-Phase Implementation)
-# ==============================================================================
 class FMRL_LA_Strategy(FedAvg):
     def __init__(self, cfg: DictConfig, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         # --- LAZY IMPORT ---
-        # Only import these models if we are ACTUALLY using this strategy.
         try:
             from .server_models import AsyncCritic, CentralizedAggregator
         except ImportError:
             try:
                 from server_models import AsyncCritic, CentralizedAggregator
             except ImportError:
-                logger.error(
-                    "Could not import server_models. FMRL-LA strategy will fail."
-                )
+                logger.error("Could not import server_models. FMRL-LA strategy will fail.")
                 raise
 
         self.cfg = cfg
         self.device = get_device()
 
+        # Global State is aggregation of all client latents
         self.state_dim = int(cfg.model.latent_dim * cfg.strategy.max_agents)
         self.critics = {}
 
@@ -96,7 +90,6 @@ class FMRL_LA_Strategy(FedAvg):
             self.aggregator.parameters(), lr=cfg.strategy.fmrl_lr
         )
 
-        # Store the AsyncCritic class for dynamic instantiation later
         self._AsyncCriticClass = AsyncCritic
 
         # State Machine
@@ -117,10 +110,10 @@ class FMRL_LA_Strategy(FedAvg):
         return self.critics[cid]
 
     # ----------------------------------------------------------------------
-    # 1. CONFIGURE FIT
+    # 1. CONFIGURE FIT (Standard FL Flow)
     # ----------------------------------------------------------------------
     def configure_fit(self, server_round: int, parameters: Parameters, client_manager):
-        # === PHASE A: TRAIN (Logical Step 1) ===
+        # === PHASE A: TRAIN & AUDIT ===
         if self.is_training_phase:
             logger.info(f"\n{'=' * 60}")
             logger.info(f" ROUND {server_round} [PHASE A]: Training & Auditing")
@@ -131,32 +124,28 @@ class FMRL_LA_Strategy(FedAvg):
             )
             self.saved_global_parameters = parameters
 
-            # Explicitly set phase to 'train' for FMRL
             config = {"server_round": server_round, "phase": "train"}
             fit_ins = FitIns(parameters, config)
             return [(client, fit_ins) for client in clients]
 
-        # === PHASE B: UPLOAD (Logical Step 2) ===
+        # === PHASE B: UPLOAD & AGGREGATE ===
         else:
             logger.info(f"\n{'=' * 60}")
             logger.info(f" ROUND {server_round} [PHASE B]: Uploading & Aggregation")
             logger.info(f"{'=' * 60}")
 
             selected_instructions = []
-            # Explicitly set phase to 'upload' for FMRL
             config = {"server_round": server_round, "phase": "upload"}
             fit_ins = FitIns(parameters, config)
 
             for client in self.selected_clients_cache:
                 selected_instructions.append((client, fit_ins))
 
-            logger.info(
-                f"   > Requesting heavy weights from {len(selected_instructions)} clients."
-            )
+            logger.info(f"   > Requesting heavy weights from {len(selected_instructions)} clients.")
             return selected_instructions
 
     # ----------------------------------------------------------------------
-    # 2. AGGREGATE FIT
+    # 2. AGGREGATE FIT (Logic Core)
     # ----------------------------------------------------------------------
     def aggregate_fit(self, server_round: int, results, failures):
         if not results and self.is_training_phase:
@@ -183,52 +172,44 @@ class FMRL_LA_Strategy(FedAvg):
         selection_log = []
 
         for client, fit_res in results:
-            # 1. Parse Metadata
             try:
                 metrics = fit_res.metrics
-
-                # --- FIX 1: Correct Key Name ("hidden_info") ---
+                
+                # 1. Parse Basic Info
                 h_vec = json.loads(metrics["hidden_info"])
-
                 r_val = float(metrics["recent_reward"])
                 r_hist = float(metrics["history_reward"])
 
-                # --- FIX 2: Unpack "Perfect Payload" Signals ---
-                # 'utility_loss' maps to Reconstruction Loss (Novelty)
-                # 'td_error' maps to TD Error (Learning)
-                # We use .get(..., 0.0) for backward compatibility
-                recon_loss = float(metrics.get("utility_loss", 0.0))
+                # 2. Parse New Signals (F1 / TD Error)
+                # Note: 'utility_loss' now carries the F1 score (or Recon Loss)
+                # 'td_error' carries the RL Surprise
+                recon_signal = float(metrics.get("utility_loss", 0.0))
                 td_error = float(metrics.get("td_error", 0.0))
 
             except Exception as e:
                 logger.warning(f"Client {client.cid} sent bad metadata: {e}")
                 continue
 
-            # 2. Prepare Tensors (5 Inputs for Critic)
-            # Keys: h, r, rh, recon, td
+            # 3. Prepare Tensors (Keys must match what we call in training)
             data = {
                 "h": torch.tensor([h_vec], dtype=torch.float32, device=self.device),
                 "r": torch.tensor([[r_val]], dtype=torch.float32, device=self.device),
                 "rh": torch.tensor([[r_hist]], dtype=torch.float32, device=self.device),
-                "recon": torch.tensor(
-                    [[recon_loss]], dtype=torch.float32, device=self.device
-                ),
-                "td": torch.tensor(
-                    [[td_error]], dtype=torch.float32, device=self.device
-                ),
+                "recon": torch.tensor([[recon_signal]], dtype=torch.float32, device=self.device),
+                "td": torch.tensor([[td_error]], dtype=torch.float32, device=self.device),
             }
             self.stage1_data_cache[client.cid] = data
 
-            # 3. Critic Evaluation (Pass all 5 inputs)
+            # 4. Critic Inference
             critic = self._get_critic(client.cid)
             critic.eval()
             with torch.no_grad():
-                # --- FIX 3: Match AsyncCritic signature (h, r, rh, recon, td) ---
+                # Pass all 5 inputs
                 w_i = critic(
-                    data["h"], data["r"], data["rh"], data["recon"], data["td"]
+                    data["h"], data["r"], data["rh"], data["td"], data["recon"]
                 ).item()
 
-            # 4. Selection (Logic remains same)
+            # 5. Selection
             threshold = getattr(self.cfg.strategy, "utility_threshold", 0.0)
             is_selected = w_i > threshold
 
@@ -236,78 +217,63 @@ class FMRL_LA_Strategy(FedAvg):
                 self.selected_clients_cache.append(client)
                 self.utilities_cache[client.cid] = w_i
 
-            selection_log.append(
-                [
-                    client.cid,
-                    f"{r_val:.2f}",
-                    f"{w_i:.4f}",
-                    f"TD:{td_error:.3f}",
-                    "YES" if is_selected else "NO",
-                ]
-            )
+            selection_log.append([
+                client.cid, 
+                f"{r_val:.2f}", 
+                f"{w_i:.4f}", 
+                f"{recon_signal:.3f}", 
+                f"{td_error:.3f}", 
+                "YES" if is_selected else "NO"
+            ])
 
-        # Update Table Header for clarity
-        logger.info(f"\n{'-' * 60}")
-        logger.info(
-            f"{'Client':<8} | {'Reward':<8} | {'Utility':<8} | {'TD Err':<8} | {'Selected'}"
-        )
-        logger.info(f"{'-' * 60}")
+        # Force select at least one to prevent crash
+        if not self.selected_clients_cache and results:
+             logger.warning("   ! All clients rejected. Force-selecting random one.")
+             best_c = results[0][0]
+             self.selected_clients_cache.append(best_c)
+             self.utilities_cache[best_c.cid] = 0.5
+
+        # Print Table
+        logger.info(f"\n{'-' * 70}")
+        logger.info(f"{'Client':<8} | {'Reward':<8} | {'Util(w)':<8} | {'F1/Recon':<8} | {'TD':<8} | {'Sel'}")
+        logger.info(f"{'-' * 70}")
         for row in selection_log:
-            logger.info(
-                f"{row[0]:<8} | {row[1]:<8} | {row[2]:<8} | {row[3]:<8} | {row[4]}"
-            )
-        logger.info(f"{'-' * 60}\n")
+            logger.info(f"{row[0]:<8} | {row[1]:<8} | {row[2]:<8} | {row[3]:<8} | {row[4]:<8} | {row[5]}")
+        logger.info(f"{'-' * 70}\n")
 
     def _phase_b_logic(self, results, server_round):
-        """
-        Aggregates weights based on the utilities (w_i) calculated in Phase A.
-        """
         weighted_weights = []
         total_utility = 0.0
         global_reward = 0.0
 
-        # In warmup rounds, ignore the critic and use standard average
         is_warmup = server_round <= self.warmup_rounds
-
         if is_warmup:
-            logger.info(
-                f"   > [Warmup Round {server_round}] Using Standard FedAvg (w=1.0)"
-            )
+            logger.info(f"   > [Warmup Round {server_round}] Using Standard FedAvg (w=1.0)")
 
         for client, fit_res in results:
             if is_warmup:
                 w_i = 1.0
             else:
-                # Retrieve the weight calculated by the critic in Phase A
                 w_i = self.utilities_cache.get(client.cid, 1.0)
-                # Clip weight to prevent explosion
-                w_i = max(0.001, min(w_i, 100.0))
+                # Weights are now bounded by Sigmoid, but good to keep safety clip
+                w_i = max(0.001, min(w_i, 1.0))
 
             weights = parameters_to_ndarrays(fit_res.parameters)
             weighted_weights.append((weights, w_i))
             total_utility += w_i
-
-            # Track rewards for logging
             global_reward += fit_res.metrics.get("recent_reward", 0.0)
 
-        # --- WEIGHTED AGGREGATION ---
+        # AGGREGATION
         if weighted_weights:
-            # Normalize weights: w_i / sum(w)
-            normalized_weights = [
-                (w, util / total_utility) for w, util in weighted_weights
-            ]
-
-            # Create a zero-tensor template with the shape of the first client's weights
+            normalized_weights = [(w, util / total_utility) for w, util in weighted_weights]
             new_weights = [np.zeros_like(w) for w in weighted_weights[0][0]]
-
-            # Accumulate: theta_global += theta_i * normalized_w_i
             for weights, norm_w in normalized_weights:
                 for i, layer in enumerate(weights):
                     new_weights[i] += layer * norm_w
 
             avg_reward = global_reward / len(results) if results else 0.0
-
-            # Train the Server Critics using the *real* reward as the target
+            
+            # Update Server Critics
             self._train_server_models(results, avg_reward)
 
             if avg_reward != 0:
@@ -315,7 +281,6 @@ class FMRL_LA_Strategy(FedAvg):
 
             return ndarrays_to_parameters(new_weights)
 
-        # Fallback if no weights collected
         return self.saved_global_parameters
 
     def _train_server_models(self, results, actual_reward):
@@ -327,69 +292,49 @@ class FMRL_LA_Strategy(FedAvg):
 
             for client, _ in results:
                 data = self.stage1_data_cache.get(client.cid)
-                if not data:
-                    continue
+                if not data: continue
 
                 critic = self._get_critic(client.cid)
                 critic.train()
 
-                # Forward pass using all 5 inputs
+                # Train with all 5 inputs
                 w = critic(
-                    data["h"],
-                    data["r"],
-                    data["rh"],
-                    data["td"],  # <--- Change "unc" to "td"
-                    data["recon"],  # <--- Change "loss" to "recon"
+                    data["h"], data["r"], data["rh"], data["td"], data["recon"]
                 )
-
                 utils_list.append(w)
                 hidden_list.append(data["h"])
 
-            if not utils_list:
-                return
+            if not utils_list: return
 
-            # Concatenate collected weights and states
-            w_cat = torch.cat(
-                utils_list, dim=1
-            )  # Shape currently [1, 9] if one client failed
+            w_cat = torch.cat(utils_list, dim=1)
             s_cat = torch.cat(hidden_list, dim=1)
 
-            # --- FIX START: PAD W_CAT TO MATCH MAX_AGENTS ---
+            # --- PADDING FIX (Robustness for Missing Clients) ---
+            # If we expected 10 agents but got 9, pad w_cat with 0.0
             curr_agents = w_cat.shape[1]
-            max_agents = self.aggregator.num_agents  # Likely 10
-
+            max_agents = self.aggregator.num_agents
             if curr_agents < max_agents:
-                # Pad with 0.0 (Agent has 0 influence)
-                # Pad args are (padding_left, padding_right) for last dim
                 pad_amount = max_agents - curr_agents
                 w_cat = F.pad(w_cat, (0, pad_amount), value=0.0)
             elif curr_agents > max_agents:
-                # Just in case we somehow have more results than expected
                 w_cat = w_cat[:, :max_agents]
-            # --- FIX END ---
+            # ---------------------------------------------------
 
-            # Safe padding for Global State (s_cat) - Existing logic usually handles this
+            # Pad global state if necessary
             curr_dim = s_cat.shape[1]
             if curr_dim < self.state_dim:
                 s_cat = F.pad(s_cat, (0, self.state_dim - curr_dim))
             elif curr_dim > self.state_dim:
                 s_cat = s_cat[:, : self.state_dim]
 
-            # Now both w_cat and s_cat are the correct size (10)
             q_tot = self.aggregator(w_cat, s_cat)
-
-            loss = F.mse_loss(
-                q_tot, torch.tensor([[actual_reward]], device=self.device)
-            )
+            loss = F.mse_loss(q_tot, torch.tensor([[actual_reward]], device=self.device))
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.aggregator.parameters(), 1.0)
             self.optimizer.step()
 
         except Exception as e:
             logger.error(f"Server model training failed: {e}")
-            # Optional: print stack trace if you need more debug info
-            # import traceback; traceback.print_exc()
-
 
 def aggregate_fit_metrics(
     fit_metrics: List[Tuple[int, Dict[str, fl.common.Scalar]]],

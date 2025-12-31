@@ -288,48 +288,40 @@ class FlowerClient(fl.client.NumPyClient):
 
     def _calculate_audit_signals(self) -> Dict[str, Any]:
         """
-        Calculates the 'Perfect Payload' for the Server Critic:
-        1. Hidden State (Mu): The agent's compressed belief of the context.
-        2. TD-Error: How much the agent is currently 'learning' (RL Surprise).
-        3. Recon Loss: Novelty/Anomaly score (Commented out for now).
+        Calculates audit signals. 
+        CRITICAL UPDATE: Replaces 'Reconstruction Loss' with 'Batch F1 Score'.
+        
+        This helps detect 'Lazy Agents' (who have high rewards but only predict 'Normal').
+        Lazy Agent F1 ~= 0.15 (Low Utility)
+        Good Agent F1 ~= 0.50 (High Utility)
         """
-        # 1. Sample Batch (Safe unpacking with *_)
+        # 1. Sample Batch
         if len(self.buffer) < self.cfg.training.batch_size:
-            # Fallback for empty buffer
-            return {
-                "mu_vector": [0.0] * self.cfg.model.latent_dim,
-                "td_error": 0.0,
-                "recon_loss": 0.0,
-            }
-
+             return {"mu_vector": [0.0] * self.cfg.model.latent_dim, 
+                     "td_error": 0.0, 
+                     "recon_loss": 0.0}
+        
+        # 2. Unpack the 6 items from your buffer
+        # states, actions, rewards, next_states, dones, TRUE_ACTIONS
         batch = self.buffer.sample(self.cfg.training.batch_size, self.device)
-        # Unpack: states, actions, rewards, next_states, dones, true_actions...
-        states, actions, rewards, next_states, dones, *_ = batch
+        states, actions, rewards, next_states, dones, true_actions = batch
 
         # Prepare Networks
         self.agent.prior_net.eval()
         self.agent.value_net_main.eval()
         self.agent.value_net_target.eval()
-        # self.agent.generation_net.eval() # <--- COMMENTED OUT
 
         with torch.no_grad():
             # ---------------------------------------------------------
-            # 1. Hidden State: Prior Network Mu (What the agent "sees")
+            # 1. Hidden State (Context)
             # ---------------------------------------------------------
-            # We use the Prior because it represents the state encoding s -> z
-            mu_prior, logvar_prior = self.agent.prior_net(states)
-
-            # This vector represents the agent's context (h_i)
-            # We take the mean across the batch to get a representative vector
+            mu_prior, _ = self.agent.prior_net(states)
             avg_mu_vector = mu_prior.mean(dim=0).cpu().numpy().tolist()
 
             # ---------------------------------------------------------
-            # 2. Utility Signal: TD-Error (RL Learning/Surprise)
+            # 2. TD-Error (RL Surprise)
             # ---------------------------------------------------------
-            # Logic: High TD error = High "Surprise" = High Learning Potential
-
             # Current Q(s, a)
-            # Note: Your decoder takes (z, s). We use mu_prior as z.
             q_values = self.agent.value_net_main(mu_prior, states)
             current_q = q_values.gather(1, actions)
 
@@ -337,17 +329,30 @@ class FlowerClient(fl.client.NumPyClient):
             next_mu, _ = self.agent.prior_net(next_states)
             next_q_values = self.agent.value_net_target(next_mu, next_states)
             max_next_q = next_q_values.max(1)[0].unsqueeze(1)
-
+            
             # Bellman Target
             target_q = rewards + (self.cfg.training.gamma * max_next_q * (1 - dones))
-
-            # Calculate TD Error (L1 Loss is robust)
+            
+            # Calculate TD Error
             td_error = F.l1_loss(current_q, target_q).item()
 
             # ---------------------------------------------------------
-            # 3. Utility Signal: Reconstruction Error (Novelty)
+            # 3. COMPETENCE SIGNAL: Batch F1 Score
             # ---------------------------------------------------------
-            # COMMENTED OUT FOR NOW (as requested)
+            # We want to know if the agent is "Lazy" (predicting only 0).
+            # We generate FRESH predictions using the current policy.
+            
+            # Get best action for current state
+            fresh_preds = q_values.argmax(dim=1)
+            
+            # Move to CPU for sklearn
+            y_true = true_actions.cpu().numpy().flatten()
+            y_pred = fresh_preds.cpu().numpy().flatten()
+            
+            # Calculate Macro F1 (Treats attacks and normal equally)
+            # A lazy agent will get a very low score here.
+            batch_f1 = f1_score(y_true, y_pred, average='macro', zero_division=0.0)
+            
             """
             # Reparameterize
             std = torch.exp(0.5 * logvar_prior)
@@ -359,18 +364,18 @@ class FlowerClient(fl.client.NumPyClient):
             recon_loss_batch = F.mse_loss(recon_states, states)
             recon_loss = recon_loss_batch.item()
             """
-            recon_loss = 0.0  # Placeholder
+
 
         # Restore Training Mode
         self.agent.prior_net.train()
         self.agent.value_net_main.train()
         self.agent.value_net_target.train()
-        # self.agent.generation_net.train() # <--- COMMENTED OUT
 
         return {
-            "mu_vector": avg_mu_vector,  # The State (h)
-            "recon_loss": recon_loss,  # Novelty (Currently 0.0)
-            "td_error": td_error,  # RL Surprise
+            "mu_vector": avg_mu_vector,
+            "td_error": td_error,
+            # We send F1 score disguised as 'recon_loss' so the server uses it as utility
+            "recon_loss": float(batch_f1) 
         }
 
     def _run_local_eval_logic(self, metrics: Dict[str, float], prefix: str):
