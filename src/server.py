@@ -258,6 +258,66 @@ class FMRL_LA_Strategy(FedAvg):
             )
         logger.info(f"{'-' * 60}\n")
 
+    def _phase_b_logic(self, results, server_round):
+        """
+        Aggregates weights based on the utilities (w_i) calculated in Phase A.
+        """
+        weighted_weights = []
+        total_utility = 0.0
+        global_reward = 0.0
+
+        # In warmup rounds, ignore the critic and use standard average
+        is_warmup = server_round <= self.warmup_rounds
+
+        if is_warmup:
+            logger.info(
+                f"   > [Warmup Round {server_round}] Using Standard FedAvg (w=1.0)"
+            )
+
+        for client, fit_res in results:
+            if is_warmup:
+                w_i = 1.0
+            else:
+                # Retrieve the weight calculated by the critic in Phase A
+                w_i = self.utilities_cache.get(client.cid, 1.0)
+                # Clip weight to prevent explosion
+                w_i = max(0.001, min(w_i, 100.0))
+
+            weights = parameters_to_ndarrays(fit_res.parameters)
+            weighted_weights.append((weights, w_i))
+            total_utility += w_i
+
+            # Track rewards for logging
+            global_reward += fit_res.metrics.get("recent_reward", 0.0)
+
+        # --- WEIGHTED AGGREGATION ---
+        if weighted_weights:
+            # Normalize weights: w_i / sum(w)
+            normalized_weights = [
+                (w, util / total_utility) for w, util in weighted_weights
+            ]
+
+            # Create a zero-tensor template with the shape of the first client's weights
+            new_weights = [np.zeros_like(w) for w in weighted_weights[0][0]]
+
+            # Accumulate: theta_global += theta_i * normalized_w_i
+            for weights, norm_w in normalized_weights:
+                for i, layer in enumerate(weights):
+                    new_weights[i] += layer * norm_w
+
+            avg_reward = global_reward / len(results) if results else 0.0
+
+            # Train the Server Critics using the *real* reward as the target
+            self._train_server_models(results, avg_reward)
+
+            if avg_reward != 0:
+                REWARD_HISTORY.append((len(REWARD_HISTORY) + 1, avg_reward))
+
+            return ndarrays_to_parameters(new_weights)
+
+        # Fallback if no weights collected
+        return self.saved_global_parameters
+
     def _train_server_models(self, results, actual_reward):
         try:
             self.optimizer.zero_grad()
@@ -273,10 +333,13 @@ class FMRL_LA_Strategy(FedAvg):
                 critic = self._get_critic(client.cid)
                 critic.train()
 
-                # --- FIX 4: Pass all 5 cached tensors to train the critic ---
-                # Must match the order in AsyncCritic.forward
+                # Forward pass using all 5 inputs
                 w = critic(
-                    data["h"], data["r"], data["rh"], data["recon"], data["td"]
+                    data["h"],
+                    data["r"],
+                    data["rh"],
+                    data["td"],  # <--- Change "unc" to "td"
+                    data["recon"],  # <--- Change "loss" to "recon"
                 )
 
                 utils_list.append(w)
@@ -285,17 +348,36 @@ class FMRL_LA_Strategy(FedAvg):
             if not utils_list:
                 return
 
-            w_cat = torch.cat(utils_list, dim=1)
+            # Concatenate collected weights and states
+            w_cat = torch.cat(
+                utils_list, dim=1
+            )  # Shape currently [1, 9] if one client failed
             s_cat = torch.cat(hidden_list, dim=1)
 
-            # Safe padding logic
+            # --- FIX START: PAD W_CAT TO MATCH MAX_AGENTS ---
+            curr_agents = w_cat.shape[1]
+            max_agents = self.aggregator.num_agents  # Likely 10
+
+            if curr_agents < max_agents:
+                # Pad with 0.0 (Agent has 0 influence)
+                # Pad args are (padding_left, padding_right) for last dim
+                pad_amount = max_agents - curr_agents
+                w_cat = F.pad(w_cat, (0, pad_amount), value=0.0)
+            elif curr_agents > max_agents:
+                # Just in case we somehow have more results than expected
+                w_cat = w_cat[:, :max_agents]
+            # --- FIX END ---
+
+            # Safe padding for Global State (s_cat) - Existing logic usually handles this
             curr_dim = s_cat.shape[1]
             if curr_dim < self.state_dim:
                 s_cat = F.pad(s_cat, (0, self.state_dim - curr_dim))
             elif curr_dim > self.state_dim:
                 s_cat = s_cat[:, : self.state_dim]
 
+            # Now both w_cat and s_cat are the correct size (10)
             q_tot = self.aggregator(w_cat, s_cat)
+
             loss = F.mse_loss(
                 q_tot, torch.tensor([[actual_reward]], device=self.device)
             )
@@ -305,8 +387,10 @@ class FMRL_LA_Strategy(FedAvg):
 
         except Exception as e:
             logger.error(f"Server model training failed: {e}")
-            
-            
+            # Optional: print stack trace if you need more debug info
+            # import traceback; traceback.print_exc()
+
+
 def aggregate_fit_metrics(
     fit_metrics: List[Tuple[int, Dict[str, fl.common.Scalar]]],
 ) -> Dict[str, float]:
