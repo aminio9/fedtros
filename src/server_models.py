@@ -54,12 +54,12 @@ class AsyncCritic(nn.Module):
         
         f1_safe = torch.clamp(recon_signal, 0.0, 1.0)
         
-        # TD Error is bad, so we subtract it. tanh() keeps it in [0, 1]
-        td_penalty = torch.tanh(td_err) 
+        # # TD Error is bad, so we subtract it. tanh() keeps it in [0, 1]
+        # td_penalty = torch.tanh(td_err) 
         
         # Ideally: High Reward + High F1 - High Instability
-        heuristic_score = r_safe + f1_safe - (0.5 * td_penalty)
-
+        # heuristic_score = r_safe + f1_safe - (0.5 * td_penalty)
+        heuristic_score = r_safe + f1_safe
         # 4. Final Weighted Combination
         # We add the heuristic to the neural score. 
         # This guarantees that a client with High Reward/F1 ALWAYS starts with a higher score.

@@ -21,7 +21,7 @@ paths:
   evt_dir: "evt"
 
 strategy:
-  name: "fedavg" # Options: "fedavg", "fedprox", "fmrl_la"
+  name: "fmrl_la" # Options: "fedavg", "fedprox", "fmrl_la"
   fmrl_lr: 0.01 # LR for Server Critics
   utility_threshold: 0.1 # Cutoff for selection
   critic_hidden_dim: 64
@@ -31,7 +31,7 @@ strategy:
 
 server:
   address: "127.0.0.1:8090"
-  num_rounds: 30
+  num_rounds: 1
   fraction_fit: 1.0
   fraction_evaluate: 1.0
   min_fit_clients: 10

@@ -60,27 +60,6 @@ def fit_config_fn(server_round: int) -> Dict[str, fl.common.Scalar]:
     """
     return {"server_round": server_round, "phase": "standard"}
 
-import torch
-import torch.optim as optim
-import torch.nn.functional as F
-import numpy as np
-import json
-import logging
-from flwr.common import (
-    Parameters,
-    FitIns,
-    ndarrays_to_parameters,
-    parameters_to_ndarrays,
-)
-from flwr.server.strategy import FedAvg
-
-# Set up logger
-logger = logging.getLogger(__name__)
-
-# Mock get_device function if not imported
-def get_device():
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 class FMRL_LA_Strategy(FedAvg):
     def __init__(self, cfg, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -213,11 +192,20 @@ class FMRL_LA_Strategy(FedAvg):
     # ----------------------------------------------------------------------
     # LOGIC HELPERS
     # ----------------------------------------------------------------------
-
     def _phase_a_logic(self, results):
         """
         Process audit metrics, run Critics, and calculate weights via Sigmoid.
         """
+        # --- FIX 1: SORT CLIENTS (CRITICAL) ---
+        # Sort by Client ID to ensure deterministic processing order.
+        # This prevents the "Random Identity" bug where network latency shuffles
+        # the inputs to the Transformer, breaking its ability to learn client profiles.
+        logger.info(f"after sort first item cid: {results[0][0].cid}")
+        results.sort(key=lambda x: x[0].cid)
+        logger.info(f"after sort first item cid: {results[0][0].cid}")
+        
+        # --------------------------------------
+
         self.selected_clients_cache = []
         self.utilities_cache = {}
         self.stage1_data_cache = {} # Cache tensors for training step later
@@ -319,6 +307,14 @@ class FMRL_LA_Strategy(FedAvg):
         Aggregate weights based on Utilities calculated in Phase A.
         Then, TRAIN the critics to align with the actual global reward.
         """
+        # --- FIX 1: SORT CLIENTS (CRITICAL) ---
+        # We sort again in Phase B to ensure that when we pass 'results' to 
+        # _train_server_models, the tensors are constructed in the exact same 
+        # order (Client 0, Client 1, ...). This aligns with the Aggregator's
+        # positional embeddings.
+        results.sort(key=lambda x: x[0].cid)
+        # --------------------------------------
+
         weighted_weights = []
         total_utility = 0.0
         global_reward_accum = 0.0
@@ -359,6 +355,7 @@ class FMRL_LA_Strategy(FedAvg):
             avg_reward = global_reward_accum / len(results) if results else 0.0
             
             if not is_warmup:
+                # results is now sorted, so training will be deterministic
                 self._train_server_models(results, avg_reward)
 
             return ndarrays_to_parameters(new_weights)
@@ -382,6 +379,7 @@ class FMRL_LA_Strategy(FedAvg):
             latents_list = []
 
             # 1. Re-run Forward Pass for Critics
+            # IMPORTANT: 'results' here MUST be sorted by CID (done in Phase B)
             for client, _ in results:
                 data = self.stage1_data_cache.get(client.cid)
                 if not data: 
@@ -444,8 +442,7 @@ class FMRL_LA_Strategy(FedAvg):
 
         except Exception as e:
             logger.error(f"Server model training failed: {e}")
-            
-            
+                    
 def aggregate_fit_metrics(
     fit_metrics: List[Tuple[int, Dict[str, fl.common.Scalar]]],
 ) -> Dict[str, float]:
@@ -509,7 +506,7 @@ def get_strategy(cfg: DictConfig) -> Strategy:
         )
 
     else:
-        logger.info("--- Strategy: FedAvg (Simple) ---")
+        logger.info("--- Strategy: FedAvg ---")
         return FedAvg(fit_metrics_aggregation_fn=aggregate_fit_metrics, **args)
 
 

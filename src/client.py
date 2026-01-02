@@ -57,7 +57,6 @@ def _resolve_project_path(path_like: Union[str, Path]) -> Path:
 
 class FlowerClient(fl.client.NumPyClient):
     """Flower NumPyClient implementing Fed-Per/FedAvg with hybrid logic."""
-
     def __init__(
         self,
         cid: str,
