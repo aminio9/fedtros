@@ -273,6 +273,7 @@ class Agent:
         Set the received federated parameters (Prior + Recognition + MainQ + Generation).
         Robustly handles cases where generator weights are missing (if server didn't send them).
         """
+        # Logging check
         logger.debug("Setting federated parameters")
         
         prior_keys = list(self.prior_net.state_dict().keys())
@@ -295,16 +296,13 @@ class Agent:
             num_gen = len(gen_keys)
             
         expected_with_gen = base_params_count + num_gen
-        
         received_count = len(parameters)
 
-        # Validation Logic
-        if received_count == base_params_count:
-            # OK: Received only RL weights
-            pass
-        elif received_count == expected_with_gen:
-            # OK: Received RL + Generator weights
-            pass
+        # Log what we are receiving for clarity
+        if received_count == expected_with_gen:
+            logger.info(f"   > Loading Global Update: Agent Core ({base_params_count} layers) + Generator ({num_gen} layers)")
+        elif received_count == base_params_count:
+            logger.info(f"   > Loading Global Update: Agent Core ({base_params_count} layers) ONLY")
         else:
             logger.error(
                 "Parameter mismatch: expected %s (base) or %s (w/ gen), but received %s",
@@ -359,33 +357,28 @@ class Agent:
         generator_cfg: DictConfig,
     ) -> Dict[str, float]:
         """
-        Train the generation network on correctly classified samples using the
-        procedure described for the Unknown Attack Recognition module.
+        Train the generation network on correctly classified samples.
+        Now includes detailed logging every 5 epochs using logger.info.
         """
-        # FIXED: Safety check if generator doesn't exist
+        # Safety check
         if self.generation_net is None:
             return {}
 
         features = features.detach().cpu().float()
         labels = labels.detach().cpu().long()
-        if features.dim() != 2 or labels.dim() != 1:
-            raise ValueError("Features must be [N, D] and labels must be [N].")
-
+        
+        # Configuration loading with fallbacks
         gen_batch_size = int(getattr(generator_cfg, "batch_size", 128))
         gen_lr = float(getattr(generator_cfg, "lr", 5e-4))
         gen_rounds = max(1, int(getattr(generator_cfg, "rounds", 1)))
-        gen_epochs_per_round = max(
-            1,
-            int(
-                getattr(
-                    generator_cfg,
-                    "epochs_per_round",
-                    getattr(generator_cfg, "epochs", 5),
-                )
-            ),
-        )
+        
+        # Handle 'epochs_per_round' vs 'epochs'
+        gen_epochs = max(1, int(
+            getattr(generator_cfg, "epochs_per_round", getattr(generator_cfg, "epochs", 5))
+        ))
         min_correct = int(getattr(generator_cfg, "min_correct_samples", 1))
 
+        # Filter for correctly classified samples
         dataset = TensorDataset(features, labels)
         full_loader = DataLoader(dataset, batch_size=gen_batch_size, shuffle=False)
 
@@ -402,56 +395,57 @@ class Agent:
                 correct_mask_parts.append((preds == true_actions).cpu())
 
         if not correct_mask_parts:
-            logger.warning("Generator training skipped: no batches available.")
             return {}
 
         correct_mask = torch.cat(correct_mask_parts, dim=0)
         num_correct = int(correct_mask.sum().item())
         total_samples = int(features.shape[0])
 
+        # Check threshold
         if num_correct < min_correct:
             logger.warning(
-                "Generator training skipped: only %s/%s correctly classified samples (< %s).",
-                num_correct,
-                total_samples,
-                min_correct,
+                f"Generator training skipped: {num_correct}/{total_samples} correct (< {min_correct})"
             )
             return {
                 "generator_samples": float(num_correct),
                 "generator_correct_frac": num_correct / max(1, total_samples),
             }
 
+        # Prepare training
         filtered_dataset = TensorDataset(features[correct_mask], labels[correct_mask])
         train_loader = DataLoader(filtered_dataset, batch_size=gen_batch_size, shuffle=True)
 
         use_directml_safe = self.device.type in {"dml", "directml", "privateuseone"}
         adam_cls = DirectMLAdam if use_directml_safe else optim.Adam
+        
+        # Safe optimizer initialization
         if adam_cls is optim.Adam:
             optimizer = adam_cls(self.generation_net.parameters(), lr=gen_lr, foreach=False)
         else:
             optimizer = adam_cls(self.generation_net.parameters(), lr=gen_lr)
+            
         loss_fn = nn.MSELoss()
 
         self.generation_net.train()
         self.recognition_net.eval()
 
+        logger.info(f"--- Generator Training Start (Samples: {num_correct}) ---")
+
         last_epoch_loss = 0.0
+        
         for round_idx in range(1, gen_rounds + 1):
-            logger.debug(
-                "Generator round %02d/%02d | samples=%s/%s",
-                round_idx,
-                gen_rounds,
-                num_correct,
-                total_samples,
-            )
-            for epoch in range(1, gen_epochs_per_round + 1):
+            for epoch in range(1, gen_epochs + 1):
                 total_loss = 0.0
+                batch_count = 0
+                
                 for states_s, true_actions in train_loader:
                     states_s = states_s.to(self.device)
                     true_actions = true_actions.to(self.device)
+                    
                     with torch.no_grad():
                         mu_q, log_var_q = self.recognition_net(states_s, true_actions)
                         latent_z = reparameterization_trick(mu_q, log_var_q)
+                    
                     recon = self.generation_net(latent_z, true_actions)
                     loss = loss_fn(recon, states_s)
 
@@ -460,9 +454,18 @@ class Agent:
                     optimizer.step()
 
                     total_loss += loss.item()
+                    batch_count += 1
 
-                last_epoch_loss = total_loss / max(1, len(train_loader))
-                
+                last_epoch_loss = total_loss / max(1, batch_count)
+
+                # --- LOGGING EVERY 5 EPOCHS ---
+                if epoch % 5 == 0 or epoch == 1:
+                    logger.info(
+                        f"   > [Round {round_idx}] Epoch {epoch:02d}/{gen_epochs} | "
+                        f"Loss (MSE): {last_epoch_loss:.6f} | "
+                        f"Batch Count: {batch_count}"
+                    )
+
         self.generation_net.eval()
         return {
             "generator_loss": float(last_epoch_loss),

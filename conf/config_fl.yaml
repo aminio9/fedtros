@@ -21,27 +21,27 @@ paths:
   evt_dir: "evt"
 
 strategy:
-  name: "fedavg" # Options: "fedavg", "fedprox", "fmrl_la"
+  name: "fmrl_la" # Options: "fedavg", "fedprox", "fmrl_la"
   fmrl_lr: 0.01 # LR for Server Critics
   utility_threshold: 0.1 # Cutoff for selection
   critic_hidden_dim: 64
   # Max agents used to initialize Aggregator size
-  max_agents: 10
+  max_agents: 6
   warmup_rounds: 2 # Rounds before using utility-based selection
 
 server:
   address: "127.0.0.1:8090"
-  num_rounds: 50
+  num_rounds: 100
   fraction_fit: 1.0
   fraction_evaluate: 1.0
-  min_fit_clients: 10
-  min_evaluate_clients: 10
-  min_available_clients: 10
+  min_fit_clients: 6
+  min_evaluate_clients: 6
+  min_available_clients: 6
   proximal_mu: 0.0
 
 env_metadata:
   state_dim: 31 # Run preprocess to verify
-  num_actions: 5 # Run preprocess to verify
+  num_actions: 4 # Run preprocess to verify
 
 model:
   state_dim: ${env_metadata.state_dim}
@@ -66,16 +66,16 @@ training:
   epsilon_decay_rate: 0.95
 
 generator_training:
-  enabled: false
+  enabled: true
   batch_size: 128
-  epochs: 15
-  rounds: 2
-  epochs_per_round: 15
+  epochs: 50
+  rounds: 1
+  epochs_per_round: 30
   lr: 0.0005
-  min_correct_samples: 256
+  min_correct_samples: 10
 
 evt:
-  enabled: false
+  enabled: true
   tail_size_percent: 0.2
   min_errors_per_class: 5
   min_tail_size: 5
@@ -87,21 +87,21 @@ evt:
 
 preprocess:
   output_dir: "data/processed"
-  num_clients: 10
-  num_shards: 10
+  num_clients: 6
+  num_shards: 6
   closed_set_test_size: 0.2
   raw_file: "data/raw/Bnat.csv"
   # raw_file: "/content/drive/MyDrive/Bnat.csv"
 
   label_column: "label"
 
-  alpha: 0.1 # 0.1 = Very Non-IID, 100.0 = IID (Balanced)
+  alpha: 100 # 0.1 = Very Non-IID, 100.0 = IID (Balanced)
 
   known_labels:
     - "Normal"
     - "BP"
     - "DoS"
-    - "FoT"
+    # - "FoT"
     - "MitM"
 
 hydra:

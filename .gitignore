@@ -147,3 +147,5 @@ checkpoints/
 *.tmp
 *.bak
 *.swp
+
+models/

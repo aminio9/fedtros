@@ -360,6 +360,10 @@ class FMRL_LA_Strategy(FedAvg):
         logger.info(f"{'-' * 80}\n")
 
     def _phase_b_logic(self, results, server_round):
+        """
+        Aggregates weights from selected clients (Phase B).
+        Includes detailed logging of the aggregation process.
+        """
         if results:
             results.sort(key=lambda x: x[0].cid)
 
@@ -376,6 +380,7 @@ class FMRL_LA_Strategy(FedAvg):
                 w_i = 1.0
             else:
                 w_i = self.utilities_cache.get(client.cid, 1.0)
+                # Keep the clamp for stability
                 w_i = max(0.01, min(w_i, 5.0))
 
             weights = parameters_to_ndarrays(fit_res.parameters)
@@ -383,6 +388,24 @@ class FMRL_LA_Strategy(FedAvg):
             
             total_utility += w_i
             global_reward_accum += fit_res.metrics.get("recent_reward", 0.0)
+
+        # --- AGGREGATION LOGGING START ---
+        if weighted_weights:
+            num_layers = len(weighted_weights[0][0])
+            count_clients = len(weighted_weights)
+            logger.info(f"{'='*60}")
+            logger.info(f" AGGREGATION SUMMARY (Round {server_round})")
+            logger.info(f"   > Aggregating updates from {count_clients} clients")
+            logger.info(f"   > Total Layers per Client: {num_layers}")
+            
+            # Simple heuristic: if layers > 20, it likely includes the generator
+            # (Standard agent usually has around 10-15 layers depending on architecture)
+            if num_layers > 20: 
+                logger.info("   > Component Status: [Agent: YES] [Generator: YES]")
+            else:
+                logger.info("   > Component Status: [Agent: YES] [Generator: NO]")
+            logger.info(f"{'='*60}")
+        # --- AGGREGATION LOGGING END ---
 
         if weighted_weights:
             normalized_weights = [(w, util / total_utility) for w, util in weighted_weights]
@@ -399,7 +422,7 @@ class FMRL_LA_Strategy(FedAvg):
             return ndarrays_to_parameters(new_weights)
 
         return self.saved_global_parameters
-
+    
     def _train_server_models(self, results, actual_reward):
         try:
             self.optimizer.zero_grad()
