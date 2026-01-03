@@ -200,7 +200,7 @@ class FlowerClient(fl.client.NumPyClient):
             self.lifetime_reward += metrics.get("total_reward", 0.0)
 
             # --- CALCULATE PERFECT PAYLOAD SIGNALS ---
-            # Returns: {'mu_vector', 'td_error', 'recon_loss'}
+            # Returns: {'mu_vector', 'td_error', 'recon_loss' (F1), 'kl_div'}
             audit_signals = self._calculate_audit_signals()
 
             # D. Cache Everything
@@ -218,20 +218,17 @@ class FlowerClient(fl.client.NumPyClient):
                     "recent_reward": metrics.get("avg_reward_per_episode", 0.0),
                     "history_reward": self.lifetime_reward,
                     # 3. Novelty/Utility Metrics (The "Perfect Payload" components)
-                    # Map internal keys to what Server expects
-                    "utility_loss": audit_signals[
-                        "recon_loss"
-                    ],  # Maps to 'recon' input in server
-                    "td_error": audit_signals[
-                        "td_error"
-                    ],  # Maps to 'td' input in server
+                    "utility_loss": audit_signals["recon_loss"],  # Maps to 'recon/F1' in server
+                    "td_error": audit_signals["td_error"],        # Maps to 'td' in server
+                    "kl_div": audit_signals["kl_div"],            # NEW: Maps to 'kl' in server
                 }
             )
 
             logger.info(
                 f"   > Client {self.cid}: Caching weights. Signals -> "
                 f"Reward: {metrics.get('avg_reward_per_episode', 0):.2f}, "
-                f"TD: {audit_signals['td_error']:.4f}"
+                f"TD: {audit_signals['td_error']:.4f}, "
+                f"KL: {audit_signals['kl_div']:.4f}"
             )
 
             # E. Return EMPTY weights (Server decides if it wants them later)
@@ -287,34 +284,47 @@ class FlowerClient(fl.client.NumPyClient):
 
     def _calculate_audit_signals(self) -> Dict[str, Any]:
         """
-        Calculates audit signals. 
-        CRITICAL UPDATE: Replaces 'Reconstruction Loss' with 'Batch F1 Score'.
-        
-        This helps detect 'Lazy Agents' (who have high rewards but only predict 'Normal').
-        Lazy Agent F1 ~= 0.15 (Low Utility)
-        Good Agent F1 ~= 0.50 (High Utility)
+        Calculates audit signals including TD Error (Surprise), F1 (Competence),
+        and KL Divergence (Novelty).
         """
         # 1. Sample Batch
         if len(self.buffer) < self.cfg.training.batch_size:
-             return {"mu_vector": [0.0] * self.cfg.model.latent_dim, 
-                     "td_error": 0.0, 
-                     "recon_loss": 0.0}
+             return {
+                 "mu_vector": [0.0] * self.cfg.model.latent_dim, 
+                 "td_error": 0.0, 
+                 "recon_loss": 0.0,
+                 "kl_div": 0.0
+             }
         
         # 2. Unpack the 6 items from your buffer
-        # states, actions, rewards, next_states, dones, TRUE_ACTIONS
         batch = self.buffer.sample(self.cfg.training.batch_size, self.device)
         states, actions, rewards, next_states, dones, true_actions = batch
 
         # Prepare Networks
         self.agent.prior_net.eval()
+        self.agent.recognition_net.eval()
         self.agent.value_net_main.eval()
         self.agent.value_net_target.eval()
 
         with torch.no_grad():
             # ---------------------------------------------------------
-            # 1. Hidden State (Context)
+            # 1. Hidden State (Context) & KL Divergence (Novelty)
             # ---------------------------------------------------------
-            mu_prior, _ = self.agent.prior_net(states)
+            # Prior P(z|s)
+            mu_prior, logvar_prior = self.agent.prior_net(states)
+            
+            # Posterior Q(z|s, a_true) (Using true actions for best context estimation)
+            mu_post, logvar_post = self.agent.recognition_net(states, true_actions)
+            
+            # Calculate KL(Q || P) - Manually to avoid import dependency issues
+            # KL = 0.5 * sum(exp(var_q - var_p) + (mu_p - mu_q)^2 / exp(var_p) - 1 + var_p - var_q)
+            # We use the simplified version for diagonal Gaussians:
+            # KL = -0.5 * sum(1 + log_var_q - log_var_p - (var_q + (mu_q - mu_p)^2) / var_p)
+            var_p = torch.exp(logvar_prior)
+            var_q = torch.exp(logvar_post)
+            kl_element = -0.5 * (1 + logvar_post - logvar_prior - (var_q + (mu_post - mu_prior).pow(2)) / var_p)
+            kl_div = kl_element.sum(dim=1).mean().item()
+
             avg_mu_vector = mu_prior.mean(dim=0).cpu().numpy().tolist()
 
             # ---------------------------------------------------------
@@ -338,43 +348,27 @@ class FlowerClient(fl.client.NumPyClient):
             # ---------------------------------------------------------
             # 3. COMPETENCE SIGNAL: Batch F1 Score
             # ---------------------------------------------------------
-            # We want to know if the agent is "Lazy" (predicting only 0).
-            # We generate FRESH predictions using the current policy.
-            
-            # Get best action for current state
             fresh_preds = q_values.argmax(dim=1)
             
             # Move to CPU for sklearn
             y_true = true_actions.cpu().numpy().flatten()
             y_pred = fresh_preds.cpu().numpy().flatten()
             
-            # Calculate Macro F1 (Treats attacks and normal equally)
-            # A lazy agent will get a very low score here.
+            # Calculate Macro F1
             batch_f1 = f1_score(y_true, y_pred, average='macro', zero_division=0.0)
-            
-            """
-            # Reparameterize
-            std = torch.exp(0.5 * logvar_prior)
-            eps = torch.randn_like(std)
-            z = mu_prior + eps * std
-            
-            # Reconstruct s (z + a -> s_hat)
-            recon_states = self.agent.generation_net(z, actions)
-            recon_loss_batch = F.mse_loss(recon_states, states)
-            recon_loss = recon_loss_batch.item()
-            """
-
 
         # Restore Training Mode
         self.agent.prior_net.train()
+        self.agent.recognition_net.train()
         self.agent.value_net_main.train()
         self.agent.value_net_target.train()
 
         return {
             "mu_vector": avg_mu_vector,
             "td_error": td_error,
-            # We send F1 score disguised as 'recon_loss' so the server uses it as utility
-            "recon_loss": float(batch_f1) 
+            # We send F1 score disguised as 'recon_loss'
+            "recon_loss": float(batch_f1),
+            "kl_div": float(kl_div)
         }
 
     def _run_local_eval_logic(self, metrics: Dict[str, float], prefix: str):
