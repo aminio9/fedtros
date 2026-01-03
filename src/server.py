@@ -8,7 +8,7 @@ import numpy as np
 import flwr as fl
 import matplotlib
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -19,15 +19,31 @@ from flwr.common import (
     FitIns,
     parameters_to_ndarrays,
     ndarrays_to_parameters,
+    Scalar,
 )
 from hydra.utils import get_original_cwd
 from omegaconf import DictConfig
 
 from .utils import get_device
 
+# --- NEW IMPORTS FOR MODEL SAVING ---
+try:
+    from .agent import Agent
+    from .models import OpenSetQChainModelFactory
+except ImportError:
+    try:
+        from agent import Agent
+        from models import OpenSetQChainModelFactory
+    except ImportError:
+        Agent = None
+        OpenSetQChainModelFactory = None
+
 logger = logging.getLogger("Server")
 
 REWARD_HISTORY: List[Tuple[int, float]] = []
+
+# Global reference to hold the model architecture for saving
+GLOBAL_AGENT_REF: Optional['Agent'] = None
 
 
 def _project_root() -> Path:
@@ -42,23 +58,134 @@ def _resolve_path(path_like) -> Path:
     return path if path.is_absolute() else (_project_root() / path)
 
 
+def init_global_agent_ref(cfg: DictConfig, device: torch.device):
+    """
+    Initialize a dummy Agent on the server. 
+    This is used solely to map the flat list of parameters from Federated Learning 
+    back into a state_dict for saving .pt files.
+    """
+    global GLOBAL_AGENT_REF
+    if Agent is None or OpenSetQChainModelFactory is None:
+        logger.warning("Could not import Agent/Models. Checkpoints will be saved as raw NumPy arrays only.")
+        return
+
+    try:
+        model_factory = OpenSetQChainModelFactory(cfg.model)
+        # We don't need the optimizer or replay buffer on the server, just the nets
+        GLOBAL_AGENT_REF = Agent(model_factory, cfg.training, device)
+        logger.info("Global Agent reference initialized for model saving.")
+    except Exception as e:
+        logger.error(f"Failed to initialize Global Agent reference: {e}")
+
+
+def save_global_model(
+    parameters: Union[Parameters, List[np.ndarray]], 
+    round_num: int, 
+    cfg: DictConfig
+) -> None:
+    """
+    Universal function to save the global model state.
+    It saves two formats:
+      1. .npz (Raw FL weights) - Good for resuming FL.
+      2. .pt (PyTorch State Dict) - Good for inference/eval/deployment.
+    """
+    model_dir = _resolve_path(cfg.paths.model_dir)
+    model_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Convert Parameters object to List[np.ndarray] if necessary
+    if isinstance(parameters, Parameters):
+        weights_list = parameters_to_ndarrays(parameters)
+    else:
+        weights_list = parameters
+
+    # 1. Save Raw Numpy (Universal Fallback)
+    np_path = model_dir / f"global_model_round_{round_num}.npz"
+    np.savez_compressed(np_path, *weights_list)
+    
+    # 2. Save PyTorch State Dict (If Agent Ref exists)
+    if GLOBAL_AGENT_REF is not None:
+        try:
+            # Load the weights into the reference agent
+            # We enforce hard_target_update=False because we only care about the structure
+            GLOBAL_AGENT_REF.set_federated_parameters(weights_list, hard_target_update=False)
+            
+            # Construct the state dicts
+            checkpoint = {
+                "round": round_num,
+                "prior_net": GLOBAL_AGENT_REF.prior_net.state_dict(),
+                "recognition_net": GLOBAL_AGENT_REF.recognition_net.state_dict(),
+                "value_net_main": GLOBAL_AGENT_REF.value_net_main.state_dict(),
+                "generation_net": GLOBAL_AGENT_REF.generation_net.state_dict() if GLOBAL_AGENT_REF.generation_net else None,
+            }
+            
+            pt_path = model_dir / f"global_model_round_{round_num}.pt"
+            torch.save(checkpoint, pt_path)
+            logger.info(f"Saved global model checkpoint to: {pt_path.name}")
+            
+            # Optionally save 'latest.pt'
+            torch.save(checkpoint, model_dir / "global_model_latest.pt")
+            
+        except Exception as e:
+            logger.error(f"Failed to save PyTorch checkpoint: {e}")
+    else:
+        logger.info(f"Saved raw weights to: {np_path.name}")
+
+
 def reset_reward_history() -> None:
-    """Clear stored reward metrics before a new training session."""
     REWARD_HISTORY.clear()
 
 
 def get_reward_history() -> List[Tuple[int, float]]:
-    """Return a shallow copy of the reward history."""
     return list(REWARD_HISTORY)
 
 
 def fit_config_fn(server_round: int) -> Dict[str, fl.common.Scalar]:
-    """
-    Pass configuration to the client's fit method.
-    CRITICAL FIX: We sets 'phase' to 'standard' so the client knows
-    it is NOT in the special FMRL two-phase mode.
-    """
     return {"server_round": server_round, "phase": "standard"}
+
+
+# --- CUSTOM STRATEGIES WITH SAVING LOGIC ---
+
+class SaveModelFedAvg(FedAvg):
+    def __init__(self, cfg: DictConfig, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cfg = cfg
+
+    def aggregate_fit(
+        self,
+        server_round: int,
+        results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]],
+        failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes], BaseException]],
+    ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
+        
+        # Call original aggregation
+        aggregated_parameters, aggregated_metrics = super().aggregate_fit(server_round, results, failures)
+
+        if aggregated_parameters is not None:
+            # Save the model
+            save_global_model(aggregated_parameters, server_round, self.cfg)
+
+        return aggregated_parameters, aggregated_metrics
+
+
+class SaveModelFedProx(FedProx):
+    def __init__(self, cfg: DictConfig, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cfg = cfg
+
+    def aggregate_fit(
+        self,
+        server_round: int,
+        results: List[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes]],
+        failures: List[Union[Tuple[fl.server.client_proxy.ClientProxy, fl.common.FitRes], BaseException]],
+    ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
+        
+        aggregated_parameters, aggregated_metrics = super().aggregate_fit(server_round, results, failures)
+
+        if aggregated_parameters is not None:
+            save_global_model(aggregated_parameters, server_round, self.cfg)
+
+        return aggregated_parameters, aggregated_metrics
+
 
 class FMRL_LA_Strategy(FedAvg):
     def __init__(self, cfg, *args, **kwargs):
@@ -141,13 +268,15 @@ class FMRL_LA_Strategy(FedAvg):
             return self.saved_global_parameters, {}
         else:
             new_params = self._phase_b_logic(results, server_round)
+            
+            # --- SAVE MODEL HERE ---
+            if new_params is not None:
+                save_global_model(new_params, server_round, self.cfg)
+            
             self.is_training_phase = True
             return new_params, {}
 
     def _phase_a_logic(self, results):
-        """
-        Calculates weights with EXPLICIT KL BOOSTING.
-        """
         if results:
             results.sort(key=lambda x: x[0].cid)
 
@@ -182,42 +311,30 @@ class FMRL_LA_Strategy(FedAvg):
                 critic = self._get_critic(client.cid)
                 critic.eval()
                 with torch.no_grad():
-                    # Score already includes (KL * 2.0) from the skip connection
                     raw_score = critic(
                         data["h"], data["r"], data["rh"], data["td"], data["recon"], data["kl"]
                     ).item()
                 
                 raw_scores_list.append(raw_score)
-                # Store KL for the manual boost step next
                 processed_clients.append((client, r_val, raw_score, recon_signal, kl_div))
 
             except Exception as e:
                 logger.warning(f"Client {client.cid} sent bad metadata: {e}")
                 continue
 
-        # --- WEIGHT CALCULATION: SIGMOID + MANUAL KL BOOST ---
         if raw_scores_list:
             scores_tensor = torch.tensor(raw_scores_list)
-            kl_tensor = torch.tensor([x[4] for x in processed_clients]) # Extract KLs
-            
-            # 1. Base Quality from Critic (0.0 to 1.0)
+            kl_tensor = torch.tensor([x[4] for x in processed_clients]) 
             base_quality = torch.sigmoid(scores_tensor) 
-
-            # 2. MANUAL BOOST: Multiply by (1 + KL)
-            # If KL is 5.0, weight becomes 6x larger immediately.
-            # This ensures that even if Critic is conservative, high KL wins.
             boosted_scores = base_quality * (1.0 + kl_tensor)
-
-            # 3. Normalize
             avg_quality = boosted_scores.mean()
+            
             if avg_quality < 1e-6:
                 final_weights_tensor = torch.ones_like(boosted_scores)
             else:
                 final_weights_tensor = boosted_scores / avg_quality
 
-            # 4. Clamp (Allow higher max influence for novel clients, up to 5x)
             final_weights_tensor = torch.clamp(final_weights_tensor, 0.1, 5.0)
-            
             final_weights_list = final_weights_tensor.tolist()
 
             for idx, (client, r_val, raw_s, f1, kl) in enumerate(processed_clients):
@@ -259,7 +376,6 @@ class FMRL_LA_Strategy(FedAvg):
                 w_i = 1.0
             else:
                 w_i = self.utilities_cache.get(client.cid, 1.0)
-                # Keep the same high clamp for aggregation
                 w_i = max(0.01, min(w_i, 5.0))
 
             weights = parameters_to_ndarrays(fit_res.parameters)
@@ -342,14 +458,11 @@ class FMRL_LA_Strategy(FedAvg):
         except Exception as e:
             logger.error(f"Server model training failed: {e}")
                     
-def aggregate_fit_metrics(
-    fit_metrics: List[Tuple[int, Dict[str, fl.common.Scalar]]],
-) -> Dict[str, float]:
-    if not fit_metrics:
-        return {}
+
+def aggregate_fit_metrics(fit_metrics: List[Tuple[int, Dict[str, Scalar]]]) -> Dict[str, float]:
+    if not fit_metrics: return {}
     total_examples = sum(num for num, _ in fit_metrics)
-    if total_examples == 0:
-        return {}
+    if total_examples == 0: return {}
     aggregated = {}
     for num, metrics in fit_metrics:
         for k, v in metrics.items():
@@ -358,14 +471,10 @@ def aggregate_fit_metrics(
     return {k: v / total_examples for k, v in aggregated.items()}
 
 
-def aggregate_evaluate_metrics(
-    eval_metrics: List[Tuple[int, Dict[str, fl.common.Scalar]]],
-) -> Dict[str, float]:
-    if not eval_metrics:
-        return {}
+def aggregate_evaluate_metrics(eval_metrics: List[Tuple[int, Dict[str, Scalar]]]) -> Dict[str, float]:
+    if not eval_metrics: return {}
     total_examples = sum(num for num, _ in eval_metrics)
-    if total_examples == 0:
-        return {}
+    if total_examples == 0: return {}
     aggregated = {}
     for num, metrics in eval_metrics:
         for k, v in metrics.items():
@@ -375,12 +484,8 @@ def aggregate_evaluate_metrics(
 
 
 def get_strategy(cfg: DictConfig) -> Strategy:
-    """
-    Factory to return the appropriate strategy.
-    """
     strat_name = getattr(cfg.strategy, "name", "fedavg").lower()
 
-    # Common arguments
     args = dict(
         fraction_fit=cfg.server.fraction_fit,
         fraction_evaluate=cfg.server.fraction_evaluate,
@@ -392,25 +497,36 @@ def get_strategy(cfg: DictConfig) -> Strategy:
     )
 
     if strat_name == "fmrl_la":
-        logger.info("--- Strategy: FMRL-LA (Two-Phase) ---")
+        logger.info("--- Strategy: FMRL-LA (Two-Phase) with Model Saving ---")
         return FMRL_LA_Strategy(cfg=cfg, **args)
 
     elif strat_name == "fedprox":
         proximal_mu = float(cfg.server.get("proximal_mu", 0.1))
-        logger.info("--- Strategy: FedProx (mu=%.2f) ---", proximal_mu)
-        return FedProx(
+        logger.info("--- Strategy: FedProx (mu=%.2f) with Model Saving ---", proximal_mu)
+        return SaveModelFedProx(
+            cfg=cfg,
             proximal_mu=proximal_mu,
             fit_metrics_aggregation_fn=aggregate_fit_metrics,
             **args,
         )
 
     else:
-        logger.info("--- Strategy: FedAvg ---")
-        return FedAvg(fit_metrics_aggregation_fn=aggregate_fit_metrics, **args)
+        logger.info("--- Strategy: FedAvg with Model Saving ---")
+        return SaveModelFedAvg(
+            cfg=cfg,
+            fit_metrics_aggregation_fn=aggregate_fit_metrics,
+            **args
+        )
 
 
 def run_server(cfg: DictConfig, device: Optional[torch.device] = None) -> None:
     reset_reward_history()
+    
+    # Initialize the global agent reference for saving capabilities
+    if device is None:
+        device = get_device()
+    init_global_agent_ref(cfg, device)
+
     strategy = get_strategy(cfg)
 
     logger.info(

@@ -246,87 +246,107 @@ class Agent:
     # --- METHODS FOR FEDERATED LEARNING ---
 
     def get_federated_parameters(self) -> List[np.ndarray]:
-        """Get the parameters to federate (Prior + Recognition + MainQ + Generation)."""
+        """
+        Get the parameters to federate (Prior + Recognition + MainQ + Generation).
+        IMPORTANT: Includes Generator params if the network exists, even if training is disabled.
+        This ensures the server can save the full model structure.
+        """
         logger.debug("Getting federated parameters (Prior + Recognition + MainQ + Generation)")
         
         prior_state_dict = self.prior_net.state_dict()
         recog_state_dict = self.recognition_net.state_dict()
         main_q_state_dict = self.value_net_main.state_dict()
-        generation_state_dict = self.generation_net.state_dict()
         
         params = [val.cpu().numpy() for val in prior_state_dict.values()]
         params.extend([val.cpu().numpy() for val in recog_state_dict.values()])
         params.extend([val.cpu().numpy() for val in main_q_state_dict.values()])
-        params.extend([val.cpu().numpy() for val in generation_state_dict.values()])
+        
+        # FIXED: Robust check if generator exists
+        if self.generation_net is not None:
+             generation_state_dict = self.generation_net.state_dict()
+             params.extend([val.cpu().numpy() for val in generation_state_dict.values()])
+             
         return params
 
     def set_federated_parameters(self, parameters: List[np.ndarray], hard_target_update: bool = True):
         """
         Set the received federated parameters (Prior + Recognition + MainQ + Generation).
-        This logic is the inverse of get_federated_parameters.
+        Robustly handles cases where generator weights are missing (if server didn't send them).
         """
-        logger.debug("Setting federated parameters (Prior + Recognition + MainQ + Generation)")
+        logger.debug("Setting federated parameters")
+        
         prior_keys = list(self.prior_net.state_dict().keys())
         recog_keys = list(self.recognition_net.state_dict().keys())
         main_q_keys = list(self.value_net_main.state_dict().keys())
-        generation_keys = list(self.generation_net.state_dict().keys())
         
-        num_prior_params = len(prior_keys)
-        num_recog_params = len(recog_keys)
-        num_main_q_params = len(main_q_keys)
-        num_generation_params = len(generation_keys)
-        expected_without_generator = num_prior_params + num_recog_params + num_main_q_params
-        expected_with_generator = expected_without_generator + num_generation_params
+        num_prior = len(prior_keys)
+        num_recog = len(recog_keys)
+        num_main = len(main_q_keys)
+        
+        base_params_count = num_prior + num_recog + num_main
+        
+        # Determine if we have extra params for generator
+        gen_keys = []
+        num_gen = 0
+        
+        # FIXED: Robust check if generator exists
+        if self.generation_net is not None:
+            gen_keys = list(self.generation_net.state_dict().keys())
+            num_gen = len(gen_keys)
+            
+        expected_with_gen = base_params_count + num_gen
+        
+        received_count = len(parameters)
 
-        if len(parameters) not in (expected_without_generator, expected_with_generator):
+        # Validation Logic
+        if received_count == base_params_count:
+            # OK: Received only RL weights
+            pass
+        elif received_count == expected_with_gen:
+            # OK: Received RL + Generator weights
+            pass
+        else:
             logger.error(
-                "Parameter mismatch: expected %s or %s tensors, but received %s",
-                expected_without_generator,
-                expected_with_generator,
-                len(parameters),
+                "Parameter mismatch: expected %s (base) or %s (w/ gen), but received %s",
+                base_params_count,
+                expected_with_gen,
+                received_count,
             )
             raise ValueError("Mismatched number of parameters received from server")
         
-        # Load PriorNet parameters
-        prior_load_dict = OrderedDict(zip(
-            prior_keys,
-            [torch.tensor(p, device=self.device) for p in parameters[:num_prior_params]]
-        ))
+        # --- Load Base Networks ---
+        current_idx = 0
         
-        recog_start = num_prior_params
-        recog_end = recog_start + num_recog_params
-        recog_load_dict = OrderedDict(
-            zip(
-                recog_keys,
-                [torch.tensor(p, device=self.device) for p in parameters[recog_start:recog_end]],
-            )
+        # 1. Prior
+        prior_params = parameters[current_idx : current_idx + num_prior]
+        self.prior_net.load_state_dict(
+            OrderedDict(zip(prior_keys, [torch.tensor(p, device=self.device) for p in prior_params]))
         )
+        current_idx += num_prior
+        
+        # 2. Recognition
+        recog_params = parameters[current_idx : current_idx + num_recog]
+        self.recognition_net.load_state_dict(
+            OrderedDict(zip(recog_keys, [torch.tensor(p, device=self.device) for p in recog_params]))
+        )
+        current_idx += num_recog
 
-        # Load MainQNet parameters
-        main_start = recog_end
-        main_end = main_start + num_main_q_params
-        main_q_load_dict = OrderedDict(zip(
-            main_q_keys,
-            [torch.tensor(p, device=self.device) for p in parameters[main_start:main_end]]
-        ))
-            
-        self.prior_net.load_state_dict(prior_load_dict)
-        self.recognition_net.load_state_dict(recog_load_dict)
-        self.value_net_main.load_state_dict(main_q_load_dict)
-
-        if len(parameters) == expected_with_generator:
-            generator_load_dict = OrderedDict(
-                zip(
-                    generation_keys,
-                    [
-                        torch.tensor(p, device=self.device)
-                        for p in parameters[main_end:expected_with_generator]
-                    ],
+        # 3. Main Q
+        main_params = parameters[current_idx : current_idx + num_main]
+        self.value_net_main.load_state_dict(
+            OrderedDict(zip(main_q_keys, [torch.tensor(p, device=self.device) for p in main_params]))
+        )
+        current_idx += num_main
+        
+        # --- Load Generator (Conditional) ---
+        if self.generation_net is not None:
+            if received_count == expected_with_gen:
+                gen_params = parameters[current_idx : current_idx + num_gen]
+                self.generation_net.load_state_dict(
+                    OrderedDict(zip(gen_keys, [torch.tensor(p, device=self.device) for p in gen_params]))
                 )
-            )
-            self.generation_net.load_state_dict(generator_load_dict)
-        else:
-            logger.debug("No generation network weights provided; keeping local generator as-is.")
+            else:
+                logger.debug("Local agent has generator, but server sent no weights. Keeping local generator as-is.")
         
         if hard_target_update:
             logger.debug("Performing hard update of target network post-aggregation")
@@ -342,6 +362,10 @@ class Agent:
         Train the generation network on correctly classified samples using the
         procedure described for the Unknown Attack Recognition module.
         """
+        # FIXED: Safety check if generator doesn't exist
+        if self.generation_net is None:
+            return {}
+
         features = features.detach().cpu().float()
         labels = labels.detach().cpu().long()
         if features.dim() != 2 or labels.dim() != 1:
@@ -413,7 +437,7 @@ class Agent:
 
         last_epoch_loss = 0.0
         for round_idx in range(1, gen_rounds + 1):
-            logger.info(
+            logger.debug(
                 "Generator round %02d/%02d | samples=%s/%s",
                 round_idx,
                 gen_rounds,
@@ -438,15 +462,7 @@ class Agent:
                     total_loss += loss.item()
 
                 last_epoch_loss = total_loss / max(1, len(train_loader))
-                logger.info(
-                    "Round %02d/%02d | Epoch %02d/%02d | avg recon mse: %.6f",
-                    round_idx,
-                    gen_rounds,
-                    epoch,
-                    gen_epochs_per_round,
-                    last_epoch_loss,
-                )
-
+                
         self.generation_net.eval()
         return {
             "generator_loss": float(last_epoch_loss),
