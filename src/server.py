@@ -99,36 +99,36 @@ def save_global_model(
         weights_list = parameters
 
     # 1. Save Raw Numpy (Universal Fallback)
-    np_path = model_dir / f"global_model_round_{round_num}.npz"
-    np.savez_compressed(np_path, *weights_list)
+    # np_path = model_dir / f"global_model_round_{round_num}.npz"
+    # np.savez_compressed(np_path, *weights_list)
     
     # 2. Save PyTorch State Dict (If Agent Ref exists)
-    if GLOBAL_AGENT_REF is not None:
-        try:
-            # Load the weights into the reference agent
-            # We enforce hard_target_update=False because we only care about the structure
-            GLOBAL_AGENT_REF.set_federated_parameters(weights_list, hard_target_update=False)
-            
-            # Construct the state dicts
-            checkpoint = {
-                "round": round_num,
-                "prior_net": GLOBAL_AGENT_REF.prior_net.state_dict(),
-                "recognition_net": GLOBAL_AGENT_REF.recognition_net.state_dict(),
-                "value_net_main": GLOBAL_AGENT_REF.value_net_main.state_dict(),
-                "generation_net": GLOBAL_AGENT_REF.generation_net.state_dict() if GLOBAL_AGENT_REF.generation_net else None,
-            }
-            
-            pt_path = model_dir / f"global_model_round_{round_num}.pt"
-            torch.save(checkpoint, pt_path)
-            logger.info(f"Saved global model checkpoint to: {pt_path.name}")
-            
-            # Optionally save 'latest.pt'
-            torch.save(checkpoint, model_dir / "global_model_latest.pt")
-            
-        except Exception as e:
-            logger.error(f"Failed to save PyTorch checkpoint: {e}")
-    else:
-        logger.info(f"Saved raw weights to: {np_path.name}")
+# if GLOBAL_AGENT_REF is not None:
+    try:
+        # Load the weights into the reference agent
+        # We enforce hard_target_update=False because we only care about the structure
+        GLOBAL_AGENT_REF.set_federated_parameters(weights_list, hard_target_update=False)
+        
+        # Construct the state dicts
+        checkpoint = {
+            "round": round_num,
+            "prior_net": GLOBAL_AGENT_REF.prior_net.state_dict(),
+            "recognition_net": GLOBAL_AGENT_REF.recognition_net.state_dict(),
+            "value_net_main": GLOBAL_AGENT_REF.value_net_main.state_dict(),
+            "generation_net": GLOBAL_AGENT_REF.generation_net.state_dict() if GLOBAL_AGENT_REF.generation_net else None,
+        }
+        
+        # pt_path = model_dir / f"global_model_round_{round_num}.pt"
+        # torch.save(checkpoint, pt_path)
+        # logger.info(f"Saved global model checkpoint to: {pt_path.name}")
+        
+        # Optionally save 'latest.pt'
+        torch.save(checkpoint, model_dir / "global_model_latest.pt")
+        
+    except Exception as e:
+        logger.error(f"Failed to save PyTorch checkpoint: {e}")
+    # else:
+    #     logger.info(f"Saved raw weights to: {np_path.name}")
 
 
 def reset_reward_history() -> None:
