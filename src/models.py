@@ -178,32 +178,47 @@ class ValueNetwork(nn.Module):
     ) -> torch.Tensor:
         return self.decoder(z, s, use_target=use_target)
 
-
-# Kept GenerationNetwork simpler as it is for part 2 (Intrusion Recog)
 class GenerationNetwork(nn.Module):
     def __init__(self, z_dim: int, num_actions: int, s_dim: int):
         super().__init__()
         self.num_actions = num_actions
+        
+        # 1. Combine z and action
         in_dim = z_dim + num_actions
+        
+        # 2. REDUCED CAPACITY ARCHITECTURE
+        # Instead of expanding (64->128->256), we keep it small.
+        # This acts as an information bottleneck, forcing the model 
+        # to rely on the class structure (action) to reconstruct valid features.
         self.fc1 = nn.Linear(in_dim, 64)
-        self.fc2 = nn.Linear(64, 128)
-        self.fc3 = nn.Linear(128, 256)
-        self.out = nn.Linear(256, s_dim)
-        self.act = nn.ReLU()
-        self.final_act = nn.Sigmoid()
+        
+        # We jump straight to the output or use one small hidden layer.
+        # Removing layers prevents "memorization" of unknown patterns.
+        self.out = nn.Linear(64, s_dim)
+        
+        # LeakyReLU is often better for anomaly detection gradients than ReLU
+        self.act = nn.LeakyReLU(0.2)
 
     def forward(self, z: torch.Tensor, a: torch.Tensor) -> torch.Tensor:
+        # Handle One-Hot encoding
         if a.dim() == 1 or (a.dim() == 2 and a.shape[1] == 1):
             a_onehot = to_one_hot(a, self.num_actions)
         else:
             a_onehot = a
+            
         x = torch.cat([z, a_onehot], dim=-1)
+        
         x = self.act(self.fc1(x))
-        x = self.act(self.fc2(x))
-        x = self.act(self.fc3(x))
-        s_recon = self.final_act(self.out(x))
+        
+        # 3. NO SIGMOID ACTIVATION
+        # We remove self.final_act = nn.Sigmoid()
+        # Why? If an unknown sample has values like -2.5 or +5.0 (Standard Scaled),
+        # Sigmoid cannot reproduce them, or it clips the error.
+        # A linear output allows the model to try (and fail) to reconstruct,
+        # often resulting in larger, more detectable MSE gradients.
+        s_recon = self.out(x)
+        
         return s_recon
-
 
 class OpenSetQChainModelFactory:
     """Simple factory to build value/generation networks using model config."""

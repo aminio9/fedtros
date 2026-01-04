@@ -149,3 +149,4 @@ checkpoints/
 *.swp
 
 models/
+evt_results/

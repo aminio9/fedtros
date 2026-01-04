@@ -76,13 +76,16 @@ generator_training:
 
 evt:
   enabled: true
-  tail_size_percent: 0.2
-  min_errors_per_class: 5
-  min_tail_size: 5
-  q: 0.80
-  target_known_fpr: 0.01
+  # CRITICAL: Use 100% of data so NO sample gets a 0.0 score.
+  tail_size_percent: 1.0  
+  min_errors_per_class: 10
+  min_tail_size: 10
+  # Remove 'q' or set to 0.0 so it doesn't conflict with tail_size
+  q: 0.0
+  # Relax FPR further to catch more unknowns (Recall)
+  target_known_fpr: 0.20
+  decision_threshold: 0.5
   delta_grid: [1e-6, 0.99, 200]
-  decision_threshold: 0.1
   per_class_thresholds: true
 
 preprocess:

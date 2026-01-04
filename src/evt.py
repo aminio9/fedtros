@@ -1,7 +1,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Tuple, Optional
 
 import joblib
 import numpy as np
@@ -9,61 +9,68 @@ from scipy.stats import genpareto
 
 logger = logging.getLogger("EVT")
 
-
 class EVTModel:
-    """Simple EVT wrapper around SciPy's Generalized Pareto fit."""
+    """EVT wrapper that supports fixed thresholds for robust tail fitting."""
 
     def __init__(self, tail_size_percent: float):
-        if not (0.0 < tail_size_percent < 1.0):
-            raise ValueError("tail_size_percent must be between 0 and 1")
         self.tail_size_percent = float(tail_size_percent)
-        self.threshold_u: float | None = None
-        self.gpd_params: tuple[float, float, float] | None = None
+        self.threshold_u: Optional[float] = None
+        self.gpd_params: Optional[Tuple[float, float, float]] = None
 
-    def fit(self, reconstruction_errors: np.ndarray) -> None:
+    def fit(self, reconstruction_errors: np.ndarray, fixed_threshold: Optional[float] = None) -> None:
+        """
+        Fits the GPD to the tail. 
+        If fixed_threshold is provided, it is used directly.
+        """
         if reconstruction_errors.ndim != 1 or reconstruction_errors.size == 0:
             raise ValueError("reconstruction_errors must be a non-empty 1D array")
 
-        sorted_errors = np.sort(reconstruction_errors)
-        idx = int(sorted_errors.size * (1.0 - self.tail_size_percent))
-        idx = min(max(idx, 0), sorted_errors.size - 2)
-        self.threshold_u = float(sorted_errors[idx])
-        tail = reconstruction_errors[reconstruction_errors > self.threshold_u] - self.threshold_u
-
-        if tail.size == 0:
-            logger.warning(
-                "No tail data above threshold %.6f; lowering threshold heuristically.",
-                self.threshold_u,
-            )
-            idx = int(sorted_errors.size * (1.0 - self.tail_size_percent * 0.5))
+        if fixed_threshold is not None:
+            self.threshold_u = float(fixed_threshold)
+        else:
+            sorted_errors = np.sort(reconstruction_errors)
+            idx = int(sorted_errors.size * (1.0 - self.tail_size_percent))
             idx = min(max(idx, 0), sorted_errors.size - 2)
             self.threshold_u = float(sorted_errors[idx])
-            tail = reconstruction_errors[reconstruction_errors > self.threshold_u] - self.threshold_u
-            if tail.size == 0:
-                raise RuntimeError("Insufficient tail data for EVT fitting")
 
-        zeta, loc, eta = genpareto.fit(tail, loc=0)
-        self.gpd_params = (float(zeta), float(loc), float(eta))
-        logger.info(
-            "EVT fitted: u=%.6f, params=(shape=%.6f, loc=%.6f, scale=%.6f)",
-            self.threshold_u,
-            zeta,
-            loc,
-            eta,
-        )
+        # Extract tail based on the established threshold
+        tail = reconstruction_errors[reconstruction_errors > self.threshold_u] - self.threshold_u
+
+        # Handle edge cases (empty tail)
+        if tail.size == 0:
+            if fixed_threshold is None:
+                # Heuristic fallback if we aren't using a fixed threshold
+                sorted_errors = np.sort(reconstruction_errors)
+                idx = int(sorted_errors.size * (1.0 - self.tail_size_percent * 0.5))
+                self.threshold_u = float(sorted_errors[idx])
+                tail = reconstruction_errors[reconstruction_errors > self.threshold_u] - self.threshold_u
+            
+            if tail.size == 0:
+                 logger.error("Insufficient tail data. fitting dummy GPD.")
+                 self.gpd_params = (0.0, 0.0, 1.0) 
+                 return
+
+        # Fit GPD
+        try:
+            zeta, loc, eta = genpareto.fit(tail, loc=0)
+            self.gpd_params = (float(zeta), float(loc), float(eta))
+        except Exception as e:
+            logger.error(f"GPD fitting failed: {e}. Using dummy params.")
+            self.gpd_params = (0.0, 0.0, 1.0)
 
     def predict_probability_unknown(self, reconstruction_error: float) -> float:
         if self.gpd_params is None or self.threshold_u is None:
-            raise RuntimeError("EVT model must be fitted before predicting")
+            return 0.0
+            
         if reconstruction_error <= self.threshold_u:
             return 0.0
+            
         zeta, loc, eta = self.gpd_params
+        # CDF of GPD gives probability of being in the tail
         prob = genpareto.cdf(reconstruction_error - self.threshold_u, zeta, loc=loc, scale=eta)
         return float(prob)
 
-    def to_payload(self) -> Dict[str, float]:
-        if self.threshold_u is None or self.gpd_params is None:
-            raise RuntimeError("EVT model must be fitted before serialization")
+    def to_payload(self) -> Dict:
         return {
             "threshold_u": self.threshold_u,
             "gpd_params": self.gpd_params,
@@ -71,12 +78,11 @@ class EVTModel:
         }
 
     @classmethod
-    def from_payload(cls, payload: Dict[str, float]) -> "EVTModel":
+    def from_payload(cls, payload: Dict) -> "EVTModel":
         model = cls(payload["tail_size_percent"])
         model.threshold_u = float(payload["threshold_u"])
         model.gpd_params = tuple(payload["gpd_params"])
         return model
-
 
 def save_evt_collection(evt_map: Dict[int, EVTModel], filepath: Path | str) -> None:
     payload = {}
