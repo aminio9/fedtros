@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "fedosq-chain"
+name = "project-fmarl"
 version = "0.1.0"
-description = "FedOSQ-Chain: Federated CVAE-DQN for open-set intrusion detection on blockchain traffic"
+description = "Federated CVAE-DQN for open-set intrusion detection on blockchain traffic"
 authors = ["MH Amini <mhaminii18@gmail.com>"]
 readme = "README.md"
 packages = [{include = "src"}]
