@@ -4,7 +4,7 @@ The experiment plan is extracted from `Experimentplan/Improved_Experiment_Plan.d
 
 ## Research Objective
 
-Evaluate a federated intrusion-detection framework, named Proposed/FMRL_LA in the plotting template, for closed-set classification of known IoT traffic and open-set detection of unknown or zero-day attacks.
+Evaluate a federated intrusion-detection framework, named Proposed/FMRL_LA in the plotting template, for closed-set classification of known Blockchain traffic and open-set detection of unknown or zero-day attacks.
 
 Primary claims:
 

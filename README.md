@@ -1,6 +1,6 @@
-# Cooperative Federated MARL for Open-Set IoT Intrusion Detection
+# Cooperative Federated MARL for Open-Set Blockchain Traffics Intrusion Detection
 
-This repository implements a local, reproducible research pipeline for federated IoT intrusion detection with cooperative multi-agent reinforcement learning, Double Q-learning, EVT open-set recognition, and Flower-based federated training.
+This repository implements a local, reproducible research pipeline for federated Blockchain Traffics intrusion detection with cooperative multi-agent reinforcement learning, Double Q-learning, EVT open-set recognition, and Flower-based federated training.
 
 ## Project Layout
 
