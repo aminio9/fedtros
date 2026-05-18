@@ -116,10 +116,10 @@ lightning_logs/
 # ----------------------------------------------------------------------
 # Project-specific artifacts
 # ----------------------------------------------------------------------
-logs/
-figures/
-outputs/
-evt/
+/logs/
+/figures/
+/outputs/
+/evt/
 
 # Data generated during preprocessing / training
 data/processed/
@@ -148,5 +148,7 @@ checkpoints/
 *.bak
 *.swp
 
-models/
-evt_results/
+/models/
+/evt_results/
+
+papers/

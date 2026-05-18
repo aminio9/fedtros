@@ -1,0 +1,19 @@
+name: evt
+enabled: true
+evt:
+  enabled: true
+  score: reconstruction_error
+  tail_size_percent: 1.0
+  min_errors_per_class: 10
+  min_tail_size: 10
+  q: 0.0
+  target_known_fpr: 0.20
+  decision_threshold: 0.5
+  delta_grid:
+    - 1.0e-6
+    - 0.99
+    - 200
+  per_class_thresholds: true
+  unknown_label_id: -1
+  open_set_label_id: 99
+  error_scale_factor: 100000.0

@@ -1,71 +1,119 @@
-﻿
-# FMARL
+# Cooperative Federated MARL for Open-Set IoT Intrusion Detection
 
-Federated Multi-Agent Reinforcement Deep Q-Learning for Open-Set Recognition in Blockchain Network Traffic
+This repository implements a local, reproducible research pipeline for federated IoT intrusion detection with cooperative multi-agent reinforcement learning, Double Q-learning, EVT open-set recognition, and Flower-based federated training.
 
-## Requirements
-- Python 3.12+
-- Poetry
+## Project Layout
 
-## Install
+```text
+src/
+  agents/          Double Q-learning agent and policies
+  checkpointing/   best/latest/final checkpoint helpers
+  configs/         Hydra config groups
+  data/            preprocessing and tensor loading
+  evaluation/      closed-set, open-set, and run comparison
+  federated/       Flower client/server/simulation orchestration
+  models/          CVAE-DQN and optional tabular Transformer encoder
+  openset/         EVT implementation
+  plotting/        Q1 dashboard and plot registry
+  rl/              Gymnasium environment and replay training loop
+  tracking/        local-only run tracker
+  training/        centralized/debug training and smoke test
+  utils/           config, device, logging, seeding helpers
+scripts/           thin Hydra entry points
+docs/              experiment, architecture, evaluation, and reproducibility notes
+```
+
+## Setup
+
 ```bash
-pip install poetry
 poetry install
-````
-
-## Preprocess
-
-Generate processed datasets and (optional) visualization.
-
-```bash
-poetry run python preprocess.py
-poetry run python visualize_dirichlet_split.py
+poetry install -E dev
 ```
 
-Outputs are written under `data/processed/`.
+## Main Commands
 
-## Run (1 server + 3 clients)
-
-Use four terminals.
+Preprocess:
 
 ```bash
-# Terminal 1 (server)
-poetry run python run_server.py
+poetry run python scripts/preprocess.py dataset.preprocessing.raw_file=data/raw/BNaT.csv federated.num_clients=10
 ```
 
+Central/local training:
+
 ```bash
-# Terminal 2 (client 1)
-poetry run python run_client.py --cid 1 --data_path data/processed/client_1_train.pt
+poetry run python scripts/train.py experiment=baseline seed=42 training.epochs=100
 ```
 
+Federated simulation:
+
 ```bash
-# Terminal 3 (client 2)
-poetry run python run_client.py --cid 2 --data_path data/processed/client_2_train.pt
+poetry run python scripts/federated_train.py federated.num_clients=10 federated.num_rounds=50
 ```
 
+Manual Flower server/client:
+
 ```bash
-# Terminal 4 (client 3)
-poetry run python run_client.py --cid 3 --data_path data/processed/client_3_train.pt
+poetry run python scripts/federated_server.py
+poetry run python scripts/federated_client.py federated.client_id=1 federated.client_data_path=data/processed/client_1_train.pt
 ```
 
-### Run multiple clients with a range
+Evaluation:
 
 ```bash
-poetry run python run_client.py --cid_range "1-10" --data_path "./data/processed/client_{cid}_train.pt"
+poetry run python scripts/evaluate.py checkpoint.path=outputs/run_id/best_model.pt
+```
+
+Regenerate plots without rerunning training:
+
+```bash
+poetry run python scripts/plot.py run_dir=outputs/run_id
+```
+
+Compare runs:
+
+```bash
+poetry run python scripts/compare_runs.py runs='[outputs/run1,outputs/run2]'
+```
+
+Smoke test:
+
+```bash
+poetry run python scripts/smoke_test.py experiment=smoke device.prefer=cpu
 ```
 
 ## Outputs
 
-* Logs: `logs/`
-* Global figures/reports: `figures/`
-* Per-client figures/reports: `figures/clients/client_<cid>/`
+Each run writes local artifacts under `outputs/<run_id>/`:
 
-## Shared test data (what preprocess creates)
+```text
+run.log
+debug.log
+metrics.jsonl
+metrics.csv
+metadata.json
+config.yaml
+resolved_config.yaml
+best_model.pt
+latest_checkpoint.pt
+final_model.pt
+test_metrics.json
+open_set_metrics.json
+federated_round_metrics.csv
+plots/
+evt/
+```
 
-`preprocess.py` also creates shared evaluation sets so all clients evaluate on identical datasets:
+No W&B or online tracking service is required.
 
-* `data/processed/shared_closed_set_test.pt`
-* `data/processed/shared_open_set_test.pt`
+## Configuration
 
-Client/server evaluation artifacts are saved under `figures/` and `figures/clients/client_<cid>/`.
+Hydra config groups live in `src/configs/`:
 
+```text
+dataset, model, agent, optimizer, scheduler, training, evaluation,
+federated, open_set, plotting, tracking, checkpointing, logging, experiment
+```
+
+All important experiment parameters are controlled by config files or explicit Hydra overrides. Missing required values fail during script startup through `src.utils.config.validate_config`.
+
+See `docs/` for the experiment protocol, plotting contract, checkpoint format, and reproducibility workflow.

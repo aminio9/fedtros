@@ -1,0 +1,6 @@
+name: none
+enabled: false
+monitor: val/loss
+mode: min
+step_size: 10
+gamma: 0.1

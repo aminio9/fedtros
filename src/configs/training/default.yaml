@@ -1,0 +1,36 @@
+epochs: 10
+validation_interval: 1
+checkpoint_interval: 1
+resume_from: null
+seed: ${seed}
+batch_size: 512
+local_episodes_per_round: 15
+steps_per_episode: 100
+replay_buffer_size: 50000
+min_buffer_size: 512
+gamma: 0.7
+lr_prior: ${optimizer.lr_prior}
+lr_q_rl: ${optimizer.lr_q_rl}
+tau: 0.01
+target_update_freq: 100
+use_double_dqn: ${agent.use_double_dqn}
+prior_grad_clip_norm: 1.0
+q_grad_clip_norm: 1.0
+epsilon_start: 1.0
+epsilon_end: 0.01
+epsilon_decay_rate: 0.95
+prior_kl_raw: false
+generator:
+  enabled: true
+  batch_size: 128
+  epochs: 50
+  rounds: 1
+  epochs_per_round: 30
+  lr: 0.0005
+  min_correct_samples: 10
+smoke:
+  num_samples: 24
+  epochs: 1
+  steps_per_episode: 3
+  min_buffer_size: 2
+  batch_size: 2

@@ -1,0 +1,7 @@
+name: baseline
+description: B-NAT FMRL-LA baseline with EVT open-set evaluation.
+method: FMRL_LA
+dataset: B-NAT
+partition: dirichlet
+alpha: ${dataset.preprocessing.alpha}
+notes: "Replace dashboard template arrays with saved metrics before manuscript use."

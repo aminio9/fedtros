@@ -1,0 +1,6 @@
+name: smoke
+description: Synthetic end-to-end smoke test.
+method: smoke
+dataset: synthetic
+partition: synthetic
+alpha: 1.0

@@ -1,0 +1,40 @@
+num_clients: 3
+num_rounds: 100
+local_client_epochs: ${training.local_episodes_per_round}
+evaluation_frequency: 1
+client_resources:
+  num_cpus: 1
+  num_gpus: 0.0
+client_id: 1
+client_data_path: ${dataset.preprocessing.output_dir}/client_${federated.client_id}_train.pt
+server:
+  address: 127.0.0.1:8090
+  num_rounds: ${federated.num_rounds}
+  fraction_fit: 1.0
+  fraction_evaluate: 1.0
+  min_fit_clients: ${federated.num_clients}
+  min_evaluate_clients: ${federated.num_clients}
+  min_available_clients: ${federated.num_clients}
+  proximal_mu: 0.0
+strategy:
+  name: fmrl_la
+  aggregation_strategy: fmrl_la
+  fmrl_lr: 0.01
+  utility_threshold: 0.1
+  utility_temperature: 1.0
+  aggregation_lr: 1.0
+  min_selected_clients: 1
+  max_selected_fraction: 1.0
+  max_utility: 10.0
+  critic_hidden_dim: 64
+  mixer_hidden_dim: 64
+  monitor_path: ${tracking.run_dir}/fmrlla_monitoring.jsonl
+  max_agents: ${federated.num_clients}
+  warmup_rounds: 2
+  system_utility_weights:
+    reward: 0.30
+    f1: 0.25
+    accuracy: 0.15
+    td_stability: 0.10
+    novelty: 0.05
+    communication: 0.15

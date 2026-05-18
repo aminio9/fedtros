@@ -1,0 +1,44 @@
+name: q1_dashboard
+enabled: true
+source_theme_file: Experimentplan/testplot.py
+output_dir: ${tracking.run_dir}/plots
+formats:
+  - png
+  - pdf
+plot_dpi: 150
+warn_on_missing: true
+allow_template_fallback: false
+dashboard_filename: complete_Q1_dashboard
+required_plots:
+  - scalability_nodes_vs_accuracy
+  - non_iid_data_distribution
+  - convergence_mild_non_iid
+  - convergence_hard_non_iid
+  - known_unknown_score_distribution
+  - openness_vs_auroc
+  - unknown_detection_roc
+  - cross_dataset_generalization
+  - confusion_matrix_before_osr
+  - confusion_matrix_after_osr
+  - seed_robustness_boxplot
+  - latent_space_separation
+  - communication_efficiency
+  - architectural_ablation
+extra_plots:
+  - training_loss
+  - validation_loss
+  - train_validation_accuracy
+  - learning_rate
+  - reward_curve
+  - double_q_loss
+  - epsilon_schedule
+  - federated_global_metrics
+  - federated_per_client_metrics
+  - client_drift_variance
+  - test_metric_summary
+  - per_class_accuracy
+  - pr_curve
+  - calibration
+  - evt_threshold
+  - experiment_comparison
+  - runtime_memory

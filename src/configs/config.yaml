@@ -1,0 +1,64 @@
+defaults:
+  - dataset: bnat
+  - model: openset_qchain
+  - agent: double_q
+  - optimizer: adam
+  - scheduler: none
+  - training: default
+  - evaluation: default
+  - federated: default
+  - open_set: evt
+  - plotting: q1_dashboard
+  - tracking: local
+  - checkpointing: default
+  - logging: default
+  - experiment: baseline
+  - override hydra/job_logging: disabled
+  - override hydra/hydra_logging: disabled
+  - _self_
+
+seed: 42
+log_level: ${logging.level}
+
+device:
+  prefer: cpu
+  allow_cpu_fallback: true
+  move_data_to_device: false
+  deterministic: true
+  benchmark: false
+  use_deterministic_algorithms: false
+
+run_dir: ${tracking.run_dir}
+runs: []
+
+checkpoint:
+  path: ${checkpointing.latest_checkpoint_path}
+
+paths:
+  closed_set_test_data: ${dataset.preprocessing.output_dir}/shared_closed_set_test.pt
+  open_set_test_data: ${dataset.preprocessing.output_dir}/shared_open_set_test.pt
+  data_client_template: ${dataset.preprocessing.output_dir}/client_{client_id}_train.pt
+  data_client_1: ${dataset.preprocessing.output_dir}/client_1_train.pt
+  model_dir: ${checkpointing.dir}
+  class_names: ${dataset.preprocessing.output_dir}/class_names.json
+  figures_dir: ${tracking.run_dir}/plots
+  evt_dir: ${tracking.run_dir}/evt
+  global_model_checkpoint: ${checkpointing.latest_checkpoint_path}
+
+env_metadata:
+  state_dim: ${model.state_dim}
+  num_actions: ${model.num_actions}
+
+preprocess: ${dataset.preprocessing}
+server: ${federated.server}
+strategy: ${federated.strategy}
+evt: ${open_set.evt}
+generator_training: ${training.generator}
+
+hydra:
+  run:
+    dir: .
+  sweep:
+    dir: .
+    subdir: .
+  output_subdir: null

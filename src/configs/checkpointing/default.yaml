@@ -1,0 +1,11 @@
+dir: ${tracking.run_dir}
+best_model_path: ${checkpointing.dir}/best_model.pt
+latest_checkpoint_path: ${checkpointing.dir}/latest_checkpoint.pt
+final_model_path: ${checkpointing.dir}/final_model.pt
+save_best: true
+save_latest: true
+save_final: true
+monitor_metric: val/accuracy
+monitor_mode: max
+include_rng_state: true
+strict_load: true

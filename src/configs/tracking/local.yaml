@@ -1,0 +1,11 @@
+name: local
+backend: local
+output_dir: outputs
+run_id: ${now:%Y%m%d_%H%M%S}_${experiment.name}_seed${seed}
+run_dir: ${tracking.output_dir}/${tracking.run_id}
+metrics_jsonl: ${tracking.run_dir}/metrics.jsonl
+metrics_csv: ${tracking.run_dir}/metrics.csv
+metadata_json: ${tracking.run_dir}/metadata.json
+config_yaml: ${tracking.run_dir}/config.yaml
+resolved_config_yaml: ${tracking.run_dir}/resolved_config.yaml
+log_to_stdout: true
