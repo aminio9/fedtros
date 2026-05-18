@@ -14,7 +14,7 @@ src/
   federated/       Flower client/server/simulation orchestration
   models/          CVAE-DQN and optional tabular Transformer encoder
   openset/         EVT implementation
-  plotting/        Q1 dashboard and plot registry
+  plotting/        Q1 figure registry and per-plot rendering
   rl/              Gymnasium environment and replay training loop
   tracking/        local-only run tracker
   training/        centralized/debug training and smoke test
@@ -69,6 +69,8 @@ Regenerate plots without rerunning training:
 poetry run python scripts/plot.py run_dir=outputs/run_id
 ```
 
+This writes one image per experiment into `outputs/run_id/plots/`, plus a `plot_manifest.json` file that records the generated artifacts.
+
 Compare runs:
 
 ```bash
@@ -99,7 +101,12 @@ final_model.pt
 test_metrics.json
 open_set_metrics.json
 federated_round_metrics.csv
+federated_history.csv
+open_set_scores.csv
+before_osr_confusion_matrix.csv
+after_osr_confusion_matrix.csv
 plots/
+plots/plot_manifest.json
 evt/
 ```
 

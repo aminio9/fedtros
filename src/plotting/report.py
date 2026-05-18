@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
 from omegaconf import DictConfig
 
-from src.plotting.plots import render_q1_dashboard, render_training_plots
+from src.plotting.plots import render_required_plots, render_training_plots
 from src.utils.config import resolve_path
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,18 @@ def generate_plots(
     formats = [str(fmt).lower() for fmt in cfg.plotting.formats]
     dpi = int(cfg.plotting.plot_dpi)
     generated = []
-    generated.extend(render_q1_dashboard(source_run_dir, output_dir, formats, dpi))
+    generated.extend(render_required_plots(source_run_dir, output_dir, formats, dpi))
     generated.extend(render_training_plots(source_run_dir, output_dir, formats, dpi))
+    manifest = {
+        "source_run_dir": str(source_run_dir),
+        "output_dir": str(output_dir),
+        "formats": formats,
+        "dpi": dpi,
+        "files": [str(path.relative_to(output_dir)) for path in generated],
+    }
+    (output_dir / "plot_manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
     logger.info("Generated %d plot files under %s", len(generated), output_dir)
     return generated

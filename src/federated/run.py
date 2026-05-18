@@ -5,17 +5,28 @@ from pathlib import Path
 from typing import Any
 
 import flwr as fl
+import pandas as pd
 import torch
 from flwr.common import Context
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from src.federated.client import FlowerClient
-from src.federated.server import get_effective_num_rounds, get_strategy, run_server
+from src.federated.server import (
+    get_effective_num_rounds,
+    get_strategy,
+    init_global_agent_ref,
+    run_server,
+)
 from src.tracking.local import LocalRunTracker
 from src.utils.config import resolve_path
 from src.utils.utils import resolve_device_from_config, set_seed
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_runtime_config(cfg: DictConfig) -> DictConfig:
+    """Freeze Hydra interpolations before config crosses process boundaries."""
+    return OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
 
 
 def _client_data_path(cfg: DictConfig, project_root: Path, client_id: int) -> Path:
@@ -30,12 +41,50 @@ def _client_data_path(cfg: DictConfig, project_root: Path, client_id: int) -> Pa
     return path
 
 
+def _history_rows(history: Any) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+
+    for round_num, value in getattr(history, "losses_distributed", []):
+        rows.append(
+            {
+                "phase": "losses_distributed",
+                "metric_name": "loss",
+                "round": int(round_num),
+                "metric_value": float(value),
+            }
+        )
+
+    for phase, attr in (
+        ("metrics_distributed_fit", "metrics_distributed_fit"),
+        ("metrics_distributed", "metrics_distributed"),
+        ("metrics_centralized", "metrics_centralized"),
+    ):
+        metrics = getattr(history, attr, {})
+        if not isinstance(metrics, dict):
+            continue
+        for metric_name, series in metrics.items():
+            for round_num, value in series:
+                rows.append(
+                    {
+                        "phase": phase,
+                        "metric_name": str(metric_name),
+                        "round": int(round_num),
+                        "metric_value": float(value),
+                    }
+                )
+
+    return rows
+
+
 def run_federated_simulation(
     cfg: DictConfig,
     *,
     project_root: Path,
     tracker: LocalRunTracker | None = None,
 ) -> dict[str, Any]:
+    cfg = _resolve_runtime_config(cfg)
+    init_global_agent_ref(cfg, resolve_device_from_config(cfg))
+
     def client_fn(context: Context) -> fl.client.Client:
         partition_id = int(context.node_config["partition-id"])
         client_id = partition_id + 1
@@ -82,6 +131,21 @@ def run_federated_simulation(
             "logging_level": logging.ERROR,
         },
     )
+    run_dir = tracker.run_dir if tracker is not None else resolve_path(project_root, cfg.tracking.run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    history_rows = _history_rows(history)
+    if history_rows:
+        history_df = pd.DataFrame(history_rows)
+        history_df.to_csv(run_dir / "federated_history.csv", index=False)
+        if tracker is not None:
+            tracker.write_json(
+                "federated_history.json",
+                {
+                    "num_rows": len(history_rows),
+                    "phases": sorted({row["phase"] for row in history_rows}),
+                    "metrics": sorted({row["metric_name"] for row in history_rows}),
+                },
+            )
     summary = {
         "federated/rounds": int(cfg.federated.num_rounds),
         "federated/flower_rounds": get_effective_num_rounds(cfg),

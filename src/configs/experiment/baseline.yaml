@@ -4,4 +4,4 @@ method: FMRL_LA
 dataset: B-NAT
 partition: dirichlet
 alpha: ${dataset.preprocessing.alpha}
-notes: "Replace dashboard template arrays with saved metrics before manuscript use."
+notes: "Use saved metrics/CSV artifacts for every figure; do not use template arrays as evidence."

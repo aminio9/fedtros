@@ -70,7 +70,7 @@ REQUIRED_PLOTS: tuple[PlotSpec, ...] = (
         "confusion_matrix_after_osr",
         "10. AFTER OSR: Unknowns Safely Detected",
         "evaluation",
-        ("test_confusion_matrix.csv",),
+        ("after_osr_confusion_matrix.csv",),
     ),
     PlotSpec(
         "seed_robustness_boxplot",

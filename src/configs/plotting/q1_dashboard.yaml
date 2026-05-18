@@ -5,10 +5,10 @@ output_dir: ${tracking.run_dir}/plots
 formats:
   - png
   - pdf
-plot_dpi: 150
+plot_dpi: 300
 warn_on_missing: true
 allow_template_fallback: false
-dashboard_filename: complete_Q1_dashboard
+figure_prefix: q1
 required_plots:
   - scalability_nodes_vs_accuracy
   - non_iid_data_distribution

@@ -11,5 +11,6 @@ Each initialized run writes:
 - `metadata.json`: experiment name, run ID, timestamp, seed, device, git commit if available, dataset, model, method, Python, platform, and PyTorch version.
 - `config.yaml`: raw Hydra config.
 - `resolved_config.yaml`: resolved Hydra config.
+- `federated_history.csv`: long-format per-round Flower metrics when federated training is run.
 
 No online service is required.

@@ -3,12 +3,14 @@ import logging
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
     classification_report,
+    confusion_matrix,
     f1_score,
     precision_recall_curve,
     roc_auc_score,
@@ -31,6 +33,25 @@ ERROR_SCALE_FACTOR = 100000.0
 def _ensure_dir(path: Path) -> Path:
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _open_set_label_order(class_names: dict[int, str]) -> tuple[list[int], list[str]]:
+    known_ids = sorted(int(k) for k in class_names)
+    return known_ids + [OPEN_SET_LABEL_ID], [class_names[k] for k in known_ids] + ["Unknown"]
+
+
+def _save_labeled_confusion_matrix(
+    path: Path,
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    *,
+    label_ids: list[int],
+    label_names: list[str],
+) -> pd.DataFrame:
+    matrix = confusion_matrix(y_true, y_pred, labels=label_ids)
+    frame = pd.DataFrame(matrix, index=label_names, columns=label_names)
+    frame.to_csv(path)
+    return frame
 
 
 def _compute_reconstruction_errors(
@@ -247,6 +268,7 @@ def evaluate_open_set(
 
     delta_global = float(evt_meta.get("global_delta", 0.1))
     y_true_list: list[int] = []
+    raw_pred_list: list[int] = []
     y_pred_list: list[int] = []
     y_score_unknown: list[float] = []
     missing_evt_model_count = 0
@@ -283,6 +305,7 @@ def evaluate_open_set(
                 else:
                     prob = model.predict_probability_unknown(float(errs[i].item()))
                 y_score_unknown.append(prob)
+                raw_pred_list.append(pred_label)
 
                 final_pred = pred_label
                 if prob >= delta_global:
@@ -293,6 +316,7 @@ def evaluate_open_set(
                 y_pred_list.append(final_pred)
 
     y_true = np.array(y_true_list, dtype=int)
+    y_raw_pred = np.array(raw_pred_list, dtype=int)
     y_pred = np.array(y_pred_list, dtype=int)
     y_scores = np.array(y_score_unknown, dtype=float)
     y_binary = (y_true == OPEN_SET_LABEL_ID).astype(int)
@@ -332,13 +356,24 @@ def evaluate_open_set(
     )
     overall_acc = accuracy_score(y_true, y_pred) if y_true.size else 0.0
 
-    observed_known_ids = set(y_true[y_true != OPEN_SET_LABEL_ID].tolist())
-    observed_known_ids.update(y_pred[y_pred != OPEN_SET_LABEL_ID].tolist())
-    observed_known_ids.update(class_names.keys())
-    known_label_ids = sorted(int(k) for k in observed_known_ids)
-    class_name_list = [class_names.get(k, f"class_{k}") for k in known_label_ids]
-    class_name_list.append("Unknown")
-    report_labels = [*known_label_ids, OPEN_SET_LABEL_ID]
+    report_labels, class_name_list = _open_set_label_order(class_names)
+
+    before_cm_path = output_dir / "before_osr_confusion_matrix.csv"
+    after_cm_path = output_dir / "after_osr_confusion_matrix.csv"
+    _save_labeled_confusion_matrix(
+        before_cm_path,
+        y_true,
+        y_raw_pred,
+        label_ids=report_labels,
+        label_names=class_name_list,
+    )
+    _save_labeled_confusion_matrix(
+        after_cm_path,
+        y_true,
+        y_pred,
+        label_ids=report_labels,
+        label_names=class_name_list,
+    )
 
     report = classification_report(
         y_true,
@@ -349,31 +384,27 @@ def evaluate_open_set(
         zero_division=0,
     )
     (output_dir / "openset_report.txt").write_text(report, encoding="utf-8")
-    np.savetxt(
-        output_dir / "open_set_scores.csv",
-        np.column_stack([y_true, y_pred, y_scores, y_binary]),
-        delimiter=",",
-        header="y_true,y_pred,unknown_score,is_unknown",
-        comments="",
+    scores_df = pd.DataFrame(
+        {
+            "y_true": y_true,
+            "raw_pred": y_raw_pred,
+            "y_pred": y_pred,
+            "unknown_score": y_scores,
+            "is_unknown": y_binary,
+        }
     )
+    scores_df.to_csv(output_dir / "open_set_scores.csv", index=False)
     if np.unique(y_binary).size >= 2:
         fpr, tpr, roc_thresholds = roc_curve(y_binary, y_scores)
-        np.savetxt(
+        pd.DataFrame({"fpr": fpr, "tpr": tpr, "threshold": roc_thresholds}).to_csv(
             output_dir / "open_set_roc_curve.csv",
-            np.column_stack([fpr, tpr, roc_thresholds]),
-            delimiter=",",
-            header="fpr,tpr,threshold",
-            comments="",
+            index=False,
         )
         precision, recall, pr_thresholds = precision_recall_curve(y_binary, y_scores)
         padded_thresholds = np.concatenate([pr_thresholds, [np.nan]])
-        np.savetxt(
-            output_dir / "open_set_pr_curve.csv",
-            np.column_stack([precision, recall, padded_thresholds]),
-            delimiter=",",
-            header="precision,recall,threshold",
-            comments="",
-        )
+        pd.DataFrame(
+            {"precision": precision, "recall": recall, "threshold": padded_thresholds}
+        ).to_csv(output_dir / "open_set_pr_curve.csv", index=False)
 
     logger.info(
         "Open-set metrics | AUROC=%.4f | AUPRC=%.4f | FPR95=%.4f | F1_macro=%.4f | Known_Acc=%.4f | Unknown_Recall=%.4f | Overall_Acc=%.4f",

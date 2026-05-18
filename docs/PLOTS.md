@@ -1,8 +1,8 @@
 # Plots
 
-The source of truth is `Experimentplan/testplot.py`. Its palette and 14 required Q1 dashboard panels are mirrored in `src/plotting/theme.py` and `src/plotting/registry.py`.
+The source of truth for the visual style is `Experimentplan/testplot.py`, but the repo now renders one high-quality image per experiment instead of a single dashboard canvas. The palette and 14 required Q1 figures are mirrored in `src/plotting/theme.py` and `src/plotting/registry.py`.
 
-Required dashboard plots:
+Required figures:
 
 1. Scalability: nodes vs final accuracy.
 2. Non-IID client data distribution.
@@ -19,10 +19,23 @@ Required dashboard plots:
 13. Communication efficiency.
 14. Architectural ablation.
 
+Output files are rendered individually as `plots/01_<plot_id>.png` and `plots/01_<plot_id>.pdf` style artifacts, plus `plots/plot_manifest.json` for traceability.
+
+Open-set plots 9 and 10 now read from the dedicated files written by `src/evaluation/openset_eval.py`:
+
+- `before_osr_confusion_matrix.csv`
+- `after_osr_confusion_matrix.csv`
+
+Multi-run convergence plots read `comparison_metrics.csv` when available. Generate it with:
+
+```bash
+poetry run python scripts/compare_runs.py runs='[outputs/run1,outputs/run2]'
+```
+
 Run:
 
 ```bash
 poetry run python scripts/plot.py run_dir=outputs/run_id
 ```
 
-Missing required data produces warnings and a labeled missing-data panel instead of synthetic evidence.
+Missing required data produces warnings and a labeled missing-data figure instead of synthetic evidence.

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import torch
 import torch.nn.functional as F
 from sklearn.metrics import (
@@ -122,7 +123,8 @@ def evaluate_closed_set(
         json.dumps(report, indent=2, sort_keys=True),
         encoding="utf-8",
     )
-    np.savetxt(output_path / f"{prefix}_confusion_matrix.csv", cm, delimiter=",", fmt="%d")
+    confusion_df = pd.DataFrame(cm, index=target_names, columns=target_names)
+    confusion_df.to_csv(output_path / f"{prefix}_confusion_matrix.csv")
     if save_predictions:
         pred_records = [
             {"y_true": int(t), "y_pred": int(p)} for t, p in zip(y_true, y_pred, strict=True)

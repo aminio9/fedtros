@@ -131,7 +131,8 @@ class FlowerClient(fl.client.NumPyClient):
 
         logger.info("Client %s: Initialization complete.", cid)
 
-    def get_parameters(self, _config: dict[str, Any]) -> list[np.ndarray]:
+    def get_parameters(self, config: dict[str, Any]) -> list[np.ndarray]:
+        _ = config
         return self.agent.get_federated_parameters()
 
     def set_parameters(self, parameters: list[np.ndarray]) -> None:

@@ -6,7 +6,7 @@ Closed-set evaluation loads `checkpoint.path`, `evaluation.closed_set_data`, and
 
 - `test_metrics.json`
 - `test_classification_report.json`
-- `test_confusion_matrix.csv`
+- `test_confusion_matrix.csv` (labeled rows/columns)
 - `test_predictions.jsonl`
 
 Metrics include `test/loss`, `test/accuracy`, balanced accuracy, macro precision/recall/F1, and per-class accuracy.
@@ -18,9 +18,11 @@ Open-set evaluation fits EVT models on known calibration samples, calibrates a t
 Outputs:
 
 - `open_set_metrics.json`
-- `open_set_scores.csv`
+- `open_set_scores.csv` with `y_true`, `raw_pred`, `y_pred`, `unknown_score`, and `is_unknown`
 - `open_set_roc_curve.csv`
 - `open_set_pr_curve.csv`
+- `before_osr_confusion_matrix.csv`
+- `after_osr_confusion_matrix.csv`
 - `evt/evt_models.pkl`
 - `evt/evt_meta.json`
 

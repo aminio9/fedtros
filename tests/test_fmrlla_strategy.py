@@ -1,6 +1,7 @@
 import torch
 from omegaconf import OmegaConf
 
+from src.federated.run import _resolve_runtime_config
 from src.federated.server import get_effective_num_rounds
 from src.federated.server_models import AsyncCritic, CentralizedAggregator
 
@@ -29,3 +30,21 @@ def test_fmrlla_uses_two_flower_rounds_per_logical_round():
     )
 
     assert get_effective_num_rounds(cfg) == 10
+
+
+def test_runtime_config_resolves_interpolations_for_ray_workers():
+    cfg = OmegaConf.create(
+        {
+            "tracking": {
+                "run_id": "run_001",
+                "run_dir": "outputs/${tracking.run_id}",
+            },
+            "paths": {
+                "figures_dir": "${tracking.run_dir}/plots",
+            },
+        }
+    )
+
+    resolved = _resolve_runtime_config(cfg)
+
+    assert resolved.paths.figures_dir == "outputs/run_001/plots"
