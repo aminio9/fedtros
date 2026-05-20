@@ -431,11 +431,13 @@ def evaluate_open_set(
         "openset_unknown_recall": unknown_recall,
         "openset_overall_acc": overall_acc,
         "openset_missing_evt_model_count": float(missing_evt_model_count),
+        "openset_global_delta": delta_global,
         "open_set/auroc": auroc,
         "open_set/auprc": auprc,
         "open_set/fpr95": fpr95,
         "open_set/unknown_detection_rate": unknown_recall,
         "open_set/unknown_f1": float(unknown_f1),
+        "open_set/global_delta": delta_global,
     }
     (output_dir / "open_set_metrics.json").write_text(
         json.dumps(metrics, indent=2, sort_keys=True),

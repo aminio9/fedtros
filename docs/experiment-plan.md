@@ -1,6 +1,6 @@
 # Experiment Plan
 
-This plan reconciles `D:\Research\Experimentplan\ExperimentPlan.docx`, `D:\Research\Experimentplan\testplot.py`, and the executable pipeline in this repository. Final figures must be generated from saved run outputs, not from the synthetic arrays in the original plotting template.
+This plan reconciles `D:\Research\Experimentplan\Improved_Experiment_Plan.docx`, `D:\Research\Experimentplan\testplot.py`, and the executable pipeline in this repository. Final figures must be generated from saved run outputs, not from the synthetic arrays in the original plotting template.
 
 ## Research Objective
 
@@ -18,8 +18,10 @@ Evaluate the proposed FMRL-LA federated intrusion-detection framework for:
 - Primary dataset config: `dataset=bnat`.
 - Primary experiment config: `experiment=baseline`.
 - Primary model config: `model=openset_qchain`.
-- Known labels: `Normal`, `BP`, `DoS`, `MitM`.
+- BNaT source labels present in `data/raw/BNaT.csv`: `Normal`, `BP`, `DoS`, `MitM`, `FoT`.
+- Primary BNaT open-set protocol: known labels `Normal`, `BP`, `DoS`, `MitM`; hold out `FoT` as the unknown attack for the main open-set run.
 - Unknown labels: labels outside `known_labels`, encoded as `-1` for open-set evaluation.
+- Canonical local CSV: `data/raw/BNaT.csv`, sourced from the official BNaT repository and landing page at `https://github.com/avitech-vnu/BNaT` and `https://avitech-vnu.github.io/BNaT/#/`.
 - Default strategy: `federated.strategy.name=fmrl_la` and `experiment.method=FMRL_LA`.
 - Baselines: `federated.strategy.name=fedavg experiment.method=FedAvg` and `federated.strategy.name=fedprox experiment.method=FedProx`.
 - Main client counts: `3`, `10`, `20`, `50`, `100`.
@@ -37,7 +39,7 @@ Every run writes `config.yaml`, `resolved_config.yaml`, `metadata.json`, logs, m
 | 2 | Non-IID client data distribution | `client_class_distribution.csv` |
 | 3 | Mild non-IID convergence and variance | `comparison_metrics.csv` or `federated_history.csv` |
 | 4 | Hard non-IID convergence and variance | `comparison_metrics.csv` or `federated_history.csv` |
-| 5 | Known vs unknown score distributions | `open_set_scores.csv` |
+| 5 | Known vs unknown EVT score distributions | `open_set_scores.csv`, `open_set_metrics.json` |
 | 6 | Openness vs AUROC | `openness_metrics.csv` |
 | 7 | Unknown-detection ROC | `open_set_roc_curve.csv` |
 | 8 | Cross-dataset generalization | `cross_dataset_metrics.csv` |
@@ -119,7 +121,7 @@ poetry run python scripts/evaluate.py tracking.run_id=eval_fmrl_alpha01_seed42 c
 poetry run python scripts/plot.py run_dir=outputs/eval_fmrl_alpha01_seed42
 ```
 
-Expected source files: `open_set_scores.csv`, `open_set_roc_curve.csv`, `before_osr_confusion_matrix.csv`, and `after_osr_confusion_matrix.csv`.
+Expected source files: `open_set_scores.csv`, `open_set_metrics.json`, `open_set_roc_curve.csv`, `before_osr_confusion_matrix.csv`, and `after_osr_confusion_matrix.csv`. Plot 5 uses the calibrated EVT threshold when that metadata is present.
 
 ### Plot 6: Openness vs AUROC
 

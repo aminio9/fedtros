@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -236,14 +237,38 @@ def _plot_score_distribution(ax: plt.Axes, run_dir: Path, spec: PlotSpec) -> Non
         alpha=0.35,
         ax=ax,
     )
+    threshold_path = first_existing(run_dir, ["open_set_metrics.json", "evaluation_metrics.json"])
+    threshold_value: float | None = None
+    if threshold_path is not None and threshold_path.exists():
+        try:
+            metrics = json.loads(threshold_path.read_text(encoding="utf-8"))
+            raw_threshold = metrics.get("openset_global_delta", metrics.get("open_set/global_delta"))
+            if raw_threshold is not None:
+                threshold_value = float(raw_threshold)
+        except Exception as exc:
+            logger.warning("Could not read EVT threshold from %s: %s", threshold_path, exc)
+    if threshold_value is not None and np.isfinite(threshold_value):
+        ax.axvline(
+            threshold_value,
+            linestyle="--",
+            linewidth=2.0,
+            color=CUSTOM_COLORS[5],
+            label="Calibrated threshold",
+        )
+        ax.text(
+            threshold_value + 0.01,
+            ax.get_ylim()[1] * 0.92,
+            "Threshold",
+            color=CUSTOM_COLORS[5],
+            fontsize=9,
+            fontweight="bold",
+            va="top",
+        )
+    ax.legend(frameon=False, title="")
     ax.set_title(spec.title)
     ax.set_xlabel("Unknown Score")
     ax.set_ylabel("Density")
     ax.set_xlim(0, 1)
-    legend = ax.get_legend()
-    if legend is not None:
-        legend.set_title("")
-        legend.set_frame_on(False)
 
 
 def _plot_openness_vs_auroc(ax: plt.Axes, run_dir: Path, spec: PlotSpec) -> None:

@@ -1,3 +1,5 @@
+import json
+
 import pandas as pd
 import torch
 import torch.nn as nn
@@ -61,11 +63,15 @@ def test_open_set_missing_evt_model_is_unknown(tmp_path):
 
     assert metrics["openset_unknown_recall"] == 1.0
     assert metrics["openset_missing_evt_model_count"] == 2.0
+    assert "openset_global_delta" in metrics
 
     scores = pd.read_csv(tmp_path / "open_set_scores.csv")
     assert {"y_true", "raw_pred", "y_pred", "unknown_score", "is_unknown"}.issubset(
         scores.columns
     )
+
+    open_set_metrics = json.loads((tmp_path / "open_set_metrics.json").read_text(encoding="utf-8"))
+    assert open_set_metrics["openset_global_delta"] == metrics["openset_global_delta"]
 
     before_cm = pd.read_csv(tmp_path / "before_osr_confusion_matrix.csv", index_col=0)
     after_cm = pd.read_csv(tmp_path / "after_osr_confusion_matrix.csv", index_col=0)

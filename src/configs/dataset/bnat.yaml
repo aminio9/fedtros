@@ -2,6 +2,18 @@ name: B-NAT
 registry_name: bnat
 raw_path: data/raw/BNaT.csv
 label_column: label
+# Official source: https://avitech-vnu.github.io/BNaT/#/
+# Repository landing page: https://github.com/avitech-vnu/BNaT
+# Local canonical CSV used by the pipeline: data/raw/BNaT.csv
+# Source labels present in the raw CSV: Normal, BP, DoS, MitM, FoT
+# Primary open-set protocol: keep FoT as the held-out unknown attack.
+source_url: https://github.com/avitech-vnu/BNaT
+source_labels:
+  - Normal
+  - BP
+  - DoS
+  - MitM
+  - FoT
 known_labels:
   - Normal
   - BP

@@ -38,7 +38,7 @@ REQUIRED_PLOTS: tuple[PlotSpec, ...] = (
     ),
     PlotSpec(
         "known_unknown_score_distribution",
-        "5. Known vs Unknown Score Distribution",
+        "5. Known vs Unknown EVT Score Distribution",
         "open_set",
         ("open_set_scores.csv",),
     ),

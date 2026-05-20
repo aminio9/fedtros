@@ -26,8 +26,8 @@ def _write_raw_dataset(path):
             {
                 "feature_a": 100 + sample_index,
                 "feature_b": sample_index / 5,
-                "service": "unknown_svc",
-                "label": "UnknownAttack",
+                "service": "fot_svc",
+                "label": "FoT",
             }
         )
     pd.DataFrame(rows).to_csv(path, index=False)
@@ -71,6 +71,9 @@ def test_preprocessing_writes_non_empty_tensor_for_each_client(tmp_path, num_cli
     )
 
     assert metadata["num_clients"] == num_clients
+    assert metadata["known_labels"] == ["Normal", "BP", "DoS", "MitM"]
+    assert metadata["num_actions"] == 4
+    assert metadata["state_dim"] > 0
     assert not (output_dir / f"client_{num_clients + 1}_train.pt").exists()
 
     for client_id in range(1, num_clients + 1):

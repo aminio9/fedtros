@@ -8,7 +8,7 @@ Required figures:
 2. Non-IID client data distribution.
 3. Mild non-IID convergence and variance.
 4. Hard non-IID convergence and variance.
-5. Known vs unknown score distributions.
+5. Known vs unknown EVT score distributions.
 6. Openness vs AUROC.
 7. Unknown-detection ROC.
 8. Cross-dataset generalization.
@@ -25,6 +25,8 @@ Open-set plots 9 and 10 now read from the dedicated files written by `src/evalua
 
 - `before_osr_confusion_matrix.csv`
 - `after_osr_confusion_matrix.csv`
+
+Plot 5 uses `open_set_scores.csv` together with `open_set_metrics.json` when the calibrated EVT threshold is available.
 
 Multi-run convergence plots read `comparison_metrics.csv` when available. Generate it with:
 
