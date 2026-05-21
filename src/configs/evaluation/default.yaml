@@ -19,3 +19,7 @@ metrics:
     - unknown_f1
 save_predictions: true
 report_to_stdout: true
+export_latent_embeddings: true
+latent_embeddings_output: ${evaluation.output_dir}/latent_embeddings.csv
+latent_embeddings_batch_size: ${evaluation.batch_size}
+latent_embeddings_max_points: 5000

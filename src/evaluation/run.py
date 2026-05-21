@@ -9,6 +9,7 @@ import torch
 from omegaconf import DictConfig
 
 from src.agents.agent import Agent
+from src.artifacts.embeddings import export_latent_embeddings
 from src.checkpointing.checkpoints import load_agent_checkpoint
 from src.data.io import load_tensor_dataset
 from src.evaluation.closed_set import evaluate_closed_set, load_class_names
@@ -123,6 +124,28 @@ def run_evaluation(
         all_metrics.update(open_metrics)
         if tracker:
             tracker.log_metrics(open_metrics)
+
+    if bool(cfg.evaluation.export_latent_embeddings):
+        latent_features = closed_features
+        latent_labels = closed_labels
+        open_set_data_path = resolve_path(project_root, cfg.evaluation.open_set_data)
+        if open_set_data_path.exists():
+            open_features, open_labels = load_tensor_dataset(
+                open_set_data_path,
+                map_location="cpu",
+            )
+            latent_features = torch.cat([latent_features, open_features], dim=0)
+            latent_labels = torch.cat([latent_labels, open_labels], dim=0)
+
+        export_latent_embeddings(
+            prior_net=agent.prior_net,
+            features=latent_features,
+            labels=latent_labels,
+            class_names=class_names,
+            output_path=resolve_path(project_root, cfg.evaluation.latent_embeddings_output),
+            batch_size=int(cfg.evaluation.latent_embeddings_batch_size),
+            max_points=int(cfg.evaluation.latent_embeddings_max_points),
+        )
 
     (output_dir / "evaluation_metrics.json").write_text(
         json.dumps(all_metrics, indent=2, sort_keys=True),

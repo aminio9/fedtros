@@ -1,0 +1,42 @@
+defaults:
+  - tracking: local
+  - logging: default
+  - _self_
+
+seed: 42
+
+device:
+  prefer: cpu
+  allow_cpu_fallback: true
+  move_data_to_device: false
+  deterministic: true
+  benchmark: false
+  use_deterministic_algorithms: false
+
+experiment:
+  name: suite_artifacts
+  method: suite
+  description: Suite-level artifact aggregation
+
+dataset:
+  name: suite
+  preprocessing:
+    output_dir: outputs/suite_artifacts/processed
+
+model:
+  name: suite
+
+runs: []
+
+tracking:
+  run_id: suite_artifacts
+
+run_dir: ${tracking.run_dir}
+
+hydra:
+  run:
+    dir: .
+  sweep:
+    dir: .
+    subdir: .
+  output_subdir: null
