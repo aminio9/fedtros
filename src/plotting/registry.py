@@ -22,7 +22,7 @@ REQUIRED_PLOTS: tuple[PlotSpec, ...] = (
         "non_iid_data_distribution",
         "2. Non-IID Data Distribution",
         "data",
-        ("partition_manifest.jsonl",),
+        ("client_class_distribution.csv",),
     ),
     PlotSpec(
         "convergence_mild_non_iid",

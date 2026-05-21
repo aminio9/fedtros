@@ -10,8 +10,10 @@ from omegaconf import OmegaConf
 from src.plotting import generate_plots
 
 
-def _write_fixture_tables(run_dir: Path) -> None:
+def _write_fixture_tables(run_dir: Path, preprocess_dir: Path | None = None) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
+    if preprocess_dir is not None:
+        preprocess_dir.mkdir(parents=True, exist_ok=True)
 
     pd.DataFrame(
         {
@@ -29,7 +31,7 @@ def _write_fixture_tables(run_dir: Path) -> None:
             "MitM": [2, 0, 1],
             "FoT": [0, 1, 0],
         }
-    ).to_csv(run_dir / "client_class_distribution.csv", index=False)
+    ).to_csv((preprocess_dir or run_dir) / "client_class_distribution.csv", index=False)
 
     comparison = []
     for method, base in {"FMRL_LA": 0.94, "FedProx": 0.90, "FedAvg": 0.88}.items():
@@ -139,10 +141,12 @@ def _write_fixture_tables(run_dir: Path) -> None:
 
 def test_generate_plots_writes_all_required_figures(tmp_path):
     run_dir = tmp_path / "outputs" / "run_001"
-    _write_fixture_tables(run_dir)
+    preprocess_dir = tmp_path / "outputs" / "processed"
+    _write_fixture_tables(run_dir, preprocess_dir)
 
     cfg = OmegaConf.create(
         {
+            "dataset": {"preprocessing": {"output_dir": "outputs/processed"}},
             "tracking": {"run_dir": "outputs/run_001"},
             "plotting": {
                 "output_dir": "${tracking.run_dir}/plots",
@@ -169,4 +173,5 @@ def test_generate_plots_writes_all_required_figures(tmp_path):
         assert path.stat().st_size > 0
 
     assert (plots_dir / "05_known_unknown_score_distribution.png").exists()
+    assert (plots_dir / "02_non_iid_data_distribution.png").exists()
     assert (plots_dir / "10_confusion_matrix_after_osr.pdf").exists()

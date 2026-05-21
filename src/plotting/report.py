@@ -17,6 +17,15 @@ def generate_plots(
 ) -> list[Path]:
     source_run_dir = resolve_path(project_root, run_dir or cfg.run_dir)
     tracking_run_dir = resolve_path(project_root, cfg.tracking.run_dir)
+    preprocess_output_dir = None
+    try:
+        from omegaconf import OmegaConf
+
+        preprocess_path = OmegaConf.select(cfg, "dataset.preprocessing.output_dir", default=None)
+        if preprocess_path:
+            preprocess_output_dir = resolve_path(project_root, preprocess_path)
+    except Exception:
+        preprocess_output_dir = None
     if (
         source_run_dir != tracking_run_dir
         and str(cfg.plotting.output_dir) == str(cfg.tracking.run_dir) + "/plots"
@@ -27,7 +36,15 @@ def generate_plots(
     formats = [str(fmt).lower() for fmt in cfg.plotting.formats]
     dpi = int(cfg.plotting.plot_dpi)
     generated = []
-    generated.extend(render_required_plots(source_run_dir, output_dir, formats, dpi))
+    generated.extend(
+        render_required_plots(
+            source_run_dir,
+            output_dir,
+            formats,
+            dpi,
+            preprocess_dir=preprocess_output_dir,
+        )
+    )
     generated.extend(render_training_plots(source_run_dir, output_dir, formats, dpi))
     manifest = {
         "source_run_dir": str(source_run_dir),

@@ -74,6 +74,14 @@ def _first_existing_column(columns: pd.Index | list[str], candidates: tuple[str,
     return None
 
 
+def _first_existing_in_dirs(dirs: tuple[Path, ...], names: list[str]) -> Path | None:
+    for base_dir in dirs:
+        path = first_existing(base_dir, names)
+        if path is not None:
+            return path
+    return None
+
+
 def _save_figure(fig: plt.Figure, output_dir: Path, stem: str, formats: list[str]) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
@@ -143,8 +151,15 @@ def _plot_scalability(ax: plt.Axes, run_dir: Path, spec: PlotSpec) -> None:
         ax.annotate(f"{y_val:.1f}%", (x_val, y_val), textcoords="offset points", xytext=(0, 8), ha="center", fontsize=9)
 
 
-def _plot_non_iid(ax: plt.Axes, run_dir: Path, spec: PlotSpec) -> None:
-    path = first_existing(run_dir, ["client_class_distribution.csv"])
+def _plot_non_iid(
+    ax: plt.Axes,
+    run_dir: Path,
+    spec: PlotSpec,
+    *,
+    preprocess_dir: Path | None = None,
+) -> None:
+    search_dirs = (preprocess_dir, run_dir) if preprocess_dir is not None else (run_dir,)
+    path = _first_existing_in_dirs(search_dirs, ["client_class_distribution.csv"])
     df = load_csv_if_exists(path) if path else None
     if df is None or "client_id" not in df.columns:
         _missing(ax, spec, "client_class_distribution.csv requires client_id plus class columns")
@@ -512,11 +527,17 @@ def _plot_latent(ax: plt.Axes, run_dir: Path, spec: PlotSpec) -> None:
     ax.legend(frameon=False, bbox_to_anchor=(1.02, 1), loc="upper left")
 
 
-def _render_required_plot(ax: plt.Axes, run_dir: Path, spec: PlotSpec) -> None:
+def _render_required_plot(
+    ax: plt.Axes,
+    run_dir: Path,
+    spec: PlotSpec,
+    *,
+    preprocess_dir: Path | None = None,
+) -> None:
     if spec.plot_id == "scalability_nodes_vs_accuracy":
         _plot_scalability(ax, run_dir, spec)
     elif spec.plot_id == "non_iid_data_distribution":
-        _plot_non_iid(ax, run_dir, spec)
+        _plot_non_iid(ax, run_dir, spec, preprocess_dir=preprocess_dir)
     elif spec.plot_id == "convergence_mild_non_iid":
         _plot_convergence(ax, run_dir, spec, "alpha=10")
     elif spec.plot_id == "convergence_hard_non_iid":
@@ -571,14 +592,19 @@ def _render_required_plot(ax: plt.Axes, run_dir: Path, spec: PlotSpec) -> None:
 
 
 def render_required_plots(
-    run_dir: Path, output_dir: Path, formats: list[str], dpi: int
+    run_dir: Path,
+    output_dir: Path,
+    formats: list[str],
+    dpi: int,
+    *,
+    preprocess_dir: Path | None = None,
 ) -> list[Path]:
     apply_theme()
     output_dir.mkdir(parents=True, exist_ok=True)
     generated: list[Path] = []
     for idx, spec in enumerate(REQUIRED_PLOTS, start=1):
         fig, ax = plt.subplots(figsize=_figure_size(spec.plot_id), dpi=dpi)
-        _render_required_plot(ax, run_dir, spec)
+        _render_required_plot(ax, run_dir, spec, preprocess_dir=preprocess_dir)
         fig.tight_layout()
         stem = f"{idx:02d}_{spec.plot_id}"
         generated.extend(_save_figure(fig, output_dir, stem, formats))
@@ -587,9 +613,20 @@ def render_required_plots(
 
 
 def render_q1_dashboard(
-    run_dir: Path, output_dir: Path, formats: list[str], dpi: int
+    run_dir: Path,
+    output_dir: Path,
+    formats: list[str],
+    dpi: int,
+    *,
+    preprocess_dir: Path | None = None,
 ) -> list[Path]:
-    return render_required_plots(run_dir, output_dir, formats, dpi)
+    return render_required_plots(
+        run_dir,
+        output_dir,
+        formats,
+        dpi,
+        preprocess_dir=preprocess_dir,
+    )
 
 
 def render_training_plots(
