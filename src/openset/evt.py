@@ -17,11 +17,17 @@ class EVTModel:
         self.threshold_u: float | None = None
         self.gpd_params: tuple[float, float, float] | None = None
 
-    def fit(self, reconstruction_errors: np.ndarray, fixed_threshold: float | None = None) -> None:
+    def fit(
+        self,
+        reconstruction_errors: np.ndarray,
+        fixed_threshold: float | None = None,
+        logger: logging.Logger | None = None,
+    ) -> None:
         """
         Fits the GPD to the tail.
         If fixed_threshold is provided, it is used directly.
         """
+        active_logger = logger or logging.getLogger("EVT")
         if reconstruction_errors.ndim != 1 or reconstruction_errors.size == 0:
             raise ValueError("reconstruction_errors must be a non-empty 1D array")
 
@@ -53,7 +59,7 @@ class EVTModel:
                 )
 
             if tail.size == 0:
-                logger.error("Insufficient tail data. fitting dummy GPD.")
+                active_logger.error("Insufficient tail data. fitting dummy GPD.")
                 self.gpd_params = (0.0, 0.0, 1.0)
                 return
 
@@ -62,7 +68,7 @@ class EVTModel:
             zeta, loc, eta = genpareto.fit(tail, loc=0)
             self.gpd_params = (float(zeta), float(loc), float(eta))
         except Exception as e:
-            logger.error(f"GPD fitting failed: {e}. Using dummy params.")
+            active_logger.error(f"GPD fitting failed: {e}. Using dummy params.")
             self.gpd_params = (0.0, 0.0, 1.0)
 
     def predict_probability_unknown(self, reconstruction_error: float) -> float:
@@ -92,12 +98,15 @@ class EVTModel:
         return model
 
 
-def save_evt_collection(evt_map: dict[int, EVTModel], filepath: Path | str) -> None:
+def save_evt_collection(
+    evt_map: dict[int, EVTModel], filepath: Path | str, logger: logging.Logger | None = None
+) -> None:
+    active_logger = logger or logging.getLogger("EVT")
     payload = {}
     for label, model in evt_map.items():
         payload[int(label)] = model.to_payload()
     joblib.dump(payload, filepath)
-    logger.info("Saved EVT collection with %s classes to %s", len(payload), filepath)
+    active_logger.info("Saved EVT collection with %s classes to %s", len(payload), filepath)
 
 
 def load_evt_collection(filepath: Path | str) -> dict[int, EVTModel]:
@@ -107,11 +116,14 @@ def load_evt_collection(filepath: Path | str) -> dict[int, EVTModel]:
     return {int(k): EVTModel.from_payload(v) for k, v in data.items()}
 
 
-def save_evt_meta(meta: dict, filepath: Path | str) -> None:
+def save_evt_meta(
+    meta: dict, filepath: Path | str, logger: logging.Logger | None = None
+) -> None:
+    active_logger = logger or logging.getLogger("EVT")
     Path(filepath).parent.mkdir(parents=True, exist_ok=True)
     with open(filepath, "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=2)
-    logger.info("Saved EVT meta to %s", filepath)
+    active_logger.info("Saved EVT meta to %s", filepath)
 
 
 def load_evt_meta(filepath: Path | str) -> dict:

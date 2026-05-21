@@ -93,6 +93,7 @@ def get_device(
     *,
     allow_cpu_fallback: bool = True,
     cache: bool = True,
+    logger: logging.Logger | None = None,
 ) -> torch.device:
     """
     Get the torch device to use across the project.
@@ -102,7 +103,7 @@ def get_device(
     - Optionally refuses to fall back to CPU if CUDA is requested
     """
     global _GLOBAL_DEVICE
-    logger = logging.getLogger(__name__)
+    active_logger = logger or logging.getLogger(__name__)
 
     # Resolve preference: config/arg -> env -> auto
     prefer = _normalize_device_preference(prefer)
@@ -124,23 +125,23 @@ def get_device(
     elif prefer == "cuda":
         if torch.cuda.is_available():
             device = torch.device("cuda")
-            logger.info("Using CUDA device (torch %s)", torch.__version__)
+            active_logger.info("Using CUDA device (torch %s)", torch.__version__)
         # elif torch_directml is not None:
         #     logger.warning("CUDA requested but unavailable; trying DirectML as fallback.")
         #     device = _resolve_directml_device(logger, allow_cpu_fallback)
         elif allow_cpu_fallback:
-            logger.warning("CUDA requested but unavailable; falling back to CPU.")
+            active_logger.warning("CUDA requested but unavailable; falling back to CPU.")
             device = torch.device("cpu")
         else:
             raise RuntimeError(
                 "CUDA requested but not available. Set allow_cpu_fallback=True to fall back to CPU."
             )
     elif prefer == "directml":
-        device = _resolve_directml_device(logger, allow_cpu_fallback)
+        device = _resolve_directml_device(active_logger, allow_cpu_fallback)
     else:
         if torch.cuda.is_available():
             device = torch.device("cuda")
-            logger.info("Auto-selected CUDA device (torch %s)", torch.__version__)
+            active_logger.info("Auto-selected CUDA device (torch %s)", torch.__version__)
         # elif torch_directml is not None:
         #     device = _resolve_directml_device(logger, allow_cpu_fallback)
         else:
@@ -149,7 +150,7 @@ def get_device(
     if cache:
         _GLOBAL_DEVICE = device
 
-    logger.info("Using device: %s", device)
+    active_logger.info("Using device: %s", device)
     return device
 
 

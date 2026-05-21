@@ -35,6 +35,7 @@ class BlockchainIntrusionEnv(gym.Env):
         steps_per_episode: int,
         *,
         device: torch.device | None = None,
+        logger: logging.Logger | None = None,
         move_data_to_device: bool = False,
         indices: np.ndarray | None = None,
         client_id: int | None = None,
@@ -44,13 +45,14 @@ class BlockchainIntrusionEnv(gym.Env):
     ) -> None:
         super().__init__()
 
+        self.logger = logger or logging.getLogger("Environment")
         self.device = torch.device(device) if device is not None else torch.device("cpu")
         target_device = self.device if move_data_to_device else torch.device("cpu")
         self._data_device = target_device
         self._move_data_to_device = move_data_to_device
 
         if not os.path.exists(processed_data_path):
-            logger.error("Processed data not found at %s", processed_data_path)
+            self.logger.error("Processed data not found at %s", processed_data_path)
             raise FileNotFoundError(f"Data not found: {processed_data_path}")
 
         try:
@@ -60,7 +62,9 @@ class BlockchainIntrusionEnv(gym.Env):
             )
             self.all_labels_a_t: torch.Tensor = data["labels"].to(device=target_device).long()
         except Exception as exc:  # pragma: no cover - I/O error
-            logger.error("Failed to load data from %s: %s", processed_data_path, exc, exc_info=True)
+            self.logger.error(
+                "Failed to load data from %s: %s", processed_data_path, exc, exc_info=True
+            )
             raise
 
         if self.all_features_s.ndim != 2:
@@ -117,7 +121,7 @@ class BlockchainIntrusionEnv(gym.Env):
                     f"Some values in `indices` are out of range [0, {self.num_total_samples - 1}]."
                 )
             self._available_indices = idx_array
-            logger.info("Environment using %d explicitly provided indices.", idx_array.size)
+            self.logger.info("Environment using %d explicitly provided indices.", idx_array.size)
         elif client_id is not None and num_clients is not None:
             if num_clients <= 0:
                 raise ValueError("`num_clients` must be > 0.")
@@ -127,7 +131,7 @@ class BlockchainIntrusionEnv(gym.Env):
             all_indices = np.arange(self.num_total_samples, dtype=np.int64)
             shards = np.array_split(all_indices, num_clients)
             self._available_indices = shards[client_id]
-            logger.info(
+            self.logger.info(
                 "Client shard %d/%d: %d samples.",
                 client_id,
                 num_clients,
@@ -136,7 +140,7 @@ class BlockchainIntrusionEnv(gym.Env):
         else:
             # Simple single-client case: use all data
             self._available_indices = np.arange(self.num_total_samples, dtype=np.int64)
-            logger.info("Environment using all %d samples.", self.num_total_samples)
+            self.logger.info("Environment using all %d samples.", self.num_total_samples)
 
         if self._available_indices.size == 0:
             raise ValueError("No samples available for this environment/agent.")
@@ -157,7 +161,7 @@ class BlockchainIntrusionEnv(gym.Env):
             dtype=np.float32,
         )
 
-        logger.info(
+        self.logger.info(
             "Initialized BlockchainIntrusionEnv from %s | total=%d | client=%d | dim=%d | actions=%d",
             os.path.basename(processed_data_path),
             self.num_total_samples,
@@ -166,7 +170,7 @@ class BlockchainIntrusionEnv(gym.Env):
             self.num_actions_nt,
         )
         if move_data_to_device:
-            logger.info("Environment tensors pinned to %s", target_device)
+            self.logger.info("Environment tensors pinned to %s", target_device)
 
     # ------------------------------------------------------------------
     # Gym API

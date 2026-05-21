@@ -99,7 +99,9 @@ class Agent:
         model_factory: OpenSetQChainModelFactory,
         train_cfg: DictConfig,
         device: torch.device,
+        logger: logging.Logger | None = None,
     ):
+        self.logger = logger or logging.getLogger("Agent")
         self.train_cfg = train_cfg
         self.device = device
         self.action_dim = model_factory.num_actions
@@ -147,7 +149,7 @@ class Agent:
             self.optimizer_q_rl = adam_cls(rl_params, lr=train_cfg.lr_q_rl)
 
         self.td_loss_fn = nn.SmoothL1Loss()
-        logger.debug("Agent initialized with Double-DQN: %s", self.use_double_dqn)
+        self.logger.debug("Agent initialized with Double-DQN: %s", self.use_double_dqn)
 
     @torch.no_grad()
     def _bootstrap_target(self, next_states_s: torch.Tensor) -> torch.Tensor:
@@ -238,12 +240,12 @@ class Agent:
 
     def update_target_network(self, tau: float):
         """Soft update the target network (Eq. 10)."""
-        logger.debug("Performing soft target update with tau=%s", tau)
+        self.logger.debug("Performing soft target update with tau=%s", tau)
         soft_update_target_network(self.value_net_main, self.value_net_target, tau)
 
     def hard_update_target_network(self):
         """Hard update (copy) the target network."""
-        logger.debug("Performing hard target update")
+        self.logger.debug("Performing hard target update")
         self.value_net_target.load_state_dict(self.value_net_main.state_dict())
 
     # --- METHODS FOR FEDERATED LEARNING ---
@@ -254,7 +256,7 @@ class Agent:
         IMPORTANT: Includes Generator params if the network exists, even if training is disabled.
         This ensures the server can save the full model structure.
         """
-        logger.debug("Getting federated parameters (Prior + Recognition + MainQ + Generation)")
+        self.logger.debug("Getting federated parameters (Prior + Recognition + MainQ + Generation)")
 
         prior_state_dict = self.prior_net.state_dict()
         recog_state_dict = self.recognition_net.state_dict()
@@ -279,7 +281,7 @@ class Agent:
         Robustly handles cases where generator weights are missing (if server didn't send them).
         """
         # Logging check
-        logger.debug("Setting federated parameters")
+        self.logger.debug("Setting federated parameters")
 
         prior_keys = list(self.prior_net.state_dict().keys())
         recog_keys = list(self.recognition_net.state_dict().keys())
@@ -305,13 +307,13 @@ class Agent:
 
         # Log what we are receiving for clarity
         if received_count == expected_with_gen:
-            logger.info(
+            self.logger.info(
                 f"   > Loading Global Update: Agent Core ({base_params_count} layers) + Generator ({num_gen} layers)"
             )
         elif received_count == base_params_count:
-            logger.info(f"   > Loading Global Update: Agent Core ({base_params_count} layers) ONLY")
+            self.logger.info(f"   > Loading Global Update: Agent Core ({base_params_count} layers) ONLY")
         else:
-            logger.error(
+            self.logger.error(
                 "Parameter mismatch: expected %s (base) or %s (w/ gen), but received %s",
                 base_params_count,
                 expected_with_gen,
@@ -375,12 +377,12 @@ class Agent:
                     )
                 )
             else:
-                logger.debug(
+                self.logger.debug(
                     "Local agent has generator, but server sent no weights. Keeping local generator as-is."
                 )
 
         if hard_target_update:
-            logger.debug("Performing hard update of target network post-aggregation")
+            self.logger.debug("Performing hard update of target network post-aggregation")
             self.hard_update_target_network()
 
     def train_generation_network(
@@ -388,11 +390,14 @@ class Agent:
         features: torch.Tensor,
         labels: torch.Tensor,
         generator_cfg: DictConfig,
+        logger: logging.Logger | None = None,
     ) -> dict[str, float]:
         """
         Train the generation network on correctly classified samples.
         Now includes detailed logging every 5 epochs using logger.info.
         """
+        active_logger = logger or logging.getLogger("Agent")
+
         # Safety check
         if self.generation_net is None:
             return {}
@@ -433,7 +438,7 @@ class Agent:
 
         # Check threshold
         if num_correct < min_correct:
-            logger.warning(
+            active_logger.warning(
                 f"Generator training skipped: {num_correct}/{total_samples} correct (< {min_correct})"
             )
             return {
@@ -459,7 +464,7 @@ class Agent:
         self.generation_net.train()
         self.recognition_net.eval()
 
-        logger.info(f"--- Generator Training Start (Samples: {num_correct}) ---")
+        active_logger.info(f"--- Generator Training Start (Samples: {num_correct}) ---")
 
         last_epoch_loss = 0.0
 
@@ -490,7 +495,7 @@ class Agent:
 
                 # --- LOGGING EVERY 5 EPOCHS ---
                 if epoch % 5 == 0 or epoch == 1:
-                    logger.info(
+                    active_logger.info(
                         f"   > [Round {round_idx}] Epoch {epoch:02d}/{gen_epochs} | "
                         f"Loss (MSE): {last_epoch_loss:.6f} | "
                         f"Batch Count: {batch_count}"

@@ -110,7 +110,9 @@ def fit_evt_models(
     value_net_main: torch.nn.Module,
     generation_net: torch.nn.Module,
     device: torch.device,
+    logger: logging.Logger | None = None,
 ) -> dict[int, EVTModel]:
+    active_logger = logger or logging.getLogger("OpenSetEval")
 
     per_class_errors = _compute_reconstruction_errors(
         features,
@@ -136,7 +138,7 @@ def fit_evt_models(
 
     for cls_id, errs in per_class_errors.items():
         if len(errs) < min_errs:
-            logger.warning("Insufficient training errors for class %d; skipping EVT.", cls_id)
+            active_logger.warning("Insufficient training errors for class %d; skipping EVT.", cls_id)
             continue
 
         # Determine Threshold
@@ -151,7 +153,7 @@ def fit_evt_models(
 
         # Fallback: If tail is somehow too small, relax q
         if tail.size < min_tail:
-            logger.warning("Insufficient tail for class %d; relaxing percentile.", cls_id)
+            active_logger.warning("Insufficient tail for class %d; relaxing percentile.", cls_id)
             new_q = max(0.0, q - 0.2)
             threshold = float(np.quantile(errs, new_q))
             if new_q == 0.0:
@@ -160,15 +162,15 @@ def fit_evt_models(
             tail = errs[errs > threshold] - threshold
 
             if tail.size < min_tail:
-                logger.warning("Still insufficient tail for class %d; skipping.", cls_id)
+                active_logger.warning("Still insufficient tail for class %d; skipping.", cls_id)
                 continue
 
         # Fit EVT with the FIXED threshold
         evt_model = EVTModel(tail_percent)
-        evt_model.fit(errs, fixed_threshold=threshold)
+        evt_model.fit(errs, fixed_threshold=threshold, logger=active_logger)
 
         evt_models[cls_id] = evt_model
-        logger.info(
+        active_logger.info(
             "Fitted EVT for class %d: %d tail samples (q=%.2f), threshold %.6f",
             cls_id,
             tail.size,
@@ -194,7 +196,9 @@ def calibrate_evt_thresholds(
     value_net_main: torch.nn.Module,
     generation_net: torch.nn.Module,
     device: torch.device,
+    logger: logging.Logger | None = None,
 ) -> dict:
+    active_logger = logger or logging.getLogger("OpenSetEval")
     dataset = TensorDataset(features, labels)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
     loss_fn = nn.MSELoss(reduction="none")
@@ -236,7 +240,7 @@ def calibrate_evt_thresholds(
     else:
         delta_global = 0.5
 
-    logger.info(
+    active_logger.info(
         "Calibrated global EVT threshold delta=%.6f (target known-FPR~=%.3f).",
         delta_global,
         target_fpr,
@@ -260,7 +264,9 @@ def evaluate_open_set(
     output_dir: Path,
     device: torch.device,
     report_to_stdout: bool = False,
+    logger: logging.Logger | None = None,
 ) -> dict[str, float]:
+    active_logger = logger or logging.getLogger("OpenSetEval")
     dataset = TensorDataset(features, labels)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
     loss_fn = nn.MSELoss(reduction="none")
@@ -406,7 +412,7 @@ def evaluate_open_set(
             {"precision": precision, "recall": recall, "threshold": padded_thresholds}
         ).to_csv(output_dir / "open_set_pr_curve.csv", index=False)
 
-    logger.info(
+    active_logger.info(
         "Open-set metrics | AUROC=%.4f | AUPRC=%.4f | FPR95=%.4f | F1_macro=%.4f | Known_Acc=%.4f | Unknown_Recall=%.4f | Overall_Acc=%.4f",
         auroc,
         auprc,

@@ -31,8 +31,6 @@ from src.rl.local_training import run_local_training_round
 from src.rl.replay_buffer import ExperienceReplayBuffer
 from src.utils.utils import get_device, project_root
 
-logger = logging.getLogger("Client")
-
 PROJECT_ROOT = project_root()
 
 
@@ -52,13 +50,14 @@ class FlowerClient(fl.client.NumPyClient):
         device: torch.device | None = None,
     ):
         self.cid = cid
+        self.logger = logging.getLogger(f"Client.{cid}")
         self.cfg = cfg
         self.data_path = data_path
-        self.device = device if device is not None else get_device()
+        self.device = device if device is not None else get_device(logger=self.logger)
 
         self._move_data_to_device = bool(cfg.device.move_data_to_device)
 
-        logger.info("Client %s: Initializing...", cid)
+        self.logger.info("Client %s: Initializing...", cid)
         self.model_factory = OpenSetQChainModelFactory(cfg.model)
 
         # NON-IID FIX: Pass global number of actions to Environment
@@ -66,6 +65,7 @@ class FlowerClient(fl.client.NumPyClient):
             processed_data_path=self.data_path,
             steps_per_episode=cfg.training.steps_per_episode,
             device=self.device,
+            logger=self.logger,
             move_data_to_device=self._move_data_to_device,
             global_num_actions=cfg.model.num_actions,
         )
@@ -88,12 +88,12 @@ class FlowerClient(fl.client.NumPyClient):
 
         # It is OKAY (Non-IID) if env has FEWER actions. Just warn.
         if self.env.num_actions_nt < cfg.model.num_actions:
-            logger.warning(
+            self.logger.warning(
                 f"Client {cid} Non-IID: Env has {self.env.num_actions_nt} classes, "
                 f"Model has {cfg.model.num_actions}. Missing classes will have 0 reward locally."
             )
 
-        self.agent = Agent(self.model_factory, cfg.training, self.device)
+        self.agent = Agent(self.model_factory, cfg.training, self.device, logger=self.logger)
         self.buffer = ExperienceReplayBuffer(cfg.training.replay_buffer_size)
         self.policy = EpsilonGreedyPolicy(
             self.agent.prior_net,
@@ -129,7 +129,7 @@ class FlowerClient(fl.client.NumPyClient):
         self.open_set_data_path: Path | None = None
         self._init_closed_set_evaluation()
 
-        logger.info("Client %s: Initialization complete.", cid)
+        self.logger.info("Client %s: Initialization complete.", cid)
 
     def get_parameters(self, config: dict[str, Any]) -> list[np.ndarray]:
         _ = config
@@ -149,7 +149,7 @@ class FlowerClient(fl.client.NumPyClient):
         # STANDARD FIT (FedAvg / FedProx)
         # =========================================================
         if phase == "standard":
-            logger.info(f"Client {self.cid} [Standard FedAvg]: Round {round_num}")
+            self.logger.info(f"Client {self.cid} [Standard FedAvg]: Round {round_num}")
 
             param_list = (
                 parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
@@ -163,7 +163,7 @@ class FlowerClient(fl.client.NumPyClient):
         # FMRL PHASE A: TRAIN & AUDIT (Calculate H_i and W_i)
         # =========================================================
         if phase == "train":
-            logger.info(f"Client {self.cid} [FMRL Phase A]: Round {round_num}")
+            self.logger.info(f"Client {self.cid} [FMRL Phase A]: Round {round_num}")
 
             # A. Update Global Model
             param_list = (
@@ -204,7 +204,7 @@ class FlowerClient(fl.client.NumPyClient):
                 }
             )
 
-            logger.info(
+            self.logger.info(
                 f"   > Client {self.cid}: Caching weights. Signals -> "
                 f"Reward: {metrics.get('avg_reward_per_episode', 0):.2f}, "
                 f"TD: {audit_signals['td_error']:.4f}, "
@@ -218,17 +218,17 @@ class FlowerClient(fl.client.NumPyClient):
         # FMRL PHASE B: UPLOAD (If selected by Critic)
         # =========================================================
         if phase == "upload":
-            logger.info(f"Client {self.cid} [FMRL Phase B]: Selected! Uploading.")
+            self.logger.info(f"Client {self.cid} [FMRL Phase B]: Selected! Uploading.")
 
             if not self.cached_weights:
-                logger.error("   > Error: No cached weights found!")
+                self.logger.error("   > Error: No cached weights found!")
                 return self.agent.get_federated_parameters(), 0, {"error": 1.0}
 
             steps = int(self.cached_metrics.get("total_steps", 0))
             # Return the weights we cached in Phase A
             return self.cached_weights, steps, self.cached_metrics
 
-        logger.warning(f"Unknown Phase: {phase}")
+        self.logger.warning(f"Unknown Phase: {phase}")
         return [], 0, {}
 
     # --- INTERNAL TRAINING HELPER ---
@@ -265,6 +265,7 @@ class FlowerClient(fl.client.NumPyClient):
             epsilon_scheduler=self.epsilon_scheduler,
             cfg_training=self.cfg.training,
             device=self.device,
+            logger=self.logger,
         )
 
         # Optional Generator Training
@@ -273,10 +274,15 @@ class FlowerClient(fl.client.NumPyClient):
             try:
                 features = self.env.all_features_s.clone()
                 labels = self.env.all_labels_a_t.clone()
-                gen_metrics = self.agent.train_generation_network(features, labels, generator_cfg)
+                gen_metrics = self.agent.train_generation_network(
+                    features,
+                    labels,
+                    generator_cfg,
+                    logger=self.logger,
+                )
                 metrics.update(gen_metrics)
             except Exception as exc:
-                logger.warning(f"Generator training failed: {exc}")
+                self.logger.warning(f"Generator training failed: {exc}")
 
         # Optional Local Eval
         self._run_local_eval_logic(metrics, "LOCAL")
@@ -385,7 +391,7 @@ class FlowerClient(fl.client.NumPyClient):
         self, parameters: list[np.ndarray] | Parameters, config: dict[str, Any]
     ) -> tuple[float, int, dict[str, float]]:
         round_num = config.get("server_round", "?")
-        logger.info("Client %s: evaluate() called for round %s", self.cid, round_num)
+        self.logger.info("Client %s: evaluate() called for round %s", self.cid, round_num)
 
         param_list = (
             parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
@@ -418,7 +424,7 @@ class FlowerClient(fl.client.NumPyClient):
                 )
                 metrics.update(evt_metrics)
             except Exception as e:
-                logger.error(f"EVT Eval failed: {e}")
+                self.logger.error(f"EVT Eval failed: {e}")
 
         metrics["cid"] = self.cid
         return loss, num_examples, metrics
@@ -444,7 +450,7 @@ class FlowerClient(fl.client.NumPyClient):
 
         class_names_rel = getattr(paths_cfg, "class_names", None)
         if not (test_data_rel and class_names_rel):
-            logger.warning("Client %s: paths for %s missing.", self.cid, test_data_key)
+            self.logger.warning("Client %s: paths for %s missing.", self.cid, test_data_key)
             return
 
         test_data_path = _resolve_project_path(test_data_rel)
@@ -457,7 +463,7 @@ class FlowerClient(fl.client.NumPyClient):
             features = data["features"].to(device=data_device).float()
             labels = data["labels"].to(device=data_device).long()
         except Exception as exc:
-            logger.error("Client %s: failed to load closed-set test data: %s", self.cid, exc)
+            self.logger.error("Client %s: failed to load closed-set test data: %s", self.cid, exc)
             return
 
         dataset = TensorDataset(features, labels)
@@ -467,7 +473,7 @@ class FlowerClient(fl.client.NumPyClient):
         self.eval_class_names = self._load_class_names(
             class_names_path, int(self.cfg.model.num_actions)
         )
-        logger.info(
+        self.logger.info(
             "Client %s: Closed-set eval data loaded (%s) | samples=%d",
             self.cid,
             test_data_path.name,
@@ -475,10 +481,9 @@ class FlowerClient(fl.client.NumPyClient):
         )
 
         self.eval_enabled = True
-        logger.info("Client %s: Closed-set eval enabled using %s", self.cid, test_data_path.name)
+        self.logger.info("Client %s: Closed-set eval enabled using %s", self.cid, test_data_path.name)
 
-    @staticmethod
-    def _load_class_names(path: Path, num_actions: int) -> list[str]:
+    def _load_class_names(self, path: Path, num_actions: int) -> list[str]:
         if path.exists():
             try:
                 with open(path, encoding="utf-8") as fp:
@@ -486,7 +491,7 @@ class FlowerClient(fl.client.NumPyClient):
                 sorted_items = sorted(((int(k), v) for k, v in raw.items()), key=lambda x: x[0])
                 return [name for _, name in sorted_items]
             except Exception as exc:
-                logger.warning("Client class-names load failed (%s): %s", path, exc)
+                self.logger.warning("Client class-names load failed (%s): %s", path, exc)
         return [f"class_{idx}" for idx in range(num_actions)]
 
     def _run_closed_set_inference(self) -> tuple[float, np.ndarray, np.ndarray]:
@@ -587,7 +592,7 @@ class FlowerClient(fl.client.NumPyClient):
         self._save_client_report(round_index, report, prefix)
         self._plot_client_confusion_matrix(round_index, y_true, y_pred, prefix)
 
-        logger.info(f"\n[Client {self.cid} | {prefix}] Closed-Set Report:\n{report}")
+        self.logger.info(f"\n[Client {self.cid} | {prefix}] Closed-Set Report:\n{report}")
 
         return (
             loss,
@@ -621,7 +626,7 @@ class FlowerClient(fl.client.NumPyClient):
 
         class_names_rel = getattr(paths_cfg, "class_names", None)
         if not (open_set_rel and class_names_rel):
-            logger.warning("Client %s: open-set paths missing for %s", self.cid, test_open_key)
+            self.logger.warning("Client %s: open-set paths missing for %s", self.cid, test_open_key)
             return {}
 
         try:
@@ -635,13 +640,14 @@ class FlowerClient(fl.client.NumPyClient):
                 value_net_main=self.agent.value_net_main,
                 generation_net=self.agent.generation_net,
                 device=self.device,
+                logger=self.logger,
             )
         except Exception:
-            logger.exception("Client %s: EVT fitting failed.", self.cid)
+            self.logger.exception("Client %s: EVT fitting failed.", self.cid)
             return {}
 
         evt_model_path = self.evt_output_dir / f"evt_models_{prefix}.pkl"
-        save_evt_collection(evt_models, evt_model_path)
+        save_evt_collection(evt_models, evt_model_path, logger=self.logger)
 
         try:
             meta = calibrate_evt_thresholds(
@@ -655,14 +661,15 @@ class FlowerClient(fl.client.NumPyClient):
                 value_net_main=self.agent.value_net_main,
                 generation_net=self.agent.generation_net,
                 device=self.device,
+                logger=self.logger,
             )
         except Exception:
-            logger.exception("Client %s: EVT threshold calibration failed.", self.cid)
+            self.logger.exception("Client %s: EVT threshold calibration failed.", self.cid)
             return {}
 
         default_delta = float(evt_cfg.decision_threshold)
         meta.setdefault("global_delta", default_delta)
-        save_evt_meta(meta, self.evt_output_dir / f"evt_meta_{prefix}.json")
+        save_evt_meta(meta, self.evt_output_dir / f"evt_meta_{prefix}.json", logger=self.logger)
 
         open_set_path = _resolve_project_path(open_set_rel)
         class_names_path = _resolve_project_path(class_names_rel)
@@ -685,7 +692,7 @@ class FlowerClient(fl.client.NumPyClient):
             )
             openset_examples = int(open_labels.numel())
             num_unknown = int((open_labels == -1).sum().item())
-            logger.info(
+            self.logger.info(
                 "Client %s: Open-set eval data loaded (%s) | total=%d | unknown=%d",
                 self.cid,
                 open_set_path.name,
@@ -693,7 +700,7 @@ class FlowerClient(fl.client.NumPyClient):
                 num_unknown,
             )
         except Exception as exc:
-            logger.error("Client %s: Error loading open set data: %s", self.cid, exc)
+            self.logger.error("Client %s: Error loading open set data: %s", self.cid, exc)
             return {}
 
         metrics = evaluate_open_set(
@@ -709,12 +716,13 @@ class FlowerClient(fl.client.NumPyClient):
             class_names=class_map,
             output_dir=self.openset_output_dir,
             device=self.device,
-            report_to_stdout=True,
+            report_to_stdout=False,
+            logger=self.logger,
         )
         metrics["openset_examples"] = openset_examples
         metrics["openset_unknown"] = num_unknown
         metrics["open_set_dataset"] = open_set_path.name
-        logger.info(
+        self.logger.info(
             "[Client %s | %s] Open-Set AUROC: %.4f",
             self.cid,
             prefix,

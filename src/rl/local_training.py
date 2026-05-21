@@ -1,5 +1,6 @@
 import json
 import logging
+import sys
 from typing import Any
 
 import torch
@@ -22,6 +23,7 @@ def run_local_training_round(
     epsilon_scheduler: EpsilonScheduler,
     cfg_training: DictConfig,
     device: torch.device,
+    logger: logging.Logger | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """
     Run one FL round worth of local experience collection/training.
@@ -41,6 +43,8 @@ def run_local_training_round(
     # Optional deterministic seeding if cfg_training.seed exists
     base_seed = getattr(cfg_training, "seed", None)
 
+    active_logger = logger or logging.getLogger("LocalTraining")
+
     total_steps = 0
     total_reward = 0.0
     total_train_steps = 0
@@ -52,13 +56,15 @@ def run_local_training_round(
     label_counts: dict[int, int] = {}
     started_training = False
 
+    interactive = sys.stdout.isatty()
     episode_pbar = tqdm(
         range(local_episodes),
         desc="Local Round Progress",
         position=0,
         leave=True,
+        disable=not interactive,
     )
-    episode_pbar.write(f"Starting local training for {local_episodes} episodes.")
+    active_logger.info("Starting local training for %s episodes.", local_episodes)
 
     for ep_idx in episode_pbar:
         episode_reward = 0.0
@@ -78,7 +84,7 @@ def run_local_training_round(
             desc=f"  Episode {ep_idx + 1:02d}/{local_episodes}",
             position=1,
             leave=False,
-            disable=(local_episodes == 1),
+            disable=not interactive or local_episodes == 1,
         )
 
         for _ in step_pbar:
@@ -103,7 +109,7 @@ def run_local_training_round(
             # Start training once buffer has enough samples
             if len(buffer) >= min_buffer_size:
                 if not started_training:
-                    # logger.info(
+                    # active_logger.info(
                     #     "Replay buffer warm-up complete (size=%s >= min_buffer_size=%s). Starting updates.",
                     #     len(buffer),
                     #     min_buffer_size,
@@ -136,16 +142,20 @@ def run_local_training_round(
         avg_ep_td = episode_td_loss / episode_train_steps if episode_train_steps else 0.0
         avg_ep_kl = episode_kl_loss / episode_train_steps if episode_train_steps else 0.0
 
-        episode_pbar.write(
-            f"  Episode {ep_idx + 1:02d} | Reward: {episode_reward:7.2f} | "
-            f"Avg TD Loss: {avg_ep_td:6.4f} | Avg KL Loss: {avg_ep_kl:6.4f} | "
-            f"Epsilon: {epsilon_scheduler.get_epsilon():.4f}"
+        active_logger.info(
+            "Episode %02d | Reward: %7.2f | Avg TD Loss: %6.4f | Avg KL Loss: %6.4f | "
+            "Epsilon: %.4f",
+            ep_idx + 1,
+            episode_reward,
+            avg_ep_td,
+            avg_ep_kl,
+            epsilon_scheduler.get_epsilon(),
         )
 
     episode_pbar.close()
 
     if total_train_steps == 0:
-        logger.warning(
+        active_logger.warning(
             "Round finished with no parameter updates (buffer size %s < min_buffer_size %s). "
             "Increase steps_per_episode/local_episodes or lower min_buffer_size to start training earlier.",
             len(buffer),
@@ -171,7 +181,7 @@ def run_local_training_round(
         "label_histogram": json.dumps(label_counts, sort_keys=True),
     }
 
-    logger.info("Local training finished. Ran %s steps.", total_steps)
-    logger.info("Round Metrics: %s", metrics)
+    active_logger.info("Local training finished. Ran %s steps.", total_steps)
+    active_logger.info("Round Metrics: %s", metrics)
 
     return total_steps, metrics
