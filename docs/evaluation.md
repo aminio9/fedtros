@@ -33,3 +33,10 @@ Primary metric names:
 - `open_set/fpr95`
 - `open_set/unknown_detection_rate`
 - `open_set/unknown_f1`
+
+## Latent Embeddings
+
+When `evaluation.export_latent_embeddings=true`, evaluation also writes
+`latent_embeddings.csv` to `evaluation.output_dir` with `x`, `y`, and `label`
+columns. The default projection is a deterministic 2D PCA over the prior-network
+latent vectors from the closed-set and open-set evaluation samples.

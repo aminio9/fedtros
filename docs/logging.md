@@ -13,4 +13,6 @@ Each initialized run writes:
 - `resolved_config.yaml`: resolved Hydra config.
 - `federated_history.csv`: long-format per-round Flower metrics when federated training is run.
 
+Federated simulations use per-client logger names such as `Client.1` and `Client.2`, so console output stays tagged even when clients execute in-process. Progress bars are disabled when stdout is not a tty to avoid overwriting log lines.
+
 No online service is required.

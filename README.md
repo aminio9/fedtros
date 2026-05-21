@@ -71,11 +71,31 @@ poetry run python scripts/plot.py run_dir=outputs/run_id
 
 This writes one image per experiment into `outputs/run_id/plots/`, plus a `plot_manifest.json` file that records the generated artifacts.
 
+Evaluation now also writes `latent_embeddings.csv` by default when `evaluation.export_latent_embeddings=true`.
+
 Compare runs:
 
 ```bash
 poetry run python scripts/compare_runs.py runs='[outputs/run1,outputs/run2]'
 ```
+
+`compare_runs.py` writes `comparison_metrics.csv` into `outputs/<suite_run>/` for the convergence plots. Other suite-level plot inputs must be staged into a dedicated suite run directory with the following schemas before plotting:
+
+- `scalability.csv`: `num_clients,final_accuracy`
+- `openness_metrics.csv`: `method,openness,auroc`
+- `cross_dataset_metrics.csv`: `dataset,metric,metric_value`
+- `seed_robustness.csv`: `seed,heterogeneity,accuracy`
+- `latent_embeddings.csv`: `x,y,label`
+- `communication_metrics.csv`: `method,cumulative_mb,accuracy`
+- `ablation_metrics.csv`: `configuration,macro_f1`
+
+Full suite aggregation:
+
+```bash
+poetry run python scripts/build_suite_artifacts.py runs='[outputs/run1,outputs/run2,outputs/run3]'
+```
+
+That command writes the suite CSVs above into `outputs/<suite_run>/` and records a `suite_artifacts_manifest.json` alongside them.
 
 Smoke test:
 
@@ -105,9 +125,12 @@ federated_history.csv
 open_set_scores.csv
 before_osr_confusion_matrix.csv
 after_osr_confusion_matrix.csv
+latent_embeddings.csv
+communication_metrics.csv
 plots/
 plots/plot_manifest.json
 evt/
+suite_artifacts_manifest.json
 ```
 
 No W&B or online tracking service is required.

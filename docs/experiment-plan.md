@@ -31,6 +31,12 @@ Evaluate the proposed FMRL-LA federated intrusion-detection framework for:
 
 Every run writes `config.yaml`, `resolved_config.yaml`, `metadata.json`, logs, metrics, checkpoints, evaluation CSV/JSON files, and plot source files under `outputs/<run_id>/`.
 
+`scripts/evaluate.py` writes `latent_embeddings.csv` when
+`evaluation.export_latent_embeddings=true`. `scripts/federated_train.py` writes
+`communication_metrics.csv` from the federated history. Use
+`scripts/build_suite_artifacts.py` to stage the suite-level CSVs into a single
+suite directory before running `scripts/plot.py`.
+
 ## Plot Inventory
 
 | # | Plot | Source data file |
@@ -161,7 +167,9 @@ poetry run python scripts/plot.py run_dir=outputs/<seed_robustness_suite_run>
 
 ### Plot 12: Latent Separation
 
-Export model embeddings to `latent_embeddings.csv` with `x,y,label`. If the embedding exporter is external, keep its command and seed in the suite run log before rendering:
+`scripts/evaluate.py` can export `latent_embeddings.csv` automatically when
+`evaluation.export_latent_embeddings=true`. Keep the embedding settings and
+seed in the run log if you override the defaults:
 
 ```bash
 poetry run python scripts/plot.py run_dir=outputs/<latent_suite_run>
@@ -169,7 +177,8 @@ poetry run python scripts/plot.py run_dir=outputs/<latent_suite_run>
 
 ### Plot 13: Communication Efficiency
 
-Federated simulation writes `federated_history.csv`. For the systems figure, create `communication_metrics.csv` with `method,cumulative_mb,accuracy` from transmitted model bytes and round-level accuracy:
+`scripts/federated_train.py` writes `communication_metrics.csv` from the
+federated history and estimated transmitted model bytes:
 
 ```bash
 poetry run python scripts/plot.py run_dir=outputs/<communication_suite_run>

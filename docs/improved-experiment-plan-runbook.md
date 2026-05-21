@@ -174,8 +174,10 @@ outputs/fmrl_alpha01_seed42/
   open_set_scores.csv
   open_set_roc_curve.csv
   open_set_pr_curve.csv
+  latent_embeddings.csv
   before_osr_confusion_matrix.csv
   after_osr_confusion_matrix.csv
+  communication_metrics.csv
   evt/
   plots/
     plot_manifest.json
@@ -424,6 +426,12 @@ latent_embeddings.csv
 communication_metrics.csv
 ablation_metrics.csv
 ```
+
+Use `scripts/build_suite_artifacts.py runs='[outputs/run1,outputs/run2,outputs/run3]'`
+to stage the suite directory. `latent_embeddings.csv` is written directly by
+`scripts/evaluate.py` when latent export is enabled, and
+`communication_metrics.csv` is written by `scripts/federated_train.py` from the
+federated history.
 
 Do not use a plot with "Missing data" text as final manuscript evidence.
 

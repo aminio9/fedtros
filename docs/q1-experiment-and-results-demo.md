@@ -220,7 +220,7 @@ logical federated round.
 - External dataset configs and aggregated metrics for B-TAT, ToN-IoT, and
   CIC-IDS2017.
 - Communication-efficiency CSV derived from actual bytes transmitted.
-- Latent-embedding export from real model states if Plot 12 is to be final.
+- Latent-embedding CSV exported automatically during evaluation when enabled.
 
 ## 10. Artifact Index
 
@@ -234,6 +234,8 @@ logical federated round.
 - `outputs/validation_minimal/open_set_scores.csv`
 - `outputs/validation_minimal/open_set_roc_curve.csv`
 - `outputs/validation_minimal/open_set_pr_curve.csv`
+- `outputs/validation_minimal/latent_embeddings.csv`
+- `outputs/validation_minimal/communication_metrics.csv`
 - `outputs/validation_minimal/before_osr_confusion_matrix.csv`
 - `outputs/validation_minimal/after_osr_confusion_matrix.csv`
 - `outputs/validation_minimal/plots/plot_manifest.json`

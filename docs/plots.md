@@ -21,6 +21,9 @@ Required figures:
 
 Output files are rendered individually as `plots/01_<plot_id>.png` and `plots/01_<plot_id>.pdf` style artifacts, plus `plots/plot_manifest.json` for traceability.
 
+Evaluation can also write `latent_embeddings.csv` automatically when
+`evaluation.export_latent_embeddings=true`.
+
 Open-set plots 9 and 10 now read from the dedicated files written by `src/evaluation/openset_eval.py`:
 
 - `before_osr_confusion_matrix.csv`
@@ -33,6 +36,17 @@ Multi-run convergence plots read `comparison_metrics.csv` when available. Genera
 ```bash
 poetry run python scripts/compare_runs.py runs='[outputs/run1,outputs/run2]'
 ```
+
+Suite-level CSVs should be staged with:
+
+```bash
+poetry run python scripts/build_suite_artifacts.py runs='[outputs/run1,outputs/run2,outputs/run3]'
+```
+
+That command writes `scalability.csv`, `openness_metrics.csv`,
+`cross_dataset_metrics.csv`, `seed_robustness.csv`, `latent_embeddings.csv`,
+`communication_metrics.csv`, and `ablation_metrics.csv` into the suite run
+directory together with `suite_artifacts_manifest.json`.
 
 Run:
 
