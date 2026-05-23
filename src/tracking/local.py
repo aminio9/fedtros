@@ -7,7 +7,7 @@ import logging.config
 import platform
 import subprocess
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -122,7 +122,7 @@ class LocalRunTracker:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         configure_run_logging(self.cfg, self.project_root, self.run_dir)
 
-        timestamp = datetime.now(UTC).isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()
         self.metadata.update(
             {
                 "experiment_name": str(self.cfg.experiment.name),
@@ -162,7 +162,7 @@ class LocalRunTracker:
 
     def log_metrics(self, metrics: dict[str, Any], *, step: int | None = None) -> None:
         record: dict[str, Any] = {
-            "timestamp_utc": datetime.now(UTC).isoformat(),
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             **({"step": int(step)} if step is not None else {}),
             **metrics,
         }

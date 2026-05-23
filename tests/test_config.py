@@ -48,7 +48,8 @@ def test_experiment_config_uses_run_local_processed_dir():
         cfg = compose(config_name="config_fl", overrides=["experiment=exp1"])
 
     assert cfg.experiment.pipeline == "full"
-    assert cfg.dataset.preprocessing.output_dir == "outputs/e1_FMRL_LA_alpha0.1_seed42/processed"
+    assert cfg.dataset.preprocessing.output_dir == "outputs/e1_FMRL_LA_iid_seed42/processed"
+    assert cfg.dataset.preprocessing.iid is True
     assert cfg.federated.num_clients == 10
     assert cfg.evaluation.mode == "closed_set"
 

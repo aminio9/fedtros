@@ -12,7 +12,7 @@ defaults:
   - tracking: local
   - checkpointing: default
   - logging: default
-  - runtime: cpu
+  - runtime: gpu
   - output: local
   - sweep: none
   - experiment: baseline
