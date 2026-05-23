@@ -72,14 +72,14 @@ poetry install -E dev
 Full Q1 runs should use 100 federated logical rounds:
 
 ```powershell
-$BASE = "dataset=bnat model=openset_qchain agent=double_q optimizer=adam scheduler=none experiment=baseline device.prefer=cpu dataset.known_labels=[Normal,BP,DoS,MitM] dataset.preprocessing.known_labels=[Normal,BP,DoS,MitM] model.num_actions=4 model.state_dim=31 training.batch_size=512 training.local_episodes_per_round=15 training.steps_per_episode=100 training.min_buffer_size=512 open_set.evt.enabled=true"
+$BASE="dataset=bnat model=openset_qchain agent=double_q optimizer=adam scheduler=none experiment=baseline device.prefer=gpu dataset.known_labels=[Normal,BP,DoS,MitM] dataset.preprocessing.known_labels=[Normal,BP,DoS,MitM] model.num_actions=4 model.state_dim=31 training.batch_size=512 training.local_episodes_per_round=15 training.steps_per_episode=100 training.min_buffer_size=512 open_set.evt.enabled=true"
 ```
 
 Tiny validation runs should avoid overwriting `data/processed`. Use a run-local
 processed directory:
 
 ```powershell
-$TINY = "dataset=bnat model=openset_qchain agent=double_q optimizer=adam scheduler=none experiment=baseline device.prefer=cpu dataset.known_labels=[Normal,BP,DoS,MitM] dataset.preprocessing.known_labels=[Normal,BP,DoS,MitM] model.num_actions=4 model.state_dim=31 training.batch_size=64 training.local_episodes_per_round=1 training.steps_per_episode=3 training.min_buffer_size=2 open_set.evt.enabled=true federated.num_clients=2 dataset.preprocessing.num_clients=2 federated.num_rounds=1 evaluation.batch_size=2048"
+$TINY="dataset=bnat model=openset_qchain agent=double_q optimizer=adam scheduler=none experiment=baseline device.prefer=cpu dataset.known_labels=[Normal,BP,DoS,MitM] dataset.preprocessing.known_labels=[Normal,BP,DoS,MitM] model.num_actions=4 model.state_dim=31 training.batch_size=64 training.local_episodes_per_round=1 training.steps_per_episode=3 training.min_buffer_size=2 open_set.evt.enabled=true federated.num_clients=2 dataset.preprocessing.num_clients=2 federated.num_rounds=1 evaluation.batch_size=2048"
 ```
 
 Then add per-run overrides:

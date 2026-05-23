@@ -1,206 +1,401 @@
-# Experiment Plan
+# Experimental Plan for Closed-Set, Open-Set, and Non-IID Federated Intrusion Detection
 
-This plan reconciles `D:\Research\Experimentplan\Improved_Experiment_Plan.docx`, `D:\Research\Experimentplan\testplot.py`, and the executable pipeline in this repository. Final figures must be generated from saved run outputs, not from the synthetic arrays in the original plotting template.
+This plan defines the final evaluation protocol for the unified intrusion-detection system implemented in the repository. The system combines CVAE-style latent modeling, Double DQN training, EVT-based open-set rejection, and horizontal federated learning with FedAvg, FedProx, and FMRL-LA. All experiments use the BNaT/B-NAT traffic dataset, frozen preprocessing, and seed-controlled client partitions.
 
-## Research Objective
+## 1. Scope and Research Questions
 
-Evaluate the proposed FMRL-LA federated intrusion-detection framework for:
+The goal is to show that the full pipeline:
 
-- closed-set classification of known Blockchain traffic classes,
-- open-set rejection of unknown or zero-day attacks,
-- robustness to non-IID client partitions and random seeds,
-- scalability with client count,
-- communication efficiency and cross-dataset generalization.
+1. Preserves known-class performance in the closed-set setting.
+2. Rejects unknown attacks reliably with open-set detection.
+3. Improves federated training under non-IID client data.
+4. Remains stable when open-set detection and federated non-IID training are combined.
 
-## Core Run Configuration
+These questions map directly to the implemented system:
 
-- Base Hydra config: `src/configs/config_fl.yaml`.
-- Primary dataset config: `dataset=bnat`.
-- Primary experiment config: `experiment=baseline`.
-- Primary model config: `model=openset_qchain`.
-- BNaT source labels present in `data/raw/BNaT.csv`: `Normal`, `BP`, `DoS`, `MitM`, `FoT`.
-- Primary BNaT open-set protocol: known labels `Normal`, `BP`, `DoS`, `MitM`; hold out `FoT` as the unknown attack for the main open-set run.
-- Unknown labels: labels outside `known_labels`, encoded as `-1` for open-set evaluation.
-- Canonical local CSV: `data/raw/BNaT.csv`, sourced from the official BNaT repository and landing page at `https://github.com/avitech-vnu/BNaT` and `https://avitech-vnu.github.io/BNaT/#/`.
-- Default strategy: `federated.strategy.name=fmrl_la` and `experiment.method=FMRL_LA`.
-- Baselines: `federated.strategy.name=fedavg experiment.method=FedAvg` and `federated.strategy.name=fedprox experiment.method=FedProx`.
-- Main client counts: `3`, `10`, `20`, `50`, `100`.
-- Main non-IID alphas: `0.1`, `0.5`, `1.0`, `10`, plus IID.
-- Main seeds: at least `42 43 44 45 46`; use 10 or more for final robustness plots.
-- Plot output: one file per experiment, `outputs/<run_id>/plots/NN_<plot_id>.png` and `.pdf`, plus `plot_manifest.json`.
+- `PriorNetwork` learns `p_theta(z|s)`.
+- `RecognitionNetwork` learns `q_phi(z|s,a)`.
+- `MainQNetwork` estimates action values for known classes.
+- `GenerationNetwork` reconstructs traffic features from latent and action inputs.
+- `EVTModel` converts reconstruction error into an unknown-attack score.
+- `AsyncCritic` and `CentralizedAggregator` support FMRL-LA client scoring and aggregation.
 
-Every run writes `config.yaml`, `resolved_config.yaml`, `metadata.json`, logs, metrics, checkpoints, evaluation CSV/JSON files, and plot source files under `outputs/<run_id>/`.
+## 2. System Under Test
 
-`scripts/evaluate.py` writes `latent_embeddings.csv` when
-`evaluation.export_latent_embeddings=true`. `scripts/federated_train.py` writes
-`communication_metrics.csv` from the federated history. Use
-`scripts/build_suite_artifacts.py` to stage the suite-level CSVs into a single
-suite directory before running `scripts/plot.py`.
+### 2.1 Learning formulation
 
-## Plot Inventory
+The intrusion-detection task is treated as a discrete-time MDP:
 
-| # | Plot | Source data file |
-|---|------|------------------|
-| 1 | Scalability: nodes vs final accuracy | `scalability.csv` |
-| 2 | Non-IID client data distribution | `client_class_distribution.csv` |
-| 3 | Mild non-IID convergence and variance | `comparison_metrics.csv` or `federated_history.csv` |
-| 4 | Hard non-IID convergence and variance | `comparison_metrics.csv` or `federated_history.csv` |
-| 5 | Known vs unknown EVT score distributions | `open_set_scores.csv`, `open_set_metrics.json` |
-| 6 | Openness vs AUROC | `openness_metrics.csv` |
-| 7 | Unknown-detection ROC | `open_set_roc_curve.csv` |
-| 8 | Cross-dataset generalization | `cross_dataset_metrics.csv` |
-| 9 | Before-OSR confusion matrix | `before_osr_confusion_matrix.csv` |
-| 10 | After-OSR confusion matrix | `after_osr_confusion_matrix.csv` |
-| 11 | Seed robustness boxplot | `seed_robustness.csv` |
-| 12 | t-SNE/UMAP latent separation | `latent_embeddings.csv` |
-| 13 | Communication efficiency | `communication_metrics.csv` |
-| 14 | Architectural ablation | `ablation_metrics.csv` |
+- `s_t`: traffic feature vector
+- `a_t`: predicted class label
+- `r_t`: `+1` if the prediction is correct, `-1` otherwise
+- transition: sampled independently of the action
 
-Plots 9 and 10 must be built from open-set predictions. Plot 10 must not use `test_confusion_matrix.csv`, because that file is the closed-set test matrix and does not include unknown rejection.
+The agent uses:
 
-## Single-Run Reproduction
+- epsilon-greedy exploration
+- experience replay
+- Double DQN target selection
+- soft target-network updates
 
-Run preprocessing, federated training, open-set evaluation, and plotting:
+The local training objective combines:
 
-```bash
-poetry install
-poetry run python scripts/reproduce_experiment.py seed=42 federated.num_clients=10 dataset.preprocessing.alpha=0.1 dataset.preprocessing.iid=false
-poetry run python scripts/plot.py run_dir=outputs/<run_id>
+- KL divergence for the latent prior
+- TD loss for the Q-network
+- reconstruction loss for the generator
+
+### 2.2 Open-set decision rule
+
+Open-set detection reuses the same encoder-decoder stack and changes only the decision logic:
+
+1. Predict the class with `argmax_a Q(s, a)`.
+2. Reconstruct the sample using the predicted class.
+3. Compute reconstruction error.
+4. Fit class-conditional EVT tails on correctly classified known-sample errors from validation data.
+5. Reject the sample as unknown if the EVT score exceeds the calibrated threshold.
+
+Unknown labels are handled consistently:
+
+- raw unknown labels are stored as `-1`
+- the operational unknown class is reported as `99`
+
+### 2.3 Federated coordination
+
+The federated setup is horizontal:
+
+- all clients share the same feature space and output space
+- each client trains on a local shard
+- the server aggregates updates across clients
+
+The supported strategies are:
+
+- `FedAvg`
+- `FedProx`
+- `FMRL-LA` (`FMRL_LA` in some source files)
+
+Only the trainable parameter blocks are federated. The target Q-network is synchronized locally after aggregation and is not directly shared as a separate federated object.
+
+FMRL-LA is run as a two-phase round:
+
+1. Phase A: all sampled clients train locally and upload audit metadata.
+2. The server scores client utility from latent summaries, reward statistics, accuracy, F1, TD stability, novelty, class entropy, label coverage, generator quality, and local interaction count.
+3. A QMIX-style monotonic mixer, conditioned on the padded global client-state vector, turns those signals into aggregation weights.
+4. Phase B: selected clients upload cached weights, and the server applies the weighted update.
+
+Each federated baseline should be labeled by the exact local objective used in the run. If the proximal penalty is not active, report that configuration separately instead of treating it as a fully regularized FedProx result.
+
+## 3. Experimental Variables and Controls
+
+| Type        | Variable              | Settings                                                      |
+| ----------- | --------------------- | ------------------------------------------------------------- |
+| Independent | Inference mode        | Closed-set only, open-set enabled                             |
+| Independent | Federation strategy   | Local training, FedAvg, FedProx, FMRL-LA                      |
+| Independent | Data heterogeneity    | IID, Dirichlet non-IID with multiple alpha values             |
+| Independent | Unknown composition   | Leave-one-attack-out or multi-unknown holdout                 |
+| Independent | Random seed           | Fixed seed list, reused across all methods                    |
+| Dependent   | Closed-set quality    | Accuracy, macro F1, balanced accuracy, per-class scores       |
+| Dependent   | Open-set quality      | AUROC, AUPRC, FPR@95%TPR, unknown F1, rejection rate          |
+| Dependent   | Federated quality     | Final accuracy, convergence speed, stability, client variance |
+| Dependent   | Efficiency            | Training time, communication cost, rounds to convergence      |
+| Controlled  | Dataset version       | Frozen registry entry and checksum                            |
+| Controlled  | Preprocessing         | Same scaler, encoder, label map, and feature schema           |
+| Controlled  | Split protocol        | Same train/validation/test split across all runs              |
+| Controlled  | Threshold calibration | Validation only; never on the test set                        |
+| Controlled  | Training budget       | Same epochs, rounds, batch size, and optimizer settings       |
+| Controlled  | Client partition      | Same seed-specific partition for every method in a comparison |
+
+The main rule is simple: every method in a comparison must see the same data split, the same seed, and the same preprocessing contract.
+
+## 4. Data Preparation and Label Contract
+
+### 4.1 Dataset handling
+
+The raw CSV file is transformed into tensor datasets through the following steps:
+
+1. Detect numeric and categorical columns.
+2. Map known labels to contiguous integer classes.
+3. Keep unknown labels out of the training set.
+4. Fit scaling and encoding only on the training portion.
+5. Build known-class train, validation, and closed-set test tensors.
+6. Build an open-set test tensor by combining known test samples with held-out unknown samples.
+7. Partition the known training data into client shards with Dirichlet sampling.
+
+### 4.2 Stored artifacts
+
+The preprocessing stage should produce:
+
+- `known_train.pt`
+- `validation.pt`
+- `closed_set_test.pt`
+- `open_set_test.pt`
+- `shared_closed_set_test.pt`
+- `shared_open_set_test.pt`
+- `client_<id>_train.pt`
+
+The shared tensors are used for global evaluation and figure generation. The client tensors are used for local and federated training.
+
+### 4.3 Non-IID partitioning
+
+Client partitions are sampled with a Dirichlet distribution over class labels:
+
+`p_c ~ Dirichlet(alpha * 1_n)`
+
+Smaller `alpha` values produce stronger class skew. All clients still share the same global action space, so a client may be missing some classes locally without changing the model output dimension.
+
+## 5. Experimental Matrix
+
+| ID  | Experiment                   | Main question                                                                   | Main baseline(s)                                                                                                   | Main outputs                                                         |
+| --- | ---------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| E1  | Closed-set validation        | Does the full model preserve known-class performance?                           | Centralized training, local-only, FedAvg, FedProx                                                                  | Accuracy, macro F1, balanced accuracy, convergence                   |
+| E2  | Open-set detection           | Can unknown attacks be rejected without hurting known classes?                  | Closed-set classifier without EVT, softmax-only baseline                                                           | AUROC, AUPRC, FPR@95%TPR, unknown F1, confusion matrices             |
+| E3  | Federated non-IID comparison | Does FMRL-LA outperform standard federated methods under heterogeneous clients? | FedAvg, FedProx, local-only, centralized pooled training                                                           | Final accuracy, stability, convergence speed, communication cost     |
+| E4  | Combined open-set + non-IID  | Does the full system remain effective when both challenges are active?          | Closed-set classifier without EVT, softmax-only baseline, FedAvg, FedProx, local-only, centralized pooled training | Known-class metrics, unknown metrics, per-client robustness          |
+| E5  | Ablation and sensitivity     | Which module contributes most to the gains?                                     | Base model, no EVT, no generator, FedAvg, FedProx, FMRL-LA                                                         | Metric deltas, threshold sensitivity, seed stability                 |
+| E6  | Efficiency and scalability   | How does performance change with more clients and more rounds?                  | FedAvg vs FMRL-LA                                                                                                  | Runtime, bytes transmitted, rounds to convergence, accuracy per cost |
+
+## 6. Detailed Experimental Protocols
+
+### 6.1 E1: Closed-Set Validation
+
+**Purpose:** verify that adding open-set capability does not reduce known-class classification quality.
+
+**Setup**
+
+- Train on known-class data only.
+- Evaluate on the closed-set test tensor.
+- Compare centralized training on the pooled known-training tensor, local-only training, FedAvg, FedProx, and FMRL-LA under the same split.
+- Report both global averages and per-class results.
+
+**Metrics**
+
+- accuracy
+- macro precision
+- macro recall
+- macro F1
+- weighted F1
+- balanced accuracy
+- per-class confusion matrices
+
+**Expected outcome**
+
+- The full model should match or exceed the closed-set baseline within normal run-to-run variation.
+- The addition of open-set components should not introduce a meaningful drop in known-class performance.
+
+### 6.2 E2: Open-Set Detection
+
+**Purpose:** verify that the model can identify unknown attacks while keeping known-class behavior intact.
+
+**Setup**
+
+- Fit EVT only on correctly classified known samples from validation data.
+- Use leave-one-attack-out or multi-unknown holdout evaluation.
+- Compare the full EVT-based detector with a closed-set classifier that always returns the argmax class.
+- Report both known-class and unknown-class behavior on the same test set.
+
+**Metrics**
+
+- AUROC
+- AUPRC
+- FPR@95%TPR
+- TPR@5%FPR
+- unknown F1
+- unknown rejection rate
+- known-class accuracy after rejection
+
+**Expected outcome**
+
+- Unknown samples should receive higher EVT scores than known samples.
+- Rejection should improve unknown detection without materially harming known-class accuracy.
+
+### 6.3 E3: Federated Non-IID Comparison
+
+**Purpose:** test whether FMRL-LA improves training stability and final performance under client heterogeneity.
+
+**Setup**
+
+- Generate client shards with multiple Dirichlet alpha values.
+- Run the same training budget for all strategies.
+- Compare FedAvg, FedProx, local-only training, centralized pooled training on the full known-training tensor, and FMRL-LA.
+- Use the same client sampling fraction, seed list, and local epoch count for every run.
+
+**Metrics**
+
+- final accuracy
+- final-10-round mean accuracy
+- maximum accuracy
+- macro F1
+- convergence rounds
+- per-seed variance
+- client-wise performance spread
+- communication cost
+- reward trajectory for the RL component
+
+**Expected outcome**
+
+- FMRL-LA should be more stable than FedAvg and FedProx when alpha is small.
+- The performance gap should widen as the data become more skewed.
+
+### 6.4 E4: Open-Set Detection Under Non-IID Conditions
+
+**Purpose:** evaluate the full system when unknown-attack rejection and federated heterogeneity are both present.
+
+**Setup**
+
+- Use the same Dirichlet partitions from E3.
+- Calibrate EVT thresholds on validation data only.
+- Evaluate on mixed known/unknown test tensors.
+- Report both global results and per-client results.
+
+**Metrics**
+
+- known-class accuracy
+- known-class macro F1
+- AUROC
+- AUPRC
+- FPR@95%TPR
+- unknown F1
+- per-client detection variance
+
+**Expected outcome**
+
+- The detector should still reject unknowns under client skew.
+- Performance should degrade gracefully relative to the IID open-set case.
+
+### 6.5 E5: Ablation and Sensitivity
+
+**Purpose:** isolate the contribution of each major module.
+
+**Ablations**
+
+- remove EVT rejection
+- remove generator training
+- replace the latent CVAE-style branch with a direct classifier
+- replace FMRL-LA with FedAvg
+- replace FMRL-LA with FedProx
+- disable client selection and aggregate all uploaded models
+
+**Sensitivity checks**
+
+- Dirichlet alpha sweep
+- EVT threshold sweep
+- random-seed sweep
+- client-count sweep
+
+**Expected outcome**
+
+- Each removed component should cause a measurable drop in the metric it is designed to improve.
+- The full model should be the most balanced configuration across closed-set accuracy, open-set rejection, and federated stability.
+
+### 6.6 E6: Efficiency and Scalability
+
+**Purpose:** quantify the cost of the method as the number of clients and rounds changes.
+
+**Setup**
+
+- vary the number of clients
+- vary the communication-round budget
+- compare FedAvg and FMRL-LA under the same training settings
+
+**Metrics**
+
+- wall-clock time
+- bytes transmitted
+- rounds to convergence
+- accuracy per round
+- accuracy per megabyte
+
+**Expected outcome**
+
+- FMRL-LA may add coordination overhead, but the selected-client update path should improve utility per round under non-IID data.
+
+## 7. Detailed Training and Evaluation Workflow
+
+```mermaid
+flowchart TD
+    A[Raw BNaT CSV] --> B[Preprocessing and label mapping]
+    B --> C[Known train, validation, closed-set test]
+    B --> D[Open-set test with held-out unknowns]
+    C --> E[Dirichlet client partitioning]
+    E --> F[Local CVAE-Double DQN training]
+    F --> G[Generator training on correctly classified known samples]
+    F --> H[Audit metrics and client summaries]
+    H --> I[FMRL-LA critic and utility scoring]
+    I --> J[Client selection and weighted aggregation]
+    J --> F
+    C --> K[Closed-set evaluation]
+    D --> L[EVT calibration and open-set evaluation]
 ```
 
-If preprocessing and training are run separately:
+### Workflow rules
 
-```bash
-poetry run python scripts/preprocess.py seed=42 federated.num_clients=10 dataset.preprocessing.alpha=0.1 dataset.preprocessing.iid=false
-poetry run python scripts/federated_train.py tracking.run_id=train_fmrl_alpha01_seed42 seed=42 federated.num_clients=10 dataset.preprocessing.alpha=0.1 dataset.preprocessing.iid=false
-poetry run python scripts/evaluate.py tracking.run_id=eval_fmrl_alpha01_seed42 checkpoint.path=outputs/train_fmrl_alpha01_seed42/best_model.pt
-poetry run python scripts/plot.py run_dir=outputs/eval_fmrl_alpha01_seed42
-```
+1. Freeze the dataset registry before any training starts.
+2. Fit all preprocessing objects only on training data.
+3. Reuse the same split and partition for every method in a comparison.
+4. Calibrate EVT thresholds only on validation data.
+5. Run every strategy with the same seed list.
+6. Save checkpoints, metrics, logs, and generated figures for every run.
+7. Do not aggregate results until all runs for a comparison block are complete.
 
-## Experiment Commands
+## 8. Metric Families and Statistical Analysis
 
-Use explicit `tracking.run_id` values when running sweeps so comparison commands are reproducible.
+| Family                    | Metrics                                                                            |
+| ------------------------- | ---------------------------------------------------------------------------------- |
+| Closed-set classification | Accuracy, macro precision, macro recall, macro F1, weighted F1, balanced accuracy  |
+| Open-set detection        | AUROC, AUPRC, FPR@95%TPR, TPR@5%FPR, unknown F1, rejection rate                    |
+| Federated learning        | Final accuracy, best accuracy, final-10 average, convergence rounds, seed variance |
+| Efficiency                | Runtime, communication cost, accuracy per MB, rounds to convergence                |
+| Robustness                | Per-seed dispersion, alpha sensitivity, client-count sensitivity                   |
 
-### Plot 1: Scalability
+### Reporting rules
 
-Run one full pipeline per client count:
+- Report mean, standard deviation, and 95% confidence intervals.
+- Use paired comparisons when methods share the same split and seed.
+- Use Wilcoxon signed-rank tests when the normality assumption is weak.
+- Use paired t-tests only when normality is acceptable.
+- Apply a multiple-comparison correction when several pairwise tests are reported.
+- Include effect sizes together with p-values.
 
-```bash
-poetry run python scripts/reproduce_experiment.py tracking.run_id=scalability_n3_seed42 seed=42 federated.num_clients=3 dataset.preprocessing.num_clients=3
-poetry run python scripts/reproduce_experiment.py tracking.run_id=scalability_n10_seed42 seed=42 federated.num_clients=10 dataset.preprocessing.num_clients=10
-poetry run python scripts/reproduce_experiment.py tracking.run_id=scalability_n20_seed42 seed=42 federated.num_clients=20 dataset.preprocessing.num_clients=20
-poetry run python scripts/reproduce_experiment.py tracking.run_id=scalability_n50_seed42 seed=42 federated.num_clients=50 dataset.preprocessing.num_clients=50
-poetry run python scripts/reproduce_experiment.py tracking.run_id=scalability_n100_seed42 seed=42 federated.num_clients=100 dataset.preprocessing.num_clients=100
-```
+## 9. Reporting Package
 
-Aggregate final accuracy into `scalability.csv` with columns `num_clients,final_accuracy`, place it in a comparison run directory, then run `scripts/plot.py`.
+The final report should contain:
 
-### Plot 2: Non-IID Distribution
+- one results table per experiment block
+- one plot set per experiment block
+- one summary table for statistical significance
+- one reproducibility log with commands, seeds, and output paths
+- one appendix dashboard for supplementary figures
 
-Generate the partition and client distribution files:
+### Recommended figure groups
 
-```bash
-poetry run python scripts/preprocess.py tracking.run_id=noniid_alpha01_seed42 seed=42 federated.num_clients=10 dataset.preprocessing.num_clients=10 dataset.preprocessing.alpha=0.1 dataset.preprocessing.iid=false
-poetry run python scripts/plot.py run_dir=outputs/noniid_alpha01_seed42
-```
+- E1: accuracy, precision/recall/F1, and convergence plots
+- E2: confusion matrices, ROC curve, and open-set metric summary
+- E3: client distribution, reward evolution, and federated convergence plots
+- E4: combined robustness and per-client detection plots
+- E5: ablation bars and sensitivity sweeps
+- E6: runtime and communication-efficiency plots
 
-### Plots 3 and 4: Convergence
+## 10. Final Execution Checklist
 
-Run each method under mild and hard non-IID. Example for hard non-IID:
+- [ ] Dataset registry completed and checksum-verified
+- [ ] Label mapping frozen
+- [ ] Known train, validation, and test splits saved
+- [ ] Dirichlet client partitions generated and archived
+- [ ] Closed-set runs completed for all strategies
+- [ ] Open-set runs completed with validation-only calibration
+- [ ] Federated non-IID runs completed across alpha values
+- [ ] Combined open-set + non-IID runs completed
+- [ ] Ablation runs completed
+- [ ] Efficiency and scalability runs completed
+- [ ] Tables filled from logged metrics
+- [ ] Figures regenerated from saved outputs
+- [ ] Statistical tests reported
+- [ ] Final manuscript-ready summary assembled
 
-```bash
-poetry run python scripts/reproduce_experiment.py tracking.run_id=fmrl_alpha01_seed42 seed=42 federated.strategy.name=fmrl_la experiment.method=FMRL_LA dataset.preprocessing.alpha=0.1 dataset.preprocessing.iid=false
-poetry run python scripts/reproduce_experiment.py tracking.run_id=fedavg_alpha01_seed42 seed=42 federated.strategy.name=fedavg experiment.method=FedAvg dataset.preprocessing.alpha=0.1 dataset.preprocessing.iid=false
-poetry run python scripts/reproduce_experiment.py tracking.run_id=fedprox_alpha01_seed42 seed=42 federated.strategy.name=fedprox experiment.method=FedProx dataset.preprocessing.alpha=0.1 dataset.preprocessing.iid=false
-poetry run python scripts/compare_runs.py tracking.run_id=compare_alpha01_seed42 runs='[outputs/fmrl_alpha01_seed42,outputs/fedavg_alpha01_seed42,outputs/fedprox_alpha01_seed42]'
-poetry run python scripts/plot.py run_dir=outputs/compare_alpha01_seed42
-```
+## 11. Summary of Expected Results
 
-Repeat with `dataset.preprocessing.alpha=10` and `tracking.run_id=compare_alpha10_seed42`.
+The final system should show four consistent results:
 
-### Plots 5, 7, 9, and 10: Open-Set Evaluation
-
-These are produced by `scripts/evaluate.py` from a trained checkpoint:
-
-```bash
-poetry run python scripts/evaluate.py tracking.run_id=eval_fmrl_alpha01_seed42 checkpoint.path=outputs/fmrl_alpha01_seed42/best_model.pt
-poetry run python scripts/plot.py run_dir=outputs/eval_fmrl_alpha01_seed42
-```
-
-Expected source files: `open_set_scores.csv`, `open_set_metrics.json`, `open_set_roc_curve.csv`, `before_osr_confusion_matrix.csv`, and `after_osr_confusion_matrix.csv`. Plot 5 uses the calibrated EVT threshold when that metadata is present.
-
-### Plot 6: Openness vs AUROC
-
-Run the open-set evaluation for each registered openness setting or unknown-label holdout. Save one row per setting in `openness_metrics.csv`:
-
-```text
-method,openness,auroc
-FMRL_LA,0.1,0.95
-FedAvg,0.1,0.86
-```
-
-Then render:
-
-```bash
-poetry run python scripts/plot.py run_dir=outputs/<openness_suite_run>
-```
-
-### Plot 8: Cross-Dataset Generalization
-
-For each external dataset, set the dataset config/raw path, run preprocessing with the same known/unknown protocol, evaluate the frozen method, and write `cross_dataset_metrics.csv` with `dataset,metric,metric_value`.
-
-```bash
-poetry run python scripts/preprocess.py tracking.run_id=btat_preprocess seed=42 dataset.name=B-TAT dataset.preprocessing.raw_file=data/raw/B-TAT.csv
-poetry run python scripts/evaluate.py tracking.run_id=btat_eval checkpoint.path=outputs/fmrl_alpha01_seed42/best_model.pt dataset.name=B-TAT
-poetry run python scripts/plot.py run_dir=outputs/<cross_dataset_suite_run>
-```
-
-### Plot 11: Seed Robustness
-
-Repeat the main run for each seed and alpha, then write `seed_robustness.csv` with `seed,heterogeneity,accuracy`.
-
-```bash
-poetry run python scripts/reproduce_experiment.py tracking.run_id=fmrl_alpha01_seed43 seed=43 dataset.preprocessing.alpha=0.1 dataset.preprocessing.iid=false
-poetry run python scripts/reproduce_experiment.py tracking.run_id=fmrl_alpha10_seed43 seed=43 dataset.preprocessing.alpha=10 dataset.preprocessing.iid=false
-poetry run python scripts/plot.py run_dir=outputs/<seed_robustness_suite_run>
-```
-
-### Plot 12: Latent Separation
-
-`scripts/evaluate.py` can export `latent_embeddings.csv` automatically when
-`evaluation.export_latent_embeddings=true`. Keep the embedding settings and
-seed in the run log if you override the defaults:
-
-```bash
-poetry run python scripts/plot.py run_dir=outputs/<latent_suite_run>
-```
-
-### Plot 13: Communication Efficiency
-
-`scripts/federated_train.py` writes `communication_metrics.csv` from the
-federated history and estimated transmitted model bytes:
-
-```bash
-poetry run python scripts/plot.py run_dir=outputs/<communication_suite_run>
-```
-
-### Plot 14: Architectural Ablation
-
-Run the four ablation variants and save final macro F1 in `ablation_metrics.csv` with `configuration,macro_f1`:
-
-```bash
-poetry run python scripts/reproduce_experiment.py tracking.run_id=ablation_full seed=42 federated.strategy.name=fmrl_la open_set.evt.enabled=true experiment.method=FMRL_LA
-poetry run python scripts/reproduce_experiment.py tracking.run_id=ablation_fedavg_no_osr seed=42 federated.strategy.name=fedavg open_set.evt.enabled=false experiment.method=FedAvg
-poetry run python scripts/train.py tracking.run_id=ablation_central_osr seed=42 open_set.evt.enabled=true experiment.method=Centralized_OSR
-poetry run python scripts/train.py tracking.run_id=ablation_central_no_osr seed=42 open_set.evt.enabled=false experiment.method=Centralized_No_OSR
-poetry run python scripts/plot.py run_dir=outputs/<ablation_suite_run>
-```
-
-## Acceptance Checks
-
-- `resolved_config.yaml` exists for every run.
-- `metadata.json` records method, dataset, seed, device, and git commit when available.
-- `open_set_scores.csv` includes both `raw_pred` and final `y_pred`.
-- Plots 9 and 10 read `before_osr_confusion_matrix.csv` and `after_osr_confusion_matrix.csv`.
-- `scripts/plot.py` produces separate numbered figures, not `complete_Q1_dashboard.png`.
-- Missing source data results in a missing-data figure and warning, never synthetic evidence.
+1. Closed-set metrics remain strong after open-set capability is added.
+2. EVT rejection separates unknown attacks from known traffic with strong threshold-independent performance.
+3. FMRL-LA is more robust than FedAvg and FedProx under non-IID client partitions.
+4. The combined system remains usable when both open-set detection and federated heterogeneity are active at the same time.

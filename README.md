@@ -44,6 +44,13 @@ Central/local training:
 poetry run python scripts/train.py experiment=baseline seed=42 training.epochs=100
 ```
 
+Unified Hydra runner:
+
+```bash
+poetry run python run.py experiment=exp1 +method=fmrl_la seed=42
+poetry run python run.py experiment=all
+```
+
 Federated simulation:
 
 ```bash
@@ -97,6 +104,8 @@ poetry run python scripts/build_suite_artifacts.py runs='[outputs/run1,outputs/r
 
 That command writes the suite CSVs above into `outputs/<suite_run>/` and records a `suite_artifacts_manifest.json` alongside them.
 
+Experiment command files and batch scripts live in `scripts/experiments/`.
+
 Smoke test:
 
 ```bash
@@ -141,7 +150,8 @@ Hydra config groups live in `src/configs/`:
 
 ```text
 dataset, model, agent, optimizer, scheduler, training, evaluation,
-federated, open_set, plotting, tracking, checkpointing, logging, experiment
+federated, open_set, plotting, tracking, checkpointing, logging, runtime,
+output, sweep, method, experiment
 ```
 
 All important experiment parameters are controlled by config files or explicit Hydra overrides. Missing required values fail during script startup through `src.utils.config.validate_config`.
