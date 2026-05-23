@@ -27,7 +27,15 @@ from src.utils.config import resolve_path
 logger = logging.getLogger(__name__)
 
 
-def _client_train_path(cfg: DictConfig, project_root: Path) -> Path:
+def _central_train_path(cfg: DictConfig, project_root: Path) -> Path:
+    """Use the full known-train tensor for centralized baselines."""
+    known_train_path = resolve_path(project_root, cfg.paths.known_train_data)
+    if known_train_path.exists():
+        return known_train_path
+    logger.warning(
+        "Centralized known-train tensor not found at %s; falling back to client_1 shard.",
+        known_train_path,
+    )
     return resolve_path(project_root, cfg.paths.data_client_1)
 
 
@@ -38,7 +46,7 @@ def run_training(
     device: torch.device,
     tracker: LocalRunTracker,
 ) -> dict[str, Any]:
-    train_data_path = _client_train_path(cfg, project_root)
+    train_data_path = _central_train_path(cfg, project_root)
     if not train_data_path.exists():
         raise FileNotFoundError(
             f"Training tensor not found: {train_data_path}. Run scripts/preprocess.py first."
@@ -102,6 +110,7 @@ def run_training(
             "train/reward": float(train_metrics.get("avg_reward_per_episode", 0.0)),
             "train/double_q_loss": float(train_metrics.get("avg_td_loss", 0.0)),
             "train/kl_loss": float(train_metrics.get("avg_kl_loss", 0.0)),
+            "train/prox_loss": float(train_metrics.get("avg_prox_loss", 0.0)),
             "train/epsilon": float(train_metrics.get("epsilon", 0.0)),
         }
 

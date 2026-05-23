@@ -23,6 +23,7 @@ def run_local_training_round(
     epsilon_scheduler: EpsilonScheduler,
     cfg_training: DictConfig,
     device: torch.device,
+    proximal_mu: float = 0.0,
     logger: logging.Logger | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """
@@ -50,6 +51,7 @@ def run_local_training_round(
     total_train_steps = 0
     total_td_loss = 0.0
     total_kl_loss = 0.0
+    total_prox_loss = 0.0
     total_avg_q = 0.0
     total_correct = 0
     action_counts: dict[int, int] = {}
@@ -70,6 +72,7 @@ def run_local_training_round(
         episode_reward = 0.0
         episode_td_loss = 0.0
         episode_kl_loss = 0.0
+        episode_prox_loss = 0.0
         episode_q_value = 0.0
         episode_train_steps = 0
 
@@ -116,16 +119,20 @@ def run_local_training_round(
                     # )
                     started_training = True
                 batch = buffer.sample(batch_size, device)
-                td_loss, kl_loss, avg_q = agent.train_step(batch)
+                td_loss, kl_loss, prox_loss, avg_q = agent.train_step(
+                    batch, proximal_mu=proximal_mu
+                )
 
                 episode_train_steps += 1
                 episode_td_loss += td_loss
                 episode_kl_loss += kl_loss
+                episode_prox_loss += prox_loss
                 episode_q_value += avg_q
 
                 total_train_steps += 1
                 total_td_loss += td_loss
                 total_kl_loss += kl_loss
+                total_prox_loss += prox_loss
                 total_avg_q += avg_q
 
                 # Soft-update the target network periodically
@@ -141,14 +148,16 @@ def run_local_training_round(
 
         avg_ep_td = episode_td_loss / episode_train_steps if episode_train_steps else 0.0
         avg_ep_kl = episode_kl_loss / episode_train_steps if episode_train_steps else 0.0
+        avg_ep_prox = episode_prox_loss / episode_train_steps if episode_train_steps else 0.0
 
         active_logger.info(
             "Episode %02d | Reward: %7.2f | Avg TD Loss: %6.4f | Avg KL Loss: %6.4f | "
-            "Epsilon: %.4f",
+            "Avg Prox Loss: %6.4f | Epsilon: %.4f",
             ep_idx + 1,
             episode_reward,
             avg_ep_td,
             avg_ep_kl,
+            avg_ep_prox,
             epsilon_scheduler.get_epsilon(),
         )
 
@@ -164,6 +173,7 @@ def run_local_training_round(
 
     avg_round_td = total_td_loss / total_train_steps if total_train_steps else 0.0
     avg_round_kl = total_kl_loss / total_train_steps if total_train_steps else 0.0
+    avg_round_prox = total_prox_loss / total_train_steps if total_train_steps else 0.0
     avg_round_q = total_avg_q / total_train_steps if total_train_steps else 0.0
 
     metrics = {
@@ -173,10 +183,13 @@ def run_local_training_round(
         "policy_accuracy": total_correct / total_steps if total_steps else 0.0,
         "avg_td_loss": avg_round_td,
         "avg_kl_loss": avg_round_kl,
+        "avg_prox_loss": avg_round_prox,
         "avg_q_value": avg_round_q,
         "train_steps": float(total_train_steps),
+        "total_steps": float(total_steps),
         "buffer_size": float(len(buffer)),
         "epsilon": float(epsilon_scheduler.get_epsilon()),
+        "proximal_mu": float(proximal_mu),
         "action_histogram": json.dumps(action_counts, sort_keys=True),
         "label_histogram": json.dumps(label_counts, sort_keys=True),
     }

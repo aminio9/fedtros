@@ -126,6 +126,7 @@ class Agent:
 
         # Local (Personalized) Components
         self.value_net_target = self.decoder.target_q
+        self._proximal_reference: dict[str, list[torch.Tensor]] | None = None
 
         # Sync target net initially
         self.value_net_target.load_state_dict(self.value_net_main.state_dict())
@@ -149,6 +150,7 @@ class Agent:
             self.optimizer_q_rl = adam_cls(rl_params, lr=train_cfg.lr_q_rl)
 
         self.td_loss_fn = nn.SmoothL1Loss()
+        self._capture_proximal_reference()
         self.logger.debug("Agent initialized with Double-DQN: %s", self.use_double_dqn)
 
     @torch.no_grad()
@@ -176,16 +178,23 @@ class Agent:
             ]  # [B,1]
         return q_target_next
 
-    def train_step(self, batch: tuple[torch.Tensor, ...]) -> tuple[float, float, float]:
+    def train_step(
+        self,
+        batch: tuple[torch.Tensor, ...],
+        *,
+        proximal_mu: float = 0.0,
+    ) -> tuple[float, float, float, float]:
         """
         Performs one full training step (Prior update + RL update).
         batch = (states_s, actions_a_t, rewards_r, next_states_s, dones, true_actions_a_t)
-        Returns: (td_loss_item, kl_loss_item, avg_q_item)
+        Returns: (td_loss_item, kl_loss_item, prox_loss_item, avg_q_item)
         """
         states_s, actions_a_t, rewards_r, next_states_s, dones, true_actions_a_t = batch
 
         actions_a_t = _ensure_action_index(actions_a_t, self.action_dim)
         true_actions_a_t = _ensure_action_index(true_actions_a_t, self.action_dim)
+        proximal_mu = float(proximal_mu)
+        prox_loss_total = torch.zeros((), device=self.device)
 
         # ========== 1) PRIOR update: KL(q||p) using TRUE labels (Eq. 5) ==========
         self.prior_net.train()
@@ -198,9 +207,14 @@ class Agent:
         mu_p, log_var_p = self.prior_net(states_s)  # p_theta(z|s)
 
         kl_loss = self._prior_kl_fn(mu_q_T, log_var_q_T, mu_p, log_var_p)
+        kl_objective = kl_loss
+        if proximal_mu > 0.0:
+            prior_prox = self._proximal_penalty("prior_net")
+            prox_loss_total = prox_loss_total + 0.5 * proximal_mu * prior_prox
+            kl_objective = kl_objective + 0.5 * proximal_mu * prior_prox
 
         self.optimizer_prior.zero_grad()
-        kl_loss.backward()
+        kl_objective.backward()
         if self.prior_grad_clip_norm is not None:
             torch.nn.utils.clip_grad_norm_(
                 self.prior_net.parameters(), float(self.prior_grad_clip_norm)
@@ -225,10 +239,17 @@ class Agent:
 
         # Calculate TD Loss (Eq. 11)
         td_loss = self.td_loss_fn(q_pred, y_t)
+        td_objective = td_loss
+        if proximal_mu > 0.0:
+            rl_prox = self._proximal_penalty("recognition_net") + self._proximal_penalty(
+                "value_net_main"
+            )
+            prox_loss_total = prox_loss_total + 0.5 * proximal_mu * rl_prox
+            td_objective = td_objective + 0.5 * proximal_mu * rl_prox
 
         # Optimize both recognition and main_q nets
         self.optimizer_q_rl.zero_grad()
-        td_loss.backward()
+        td_objective.backward()
         torch.nn.utils.clip_grad_norm_(
             list(self.recognition_net.parameters()) + list(self.value_net_main.parameters()),
             max_norm=1.0,  # Common practice for DQN stability
@@ -236,7 +257,7 @@ class Agent:
         self.optimizer_q_rl.step()
 
         avg_q = q_pred.mean().item()
-        return td_loss.item(), kl_loss.item(), avg_q
+        return td_loss.item(), kl_loss.item(), prox_loss_total.item(), avg_q
 
     def update_target_network(self, tau: float):
         """Soft update the target network (Eq. 10)."""
@@ -247,6 +268,32 @@ class Agent:
         """Hard update (copy) the target network."""
         self.logger.debug("Performing hard target update")
         self.value_net_target.load_state_dict(self.value_net_main.state_dict())
+
+    def _capture_proximal_reference(self) -> None:
+        """Store the current federated parameters as the FedProx anchor."""
+        self._proximal_reference = {
+            "prior_net": [param.detach().clone() for param in self.prior_net.parameters()],
+            "recognition_net": [
+                param.detach().clone() for param in self.recognition_net.parameters()
+            ],
+            "value_net_main": [param.detach().clone() for param in self.value_net_main.parameters()],
+        }
+        if self.generation_net is not None:
+            self._proximal_reference["generation_net"] = [
+                param.detach().clone() for param in self.generation_net.parameters()
+            ]
+
+    def _proximal_penalty(self, module_name: str) -> torch.Tensor:
+        """Compute the squared distance to the saved global reference for one module."""
+        if not self._proximal_reference or module_name not in self._proximal_reference:
+            return torch.zeros((), device=self.device)
+
+        module = getattr(self, module_name)
+        reference_params = self._proximal_reference[module_name]
+        penalty = torch.zeros((), device=self.device)
+        for current_param, reference_param in zip(module.parameters(), reference_params, strict=True):
+            penalty = penalty + (current_param - reference_param.to(current_param.device)).pow(2).sum()
+        return penalty
 
     # --- METHODS FOR FEDERATED LEARNING ---
 
@@ -384,12 +431,14 @@ class Agent:
         if hard_target_update:
             self.logger.debug("Performing hard update of target network post-aggregation")
             self.hard_update_target_network()
+        self._capture_proximal_reference()
 
     def train_generation_network(
         self,
         features: torch.Tensor,
         labels: torch.Tensor,
         generator_cfg: DictConfig,
+        proximal_mu: float = 0.0,
         logger: logging.Logger | None = None,
     ) -> dict[str, float]:
         """
@@ -412,6 +461,7 @@ class Agent:
 
         gen_epochs = max(1, int(generator_cfg.epochs_per_round))
         min_correct = int(generator_cfg.min_correct_samples)
+        proximal_mu = float(proximal_mu)
 
         # Filter for correctly classified samples
         dataset = TensorDataset(features, labels)
@@ -467,10 +517,12 @@ class Agent:
         active_logger.info(f"--- Generator Training Start (Samples: {num_correct}) ---")
 
         last_epoch_loss = 0.0
+        last_epoch_prox_loss = 0.0
 
         for round_idx in range(1, gen_rounds + 1):
             for epoch in range(1, gen_epochs + 1):
                 total_loss = 0.0
+                total_prox_loss = 0.0
                 batch_count = 0
 
                 for states_s, true_actions in train_loader:
@@ -482,28 +534,37 @@ class Agent:
                         latent_z = reparameterization_trick(mu_q, log_var_q)
 
                     recon = self.generation_net(latent_z, true_actions)
-                    loss = loss_fn(recon, states_s)
+                    mse_loss = loss_fn(recon, states_s)
+                    loss = mse_loss
+                    prox_loss = torch.zeros((), device=self.device)
+                    if proximal_mu > 0.0:
+                        prox_loss = 0.5 * proximal_mu * self._proximal_penalty("generation_net")
+                        loss = loss + prox_loss
 
                     optimizer.zero_grad()
                     loss.backward()
                     optimizer.step()
 
-                    total_loss += loss.item()
+                    total_loss += mse_loss.item()
+                    total_prox_loss += prox_loss.item()
                     batch_count += 1
 
                 last_epoch_loss = total_loss / max(1, batch_count)
+                last_epoch_prox_loss = total_prox_loss / max(1, batch_count)
 
                 # --- LOGGING EVERY 5 EPOCHS ---
                 if epoch % 5 == 0 or epoch == 1:
                     active_logger.info(
                         f"   > [Round {round_idx}] Epoch {epoch:02d}/{gen_epochs} | "
                         f"Loss (MSE): {last_epoch_loss:.6f} | "
+                        f"Prox: {last_epoch_prox_loss:.6f} | "
                         f"Batch Count: {batch_count}"
                     )
 
         self.generation_net.eval()
         return {
             "generator_loss": float(last_epoch_loss),
+            "generator_prox_loss": float(last_epoch_prox_loss),
             "generator_samples": float(num_correct),
             "generator_correct_frac": num_correct / max(1, total_samples),
         }

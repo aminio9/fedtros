@@ -3,6 +3,7 @@ import json
 import pandas as pd
 import torch
 import torch.nn as nn
+from omegaconf import OmegaConf
 
 from src.evaluation.openset_eval import evaluate_open_set
 from src.openset.evt import EVTModel
@@ -79,3 +80,36 @@ def test_open_set_missing_evt_model_is_unknown(tmp_path):
     assert after_cm.shape == (3, 3)
     assert before_cm.loc["Unknown", "known_1"] == 2
     assert after_cm.loc["Unknown", "Unknown"] == 2
+
+
+def test_open_set_eval_uses_configured_unknown_ids_and_threshold(tmp_path):
+    evt_cfg = OmegaConf.create(
+        {
+            "decision_threshold": 0.5,
+            "error_scale_factor": 1.0,
+            "unknown_label_id": -7,
+            "open_set_label_id": 77,
+        }
+    )
+
+    metrics = evaluate_open_set(
+        features=torch.ones(2, 3),
+        labels=torch.tensor([-7, -7]),
+        batch_size=2,
+        prior_net=ConstantPrior(),
+        recognition_net=ConstantRecognition(),
+        value_net_main=PredictClassOne(),
+        generation_net=ZeroGenerator(),
+        evt_models={0: EVTModel(0.5)},
+        evt_meta={},
+        class_names={0: "known_0", 1: "known_1"},
+        output_dir=tmp_path,
+        device=torch.device("cpu"),
+        evt_cfg=evt_cfg,
+    )
+
+    assert metrics["openset_unknown_recall"] == 1.0
+
+    scores = pd.read_csv(tmp_path / "open_set_scores.csv")
+    assert scores["y_true"].tolist() == [77, 77]
+    assert scores["y_pred"].tolist() == [77, 77]

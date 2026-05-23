@@ -144,20 +144,25 @@ class FlowerClient(fl.client.NumPyClient):
         # 1. Determine Phase
         phase = config.get("phase", "standard")
         round_num = config.get("server_round", "?")
+        strategy_name = str(self.cfg.strategy.name).lower()
+        proximal_mu = float(self.cfg.server.proximal_mu) if strategy_name == "fedprox" else 0.0
 
         # =========================================================
         # STANDARD FIT (FedAvg / FedProx)
         # =========================================================
         if phase == "standard":
-            self.logger.info(f"Client {self.cid} [Standard FedAvg]: Round {round_num}")
+            phase_name = "FedProx" if proximal_mu > 0.0 else "FedAvg"
+            self.logger.info(f"Client {self.cid} [{phase_name}]: Round {round_num}")
 
             param_list = (
                 parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
             )
             self.set_parameters(param_list)
-            num_steps_trained, metrics = self._perform_training_loop()
+            num_steps_trained, metrics = self._perform_training_loop(proximal_mu=proximal_mu)
+            metrics.setdefault("total_steps", float(num_steps_trained))
             updated_params = self.agent.get_federated_parameters()
-            return updated_params, num_steps_trained, metrics
+            num_examples = int(self.local_data_profile["local_num_examples"])
+            return updated_params, num_examples, metrics
 
         # =========================================================
         # FMRL PHASE A: TRAIN & AUDIT (Calculate H_i and W_i)
@@ -212,7 +217,8 @@ class FlowerClient(fl.client.NumPyClient):
             )
 
             # E. Return EMPTY weights (Server decides if it wants them later)
-            return [], num_steps_trained, self.cached_metrics
+            num_examples = int(self.local_data_profile["local_num_examples"])
+            return [], num_examples, self.cached_metrics
 
         # =========================================================
         # FMRL PHASE B: UPLOAD (If selected by Critic)
@@ -224,9 +230,9 @@ class FlowerClient(fl.client.NumPyClient):
                 self.logger.error("   > Error: No cached weights found!")
                 return self.agent.get_federated_parameters(), 0, {"error": 1.0}
 
-            steps = int(self.cached_metrics.get("total_steps", 0))
             # Return the weights we cached in Phase A
-            return self.cached_weights, steps, self.cached_metrics
+            num_examples = int(self.local_data_profile["local_num_examples"])
+            return self.cached_weights, num_examples, self.cached_metrics
 
         self.logger.warning(f"Unknown Phase: {phase}")
         return [], 0, {}
@@ -255,7 +261,7 @@ class FlowerClient(fl.client.NumPyClient):
             ),
         }
 
-    def _perform_training_loop(self) -> tuple[int, dict[str, Any]]:
+    def _perform_training_loop(self, proximal_mu: float = 0.0) -> tuple[int, dict[str, Any]]:
         """Shared training logic for both Standard and FMRL modes."""
         num_steps_trained, metrics = run_local_training_round(
             agent=self.agent,
@@ -265,6 +271,7 @@ class FlowerClient(fl.client.NumPyClient):
             epsilon_scheduler=self.epsilon_scheduler,
             cfg_training=self.cfg.training,
             device=self.device,
+            proximal_mu=proximal_mu,
             logger=self.logger,
         )
 
@@ -278,6 +285,7 @@ class FlowerClient(fl.client.NumPyClient):
                     features,
                     labels,
                     generator_cfg,
+                    proximal_mu=proximal_mu,
                     logger=self.logger,
                 )
                 metrics.update(gen_metrics)
@@ -716,6 +724,7 @@ class FlowerClient(fl.client.NumPyClient):
             class_names=class_map,
             output_dir=self.openset_output_dir,
             device=self.device,
+            evt_cfg=evt_cfg,
             report_to_stdout=False,
             logger=self.logger,
         )

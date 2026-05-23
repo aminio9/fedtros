@@ -35,9 +35,19 @@ def _ensure_dir(path: Path) -> Path:
     return path
 
 
-def _open_set_label_order(class_names: dict[int, str]) -> tuple[list[int], list[str]]:
+def _cfg_value(cfg, key: str, default):
+    return getattr(cfg, key, default) if cfg is not None else default
+
+
+def _error_scale_factor(evt_cfg) -> float:
+    return float(_cfg_value(evt_cfg, "error_scale_factor", ERROR_SCALE_FACTOR))
+
+
+def _open_set_label_order(
+    class_names: dict[int, str], open_set_label_id: int
+) -> tuple[list[int], list[str]]:
     known_ids = sorted(int(k) for k in class_names)
-    return known_ids + [OPEN_SET_LABEL_ID], [class_names[k] for k in known_ids] + ["Unknown"]
+    return known_ids + [open_set_label_id], [class_names[k] for k in known_ids] + ["Unknown"]
 
 
 def _save_labeled_confusion_matrix(
@@ -64,6 +74,7 @@ def _compute_reconstruction_errors(
     value_net_main: torch.nn.Module,
     generation_net: torch.nn.Module,
     device: torch.device,
+    error_scale_factor: float,
 ) -> dict[int, np.ndarray]:
     loss_fn = nn.MSELoss(reduction="none")
     dataset = TensorDataset(features, labels)
@@ -88,8 +99,7 @@ def _compute_reconstruction_errors(
             mu_q, _ = recognition_net(states_s, a_onehot)
             s_recon = generation_net(mu_q, a_onehot)
 
-            # --- APPLY SCALING HERE ---
-            errs = loss_fn(s_recon, states_s).mean(dim=1) * ERROR_SCALE_FACTOR
+            errs = loss_fn(s_recon, states_s).mean(dim=1) * error_scale_factor
 
             for cls_id in torch.unique(true_actions).tolist():
                 mask = (true_actions == cls_id) & (preds == cls_id)
@@ -113,6 +123,7 @@ def fit_evt_models(
     logger: logging.Logger | None = None,
 ) -> dict[int, EVTModel]:
     active_logger = logger or logging.getLogger("OpenSetEval")
+    error_scale = _error_scale_factor(evt_cfg)
 
     per_class_errors = _compute_reconstruction_errors(
         features,
@@ -123,6 +134,7 @@ def fit_evt_models(
         value_net_main=value_net_main,
         generation_net=generation_net,
         device=device,
+        error_scale_factor=error_scale,
     )
 
     evt_models: dict[int, EVTModel] = {}
@@ -199,6 +211,7 @@ def calibrate_evt_thresholds(
     logger: logging.Logger | None = None,
 ) -> dict:
     active_logger = logger or logging.getLogger("OpenSetEval")
+    error_scale = _error_scale_factor(evt_cfg)
     dataset = TensorDataset(features, labels)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
     loss_fn = nn.MSELoss(reduction="none")
@@ -219,8 +232,7 @@ def calibrate_evt_thresholds(
             mu_r, _ = recognition_net(states_s, one_hot)
             recon = generation_net(mu_r, one_hot)
 
-            # --- APPLY SCALING HERE ---
-            errs = loss_fn(recon, states_s).mean(dim=1) * ERROR_SCALE_FACTOR
+            errs = loss_fn(recon, states_s).mean(dim=1) * error_scale
 
             for i in range(states_s.size(0)):
                 pred_label = int(preds[i].item())
@@ -238,7 +250,7 @@ def calibrate_evt_thresholds(
         qf = min(max(qf, 0.0), 1.0)
         delta_global = float(np.quantile(probs_unknown, qf))
     else:
-        delta_global = 0.5
+        delta_global = float(_cfg_value(evt_cfg, "decision_threshold", 0.5))
 
     active_logger.info(
         "Calibrated global EVT threshold delta=%.6f (target known-FPR~=%.3f).",
@@ -246,7 +258,14 @@ def calibrate_evt_thresholds(
         target_fpr,
     )
 
-    return {"global_delta": delta_global}
+    return {
+        "global_delta": delta_global,
+        "target_known_fpr": target_fpr,
+        "decision_threshold": float(_cfg_value(evt_cfg, "decision_threshold", delta_global)),
+        "error_scale_factor": error_scale,
+        "unknown_label_id": int(_cfg_value(evt_cfg, "unknown_label_id", UNKNOWN_LABEL_ID)),
+        "open_set_label_id": int(_cfg_value(evt_cfg, "open_set_label_id", OPEN_SET_LABEL_ID)),
+    }
 
 
 def evaluate_open_set(
@@ -263,6 +282,7 @@ def evaluate_open_set(
     class_names: dict[int, str],
     output_dir: Path,
     device: torch.device,
+    evt_cfg=None,
     report_to_stdout: bool = False,
     logger: logging.Logger | None = None,
 ) -> dict[str, float]:
@@ -272,7 +292,13 @@ def evaluate_open_set(
     loss_fn = nn.MSELoss(reduction="none")
     output_dir = _ensure_dir(output_dir)
 
-    delta_global = float(evt_meta.get("global_delta", 0.1))
+    decision_threshold = float(_cfg_value(evt_cfg, "decision_threshold", 0.1))
+    delta_global = float(evt_meta.get("global_delta", decision_threshold))
+    error_scale = float(evt_meta.get("error_scale_factor", _error_scale_factor(evt_cfg)))
+    unknown_label_id = int(evt_meta.get("unknown_label_id", _cfg_value(evt_cfg, "unknown_label_id", UNKNOWN_LABEL_ID)))
+    open_set_label_id = int(
+        evt_meta.get("open_set_label_id", _cfg_value(evt_cfg, "open_set_label_id", OPEN_SET_LABEL_ID))
+    )
     y_true_list: list[int] = []
     raw_pred_list: list[int] = []
     y_pred_list: list[int] = []
@@ -295,8 +321,7 @@ def evaluate_open_set(
             mu_q, _ = recognition_net(states_s, one_hot)
             recon = generation_net(mu_q, one_hot)
 
-            # --- APPLY SCALING HERE ---
-            errs = loss_fn(recon, states_s).mean(dim=1) * ERROR_SCALE_FACTOR
+            errs = loss_fn(recon, states_s).mean(dim=1) * error_scale
 
             for i in range(states_s.size(0)):
                 pred_label = int(preds[i].item())
@@ -315,9 +340,9 @@ def evaluate_open_set(
 
                 final_pred = pred_label
                 if prob >= delta_global:
-                    final_pred = OPEN_SET_LABEL_ID
+                    final_pred = open_set_label_id
 
-                mapped_true = OPEN_SET_LABEL_ID if true_label == UNKNOWN_LABEL_ID else true_label
+                mapped_true = open_set_label_id if true_label == unknown_label_id else true_label
                 y_true_list.append(mapped_true)
                 y_pred_list.append(final_pred)
 
@@ -325,7 +350,7 @@ def evaluate_open_set(
     y_raw_pred = np.array(raw_pred_list, dtype=int)
     y_pred = np.array(y_pred_list, dtype=int)
     y_scores = np.array(y_score_unknown, dtype=float)
-    y_binary = (y_true == OPEN_SET_LABEL_ID).astype(int)
+    y_binary = (y_true == open_set_label_id).astype(int)
 
     if np.unique(y_binary).size < 2:
         auroc = 0.0
@@ -352,8 +377,8 @@ def evaluate_open_set(
             fpr95 = 1.0
 
     f1_macro = f1_score(y_true, y_pred, average="macro", zero_division=0)
-    unknown_f1 = f1_score(y_binary, (y_pred == OPEN_SET_LABEL_ID).astype(int), zero_division=0)
-    known_mask = y_true != OPEN_SET_LABEL_ID
+    unknown_f1 = f1_score(y_binary, (y_pred == open_set_label_id).astype(int), zero_division=0)
+    known_mask = y_true != open_set_label_id
     unknown_mask = ~known_mask
 
     known_acc = accuracy_score(y_true[known_mask], y_pred[known_mask]) if known_mask.any() else 0.0
@@ -362,7 +387,7 @@ def evaluate_open_set(
     )
     overall_acc = accuracy_score(y_true, y_pred) if y_true.size else 0.0
 
-    report_labels, class_name_list = _open_set_label_order(class_names)
+    report_labels, class_name_list = _open_set_label_order(class_names, open_set_label_id)
 
     before_cm_path = output_dir / "before_osr_confusion_matrix.csv"
     after_cm_path = output_dir / "after_osr_confusion_matrix.csv"
@@ -438,12 +463,14 @@ def evaluate_open_set(
         "openset_overall_acc": overall_acc,
         "openset_missing_evt_model_count": float(missing_evt_model_count),
         "openset_global_delta": delta_global,
+        "openset_error_scale_factor": error_scale,
         "open_set/auroc": auroc,
         "open_set/auprc": auprc,
         "open_set/fpr95": fpr95,
         "open_set/unknown_detection_rate": unknown_recall,
         "open_set/unknown_f1": float(unknown_f1),
         "open_set/global_delta": delta_global,
+        "open_set/error_scale_factor": error_scale,
     }
     (output_dir / "open_set_metrics.json").write_text(
         json.dumps(metrics, indent=2, sort_keys=True),

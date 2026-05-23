@@ -40,6 +40,9 @@ class ExperienceReplayBuffer:
 
     def sample(self, batch_size: int, device: torch.device) -> tuple[torch.Tensor, ...]:
         """Randomly sample a batch of experiences."""
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive.")
+        batch_size = min(int(batch_size), len(self.buffer))
         batch = random.sample(self.buffer, batch_size)
 
         # Unzip the batch

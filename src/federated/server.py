@@ -22,6 +22,7 @@ from hydra.utils import get_original_cwd
 from omegaconf import DictConfig, OmegaConf
 
 from src.agents.agent import Agent
+from src.checkpointing.checkpoints import load_agent_checkpoint
 from src.models.models import OpenSetQChainModelFactory
 from src.utils.utils import get_device
 
@@ -102,7 +103,7 @@ def save_global_model(
         raise RuntimeError("Global agent reference is not initialized; cannot save checkpoint.")
 
     try:
-        GLOBAL_AGENT_REF.set_federated_parameters(weights_list, hard_target_update=False)
+        GLOBAL_AGENT_REF.set_federated_parameters(weights_list, hard_target_update=True)
 
         checkpoint = {
             "round": round_num,
@@ -147,6 +148,28 @@ def save_global_model(
 
 def fit_config_fn(server_round: int) -> dict[str, fl.common.Scalar]:
     return {"server_round": server_round, "phase": "standard"}
+
+
+def _initial_parameters_from_checkpoint(
+    cfg: DictConfig, device: torch.device
+) -> Parameters | None:
+    resume_from = OmegaConf.select(cfg, "federated.resume_from", default=None)
+    if not resume_from:
+        return None
+    if GLOBAL_AGENT_REF is None:
+        init_global_agent_ref(cfg, device)
+    if GLOBAL_AGENT_REF is None:
+        raise RuntimeError("Global agent reference is not initialized; cannot resume FL.")
+    checkpoint_path = _resolve_path(resume_from)
+    load_agent_checkpoint(
+        GLOBAL_AGENT_REF,
+        checkpoint_path,
+        device,
+        strict=bool(cfg.checkpointing.strict_load),
+        load_optimizers=False,
+    )
+    logger.info("Loaded federated initial parameters from %s", checkpoint_path)
+    return ndarrays_to_parameters(GLOBAL_AGENT_REF.get_federated_parameters())
 
 
 # --- CUSTOM STRATEGIES WITH SAVING LOGIC ---
@@ -728,6 +751,7 @@ def aggregate_evaluate_metrics(
 
 def get_strategy(cfg: DictConfig) -> Strategy:
     strat_name = str(cfg.strategy.name).lower()
+    device = get_device()
 
     args = dict(
         fraction_fit=cfg.server.fraction_fit,
@@ -735,6 +759,7 @@ def get_strategy(cfg: DictConfig) -> Strategy:
         min_fit_clients=cfg.server.min_fit_clients,
         min_evaluate_clients=cfg.server.min_evaluate_clients,
         min_available_clients=cfg.server.min_available_clients,
+        initial_parameters=_initial_parameters_from_checkpoint(cfg, device),
         on_fit_config_fn=fit_config_fn,
         evaluate_metrics_aggregation_fn=aggregate_evaluate_metrics,
     )
