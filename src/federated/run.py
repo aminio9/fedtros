@@ -38,7 +38,7 @@ from src.federated.server import (
 )
 from src.tracking.local import LocalRunTracker
 from src.utils.config import resolve_path
-from src.utils.utils import resolve_device_from_config, set_seed
+from src.utils.utils import resolve_device_from_config, set_device, set_seed
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,16 @@ logger = logging.getLogger(__name__)
 def _resolve_runtime_config(cfg: DictConfig) -> DictConfig:
     """Freeze Hydra interpolations before config crosses process boundaries."""
     return OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
+
+
+def _simulation_gpu_batches_enabled(cfg: DictConfig) -> bool:
+    value = OmegaConf.select(cfg, "runtime.simulation_gpu_batches.enabled", default=False)
+    return bool(value)
+
+
+def _simulation_gpu_batch_size(cfg: DictConfig) -> int:
+    value = OmegaConf.select(cfg, "runtime.simulation_gpu_batches.batch_size", default=1)
+    return max(1, int(value or 1))
 
 
 class _LegacyFlowerClientProxy(ClientProxy):
@@ -113,6 +123,8 @@ def _build_local_clients(
     cfg: DictConfig,
     *,
     project_root: Path,
+    simulation_gpu_batching: bool,
+    simulation_execution_device: torch.device,
 ) -> SimpleClientManager:
     client_manager = SimpleClientManager()
     for client_id in range(1, int(cfg.federated.num_clients) + 1):
@@ -124,14 +136,14 @@ def _build_local_clients(
             use_deterministic_algorithms=bool(cfg.device.use_deterministic_algorithms),
         )
         device = torch.device("cpu")
-        if str(cfg.device.prefer).lower() == "cuda" and torch.cuda.is_available():
-            device = torch.device("cuda")
         data_path = _client_data_path(cfg, project_root, client_id)
         client = FlowerClient(
             cid=str(client_id),
             cfg=cfg,
             data_path=str(data_path),
             device=device,
+            simulation_gpu_batching=simulation_gpu_batching,
+            simulation_execution_device=simulation_execution_device,
         )
         client_manager.register(_LegacyFlowerClientProxy(client))
     return client_manager
@@ -191,8 +203,24 @@ def run_federated_simulation(
     tracker: LocalRunTracker | None = None,
 ) -> dict[str, Any]:
     cfg = _resolve_runtime_config(cfg)
-    init_global_agent_ref(cfg, resolve_device_from_config(cfg))
-    client_manager = _build_local_clients(cfg, project_root=project_root)
+    gpu_batching_enabled = _simulation_gpu_batches_enabled(cfg)
+    gpu_batch_size = _simulation_gpu_batch_size(cfg) if gpu_batching_enabled else 1
+    simulation_execution_device = (
+        torch.device("cuda")
+        if gpu_batching_enabled and torch.cuda.is_available()
+        else torch.device("cpu")
+    )
+
+    # Keep the server-side reference on CPU. GPU batching only applies to the
+    # in-process client workers in this simulation path.
+    set_device("cpu")
+    init_global_agent_ref(cfg, torch.device("cpu"))
+    client_manager = _build_local_clients(
+        cfg,
+        project_root=project_root,
+        simulation_gpu_batching=gpu_batching_enabled,
+        simulation_execution_device=simulation_execution_device,
+    )
     set_seed(
         int(cfg.seed),
         deterministic=bool(cfg.device.deterministic),
@@ -207,6 +235,17 @@ def run_federated_simulation(
         str(cfg.federated.strategy.name),
     )
     server = Server(client_manager=client_manager, strategy=get_strategy(cfg))
+    if gpu_batching_enabled:
+        if simulation_execution_device.type != "cuda":
+            logger.warning(
+                "GPU batch mode is enabled, but CUDA is unavailable. Falling back to CPU workers."
+            )
+        server.set_max_workers(gpu_batch_size)
+        logger.info(
+            "Local Flower simulation worker batching enabled | batch_size=%d | execution_device=%s",
+            gpu_batch_size,
+            simulation_execution_device,
+        )
     history, _elapsed_time = server.fit(num_rounds=get_effective_num_rounds(cfg), timeout=None)
     run_dir = tracker.run_dir if tracker is not None else resolve_path(project_root, cfg.tracking.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)

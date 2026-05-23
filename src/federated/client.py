@@ -48,12 +48,24 @@ class FlowerClient(fl.client.NumPyClient):
         cfg: DictConfig,
         data_path: str,
         device: torch.device | None = None,
+        *,
+        simulation_gpu_batching: bool = False,
+        simulation_execution_device: torch.device | str | None = None,
     ):
         self.cid = cid
         self.logger = logging.getLogger(f"Client.{cid}")
         self.cfg = cfg
         self.data_path = data_path
         self.device = device if device is not None else get_device(logger=self.logger)
+        self._simulation_gpu_batching = bool(simulation_gpu_batching)
+        self._simulation_execution_device = (
+            torch.device(simulation_execution_device)
+            if simulation_execution_device is not None
+            else self.device
+        )
+        self._simulation_rest_device = (
+            torch.device("cpu") if self._simulation_gpu_batching else self.device
+        )
 
         self._move_data_to_device = bool(cfg.device.move_data_to_device)
 
@@ -131,6 +143,30 @@ class FlowerClient(fl.client.NumPyClient):
 
         self.logger.info("Client %s: Initialization complete.", cid)
 
+    def _switch_runtime_device(self, device: torch.device | str) -> None:
+        target_device = torch.device(device)
+        if target_device == self.device:
+            return
+        self.agent.to(target_device)
+        self.policy.device = target_device
+        self.device = target_device
+
+    def _enter_execution_device(self) -> tuple[torch.device, bool]:
+        target_device = (
+            self._simulation_execution_device if self._simulation_gpu_batching else self.device
+        )
+        switched = target_device != self.device
+        if switched:
+            self._switch_runtime_device(target_device)
+        return target_device, switched
+
+    def _exit_execution_device(self, target_device: torch.device, switched: bool) -> None:
+        if not switched:
+            return
+        self._switch_runtime_device(self._simulation_rest_device)
+        if target_device.type == "cuda" and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
     def get_parameters(self, config: dict[str, Any]) -> list[np.ndarray]:
         _ = config
         return self.agent.get_federated_parameters()
@@ -141,101 +177,104 @@ class FlowerClient(fl.client.NumPyClient):
     def fit(
         self, parameters: list[np.ndarray] | Parameters, config: dict[str, Any]
     ) -> tuple[list[np.ndarray], int, dict[str, Any]]:
-        # 1. Determine Phase
         phase = config.get("phase", "standard")
         round_num = config.get("server_round", "?")
         strategy_name = str(self.cfg.strategy.name).lower()
         proximal_mu = float(self.cfg.server.proximal_mu) if strategy_name == "fedprox" else 0.0
 
-        # =========================================================
-        # STANDARD FIT (FedAvg / FedProx)
-        # =========================================================
-        if phase == "standard":
-            phase_name = "FedProx" if proximal_mu > 0.0 else "FedAvg"
-            self.logger.info(f"Client {self.cid} [{phase_name}]: Round {round_num}")
+        execution_device, switched = self._enter_execution_device()
+        try:
+            # =========================================================
+            # STANDARD FIT (FedAvg / FedProx)
+            # =========================================================
+            if phase == "standard":
+                phase_name = "FedProx" if proximal_mu > 0.0 else "FedAvg"
+                self.logger.info(f"Client {self.cid} [{phase_name}]: Round {round_num}")
 
-            param_list = (
-                parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
-            )
-            self.set_parameters(param_list)
-            num_steps_trained, metrics = self._perform_training_loop(proximal_mu=proximal_mu)
-            metrics.setdefault("total_steps", float(num_steps_trained))
-            updated_params = self.agent.get_federated_parameters()
-            num_examples = int(self.local_data_profile["local_num_examples"])
-            return updated_params, num_examples, metrics
+                param_list = (
+                    parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
+                )
+                self.set_parameters(param_list)
+                num_steps_trained, metrics = self._perform_training_loop(proximal_mu=proximal_mu)
+                metrics.setdefault("total_steps", float(num_steps_trained))
+                updated_params = self.agent.get_federated_parameters()
+                num_examples = int(self.local_data_profile["local_num_examples"])
+                return updated_params, num_examples, metrics
 
-        # =========================================================
-        # FMRL PHASE A: TRAIN & AUDIT (Calculate H_i and W_i)
-        # =========================================================
-        if phase == "train":
-            self.logger.info(f"Client {self.cid} [FMRL Phase A]: Round {round_num}")
+            # =========================================================
+            # FMRL PHASE A: TRAIN & AUDIT (Calculate H_i and W_i)
+            # =========================================================
+            if phase == "train":
+                self.logger.info(f"Client {self.cid} [FMRL Phase A]: Round {round_num}")
 
-            # A. Update Global Model
-            param_list = (
-                parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
-            )
-            self.set_parameters(param_list)
+                # A. Update Global Model
+                param_list = (
+                    parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
+                )
+                self.set_parameters(param_list)
 
-            # B. Train
-            num_steps_trained, metrics = self._perform_training_loop()
+                # B. Train
+                num_steps_trained, metrics = self._perform_training_loop()
 
-            # C. Generate Audit Metadata
-            self.lifetime_reward += metrics.get("total_reward", 0.0)
+                # C. Generate Audit Metadata
+                self.lifetime_reward += metrics.get("total_reward", 0.0)
 
-            # Stage-one metadata: hidden state plus local utility diagnostics.
-            audit_signals = self._calculate_audit_signals()
+                # Stage-one metadata: hidden state plus local utility diagnostics.
+                audit_signals = self._calculate_audit_signals()
 
-            # D. Cache Everything
-            self.cached_weights = self.agent.get_federated_parameters()
-            self.cached_metrics = metrics.copy()
+                # D. Cache Everything
+                self.cached_weights = self.agent.get_federated_parameters()
+                self.cached_metrics = metrics.copy()
 
-            # Prepare the payload for the server critic
-            self.cached_metrics.update(
-                {
-                    "cid": self.cid,
-                    "total_steps": float(num_steps_trained),
-                    "local_num_examples": self.local_data_profile["local_num_examples"],
-                    "class_entropy": self.local_data_profile["class_entropy"],
-                    "label_coverage": self.local_data_profile["label_coverage"],
-                    "label_histogram": self.local_data_profile["label_histogram"],
-                    "hidden_info": json.dumps(audit_signals["mu_vector"]),
-                    "recent_reward": metrics.get("avg_reward_per_episode", 0.0),
-                    "history_reward": self.lifetime_reward,
-                    "audit_f1": audit_signals["audit_f1"],
-                    "utility_loss": audit_signals["audit_f1"],
-                    "td_error": audit_signals["td_error"],
-                    "kl_div": audit_signals["kl_div"],
-                    "audit_batch_size": float(audit_signals["audit_batch_size"]),
-                }
-            )
+                # Prepare the payload for the server critic
+                self.cached_metrics.update(
+                    {
+                        "cid": self.cid,
+                        "total_steps": float(num_steps_trained),
+                        "local_num_examples": self.local_data_profile["local_num_examples"],
+                        "class_entropy": self.local_data_profile["class_entropy"],
+                        "label_coverage": self.local_data_profile["label_coverage"],
+                        "label_histogram": self.local_data_profile["label_histogram"],
+                        "hidden_info": json.dumps(audit_signals["mu_vector"]),
+                        "recent_reward": metrics.get("avg_reward_per_episode", 0.0),
+                        "history_reward": self.lifetime_reward,
+                        "audit_f1": audit_signals["audit_f1"],
+                        "utility_loss": audit_signals["audit_f1"],
+                        "td_error": audit_signals["td_error"],
+                        "kl_div": audit_signals["kl_div"],
+                        "audit_batch_size": float(audit_signals["audit_batch_size"]),
+                    }
+                )
 
-            self.logger.info(
-                f"   > Client {self.cid}: Caching weights. Signals -> "
-                f"Reward: {metrics.get('avg_reward_per_episode', 0):.2f}, "
-                f"TD: {audit_signals['td_error']:.4f}, "
-                f"KL: {audit_signals['kl_div']:.4f}"
-            )
+                self.logger.info(
+                    f"   > Client {self.cid}: Caching weights. Signals -> "
+                    f"Reward: {metrics.get('avg_reward_per_episode', 0):.2f}, "
+                    f"TD: {audit_signals['td_error']:.4f}, "
+                    f"KL: {audit_signals['kl_div']:.4f}"
+                )
 
-            # E. Return EMPTY weights (Server decides if it wants them later)
-            num_examples = int(self.local_data_profile["local_num_examples"])
-            return [], num_examples, self.cached_metrics
+                # E. Return EMPTY weights (Server decides if it wants them later)
+                num_examples = int(self.local_data_profile["local_num_examples"])
+                return [], num_examples, self.cached_metrics
 
-        # =========================================================
-        # FMRL PHASE B: UPLOAD (If selected by Critic)
-        # =========================================================
-        if phase == "upload":
-            self.logger.info(f"Client {self.cid} [FMRL Phase B]: Selected! Uploading.")
+            # =========================================================
+            # FMRL PHASE B: UPLOAD (If selected by Critic)
+            # =========================================================
+            if phase == "upload":
+                self.logger.info(f"Client {self.cid} [FMRL Phase B]: Selected! Uploading.")
 
-            if not self.cached_weights:
-                self.logger.error("   > Error: No cached weights found!")
-                return self.agent.get_federated_parameters(), 0, {"error": 1.0}
+                if not self.cached_weights:
+                    self.logger.error("   > Error: No cached weights found!")
+                    return self.agent.get_federated_parameters(), 0, {"error": 1.0}
 
-            # Return the weights we cached in Phase A
-            num_examples = int(self.local_data_profile["local_num_examples"])
-            return self.cached_weights, num_examples, self.cached_metrics
+                # Return the weights we cached in Phase A
+                num_examples = int(self.local_data_profile["local_num_examples"])
+                return self.cached_weights, num_examples, self.cached_metrics
 
-        self.logger.warning(f"Unknown Phase: {phase}")
-        return [], 0, {}
+            self.logger.warning(f"Unknown Phase: {phase}")
+            return [], 0, {}
+        finally:
+            self._exit_execution_device(execution_device, switched)
 
     # --- INTERNAL TRAINING HELPER ---
     def _build_local_data_profile(self) -> dict[str, Any]:
@@ -401,41 +440,45 @@ class FlowerClient(fl.client.NumPyClient):
         round_num = config.get("server_round", "?")
         self.logger.info("Client %s: evaluate() called for round %s", self.cid, round_num)
 
-        param_list = (
-            parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
-        )
-        self.set_parameters(param_list)
-
+        execution_device, switched = self._enter_execution_device()
         try:
-            round_index = int(round_num)
-        except (TypeError, ValueError):
-            round_index = 0
+            param_list = (
+                parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
+            )
+            self.set_parameters(param_list)
 
-        metrics: dict[str, float] = {}
-
-        if not self.eval_enabled or self.eval_loader is None:
-            return 0.0, 0, {}
-
-        loss, num_examples, cs_metrics = self._evaluate_closed_set(
-            round_index, prefix="GLOBAL_POST_AGG"
-        )
-        metrics.update(cs_metrics)
-
-        # EVT Logic (Optional)
-        evt_cfg = self.cfg.evt
-        if bool(evt_cfg.enabled):
             try:
-                features = self.env.all_features_s.clone()
-                labels = self.env.all_labels_a_t.clone()
-                evt_metrics = self._fit_evt_and_run_openset_eval(
-                    features, labels, evt_cfg, prefix="GLOBAL"
-                )
-                metrics.update(evt_metrics)
-            except Exception as e:
-                self.logger.error(f"EVT Eval failed: {e}")
+                round_index = int(round_num)
+            except (TypeError, ValueError):
+                round_index = 0
 
-        metrics["cid"] = self.cid
-        return loss, num_examples, metrics
+            metrics: dict[str, float] = {}
+
+            if not self.eval_enabled or self.eval_loader is None:
+                return 0.0, 0, {}
+
+            loss, num_examples, cs_metrics = self._evaluate_closed_set(
+                round_index, prefix="GLOBAL_POST_AGG"
+            )
+            metrics.update(cs_metrics)
+
+            # EVT Logic (Optional)
+            evt_cfg = self.cfg.evt
+            if bool(evt_cfg.enabled):
+                try:
+                    features = self.env.all_features_s.clone()
+                    labels = self.env.all_labels_a_t.clone()
+                    evt_metrics = self._fit_evt_and_run_openset_eval(
+                        features, labels, evt_cfg, prefix="GLOBAL"
+                    )
+                    metrics.update(evt_metrics)
+                except Exception as e:
+                    self.logger.error(f"EVT Eval failed: {e}")
+
+            metrics["cid"] = self.cid
+            return loss, num_examples, metrics
+        finally:
+            self._exit_execution_device(execution_device, switched)
 
     # ------------------------------------------------------------------
     # Closed-set evaluation helpers

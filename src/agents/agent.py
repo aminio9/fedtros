@@ -153,6 +153,35 @@ class Agent:
         self._capture_proximal_reference()
         self.logger.debug("Agent initialized with Double-DQN: %s", self.use_double_dqn)
 
+    def to(self, device: torch.device | str) -> "Agent":
+        """Move the agent and optimizer state to a new device."""
+        target_device = torch.device(device)
+        if target_device == self.device:
+            return self
+
+        self.value_network.to(target_device)
+        if self.generation_net is not None:
+            self.generation_net.to(target_device)
+        self._move_optimizer_state(self.optimizer_prior, target_device)
+        self._move_optimizer_state(self.optimizer_q_rl, target_device)
+        self.device = target_device
+        return self
+
+    @staticmethod
+    def _move_optimizer_state(optimizer: optim.Optimizer, device: torch.device) -> None:
+        for state in optimizer.state.values():
+            for key, value in list(state.items()):
+                if torch.is_tensor(value):
+                    state[key] = value.to(device)
+                elif isinstance(value, list):
+                    state[key] = [
+                        item.to(device) if torch.is_tensor(item) else item for item in value
+                    ]
+                elif isinstance(value, tuple):
+                    state[key] = tuple(
+                        item.to(device) if torch.is_tensor(item) else item for item in value
+                    )
+
     @torch.no_grad()
     def _bootstrap_target(self, next_states_s: torch.Tensor) -> torch.Tensor:
         """
