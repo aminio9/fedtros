@@ -1,10 +1,11 @@
 num_clients: 3
 num_rounds: 100
+resume_from: null
 local_client_epochs: ${training.local_episodes_per_round}
 evaluation_frequency: 1
 client_resources:
-  num_cpus: 1
-  num_gpus: 0.0
+  num_cpus: ${runtime.client_num_cpus}
+  num_gpus: ${runtime.client_num_gpus}
 client_id: 1
 client_data_path: ${dataset.preprocessing.output_dir}/client_${federated.client_id}_train.pt
 server:

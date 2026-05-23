@@ -1,0 +1,10 @@
+# @package _global_
+experiment:
+  method: FedAvg
+federated:
+  strategy:
+    name: fedavg
+    aggregation_strategy: fedavg
+  server:
+    proximal_mu: 0.0
+

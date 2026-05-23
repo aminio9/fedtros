@@ -1,0 +1,10 @@
+name: gpu
+device_prefer: gpu
+allow_cpu_fallback: true
+move_data_to_device: false
+deterministic: true
+benchmark: false
+use_deterministic_algorithms: false
+client_num_cpus: 1
+client_num_gpus: 1.0
+

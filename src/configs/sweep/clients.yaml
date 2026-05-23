@@ -1,0 +1,10 @@
+# @package _global_
+sweep:
+  name: clients
+  description: Client-count scalability sweep for E6.
+
+hydra:
+  sweeper:
+    params:
+      federated.num_clients: 3,10,20,50,100
+

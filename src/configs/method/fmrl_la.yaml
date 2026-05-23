@@ -1,0 +1,10 @@
+# @package _global_
+experiment:
+  method: FMRL_LA
+federated:
+  strategy:
+    name: fmrl_la
+    aggregation_strategy: fmrl_la
+  server:
+    proximal_mu: 0.0
+

@@ -1,0 +1,10 @@
+# @package _global_
+experiment:
+  method: FedProx
+federated:
+  strategy:
+    name: fedprox
+    aggregation_strategy: fedprox
+  server:
+    proximal_mu: 0.01
+

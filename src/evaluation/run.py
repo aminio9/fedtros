@@ -75,11 +75,24 @@ def run_evaluation(
     all_metrics: dict[str, Any] = dict(closed_metrics)
     evt_cfg = cfg.open_set.evt
     if bool(evt_cfg.enabled):
+        calibration_data_path = resolve_path(project_root, cfg.evaluation.validation_data)
+        if calibration_data_path.exists():
+            calibration_features, calibration_labels = load_tensor_dataset(
+                calibration_data_path,
+                map_location="cpu",
+            )
+        else:
+            logger.warning(
+                "EVT calibration data not found at %s; falling back to closed-set test data.",
+                calibration_data_path,
+            )
+            calibration_features, calibration_labels = closed_features, closed_labels
+
         evt_output_dir = output_dir / "evt"
         evt_output_dir.mkdir(parents=True, exist_ok=True)
         evt_models = fit_evt_models(
-            features=closed_features,
-            labels=closed_labels,
+            features=calibration_features,
+            labels=calibration_labels,
             batch_size=int(cfg.evaluation.batch_size),
             evt_cfg=evt_cfg,
             prior_net=agent.prior_net,
@@ -89,8 +102,8 @@ def run_evaluation(
             device=device,
         )
         evt_meta = calibrate_evt_thresholds(
-            features=closed_features,
-            labels=closed_labels,
+            features=calibration_features,
+            labels=calibration_labels,
             batch_size=int(cfg.evaluation.batch_size),
             evt_models=evt_models,
             evt_cfg=evt_cfg,
@@ -119,6 +132,7 @@ def run_evaluation(
             class_names=class_names,
             output_dir=output_dir,
             device=device,
+            evt_cfg=evt_cfg,
             report_to_stdout=bool(cfg.evaluation.report_to_stdout),
         )
         all_metrics.update(open_metrics)

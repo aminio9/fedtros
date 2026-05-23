@@ -1,0 +1,39 @@
+# @package _global_
+experiment:
+  id: E3
+  name: exp3_federated_noniid
+  family: federated_noniid
+  method: FMRL_LA
+  pipeline: full
+  description: Non-IID federated comparison under Dirichlet client partitions.
+  objective: Compare FMRL-LA, FedAvg, and FedProx under matched partitions.
+  primary_metrics:
+    - test/accuracy
+    - test/macro_f1
+    - federated/rounds
+  dependencies:
+    - preprocessing
+    - federated_training
+    - closed_set_evaluation
+  expected_artifacts:
+    - federated_history.csv
+    - federated_round_metrics.csv
+    - communication_metrics.csv
+    - evaluation_metrics.json
+federated:
+  num_clients: 10
+  num_rounds: 100
+dataset:
+  preprocessing:
+    output_dir: ${tracking.run_dir}/processed
+    alpha: 0.1
+    iid: false
+open_set:
+  evt:
+    enabled: false
+evaluation:
+  mode: closed_set
+  export_latent_embeddings: false
+tracking:
+  run_id: e3_${experiment.method}_alpha${dataset.preprocessing.alpha}_seed${seed}
+

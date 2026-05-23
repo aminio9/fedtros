@@ -1,0 +1,5 @@
+name: tiny
+root_dir: outputs
+run_id_template: tiny_${experiment.name}_seed${seed}
+retain_hydra_dir: false
+

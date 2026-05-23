@@ -1,0 +1,18 @@
+# @package _global_
+experiment:
+  id: ALL
+  name: all
+  family: suite
+  method: suite
+  pipeline: suite
+  description: Sequential suite launcher for one representative run of each experiment block.
+  objective: Run E1-E6 through Hydra-composed child commands.
+  suite_commands:
+    - ["experiment=exp1", "+method=fmrl_la", "seed=${seed}", "runtime=${runtime.name}"]
+    - ["experiment=exp2", "+method=fmrl_la", "seed=${seed}", "runtime=${runtime.name}"]
+    - ["experiment=exp3", "+method=fmrl_la", "seed=${seed}", "runtime=${runtime.name}"]
+    - ["experiment=exp4", "+method=fmrl_la", "seed=${seed}", "runtime=${runtime.name}"]
+    - ["experiment=ablation", "+method=fmrl_la", "seed=${seed}", "runtime=${runtime.name}"]
+    - ["experiment=efficiency", "+method=fmrl_la", "seed=${seed}", "runtime=${runtime.name}"]
+tracking:
+  run_id: suite_all_seed${seed}

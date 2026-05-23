@@ -12,6 +12,9 @@ defaults:
   - tracking: local
   - checkpointing: default
   - logging: default
+  - runtime: cpu
+  - output: local
+  - sweep: none
   - experiment: baseline
   - override hydra/job_logging: disabled
   - override hydra/hydra_logging: disabled
@@ -21,12 +24,12 @@ seed: 42
 log_level: ${logging.level}
 
 device:
-  prefer: cpu
-  allow_cpu_fallback: true
-  move_data_to_device: false
-  deterministic: true
-  benchmark: false
-  use_deterministic_algorithms: false
+  prefer: ${runtime.device_prefer}
+  allow_cpu_fallback: ${runtime.allow_cpu_fallback}
+  move_data_to_device: ${runtime.move_data_to_device}
+  deterministic: ${runtime.deterministic}
+  benchmark: ${runtime.benchmark}
+  use_deterministic_algorithms: ${runtime.use_deterministic_algorithms}
 
 run_dir: ${tracking.run_dir}
 runs: []
@@ -35,6 +38,8 @@ checkpoint:
   path: ${checkpointing.latest_checkpoint_path}
 
 paths:
+  known_train_data: ${dataset.preprocessing.output_dir}/known_train.pt
+  validation_data: ${dataset.preprocessing.output_dir}/validation.pt
   closed_set_test_data: ${dataset.preprocessing.output_dir}/shared_closed_set_test.pt
   open_set_test_data: ${dataset.preprocessing.output_dir}/shared_open_set_test.pt
   data_client_template: ${dataset.preprocessing.output_dir}/client_{client_id}_train.pt

@@ -1,0 +1,182 @@
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+from typing import Iterable
+
+import hydra
+from hydra.utils import get_original_cwd
+from omegaconf import DictConfig, OmegaConf
+
+from src.artifacts.suite import build_suite_artifacts
+from src.data import run_preprocessing
+from src.evaluation import run_evaluation
+from src.evaluation.compare import compare_runs
+from src.federated import run_federated_simulation
+from src.plotting import generate_plots
+from src.tracking import attach_to_existing_run, initialize_run
+from src.training import run_training
+from src.utils.config import resolve_path, validate_config
+from src.utils.entrypoints import prepare_run_context
+
+
+def _pipeline(cfg: DictConfig) -> str:
+    value = OmegaConf.select(cfg, "experiment.pipeline", default="full")
+    return str(value or "full").lower()
+
+
+def _suite_commands(cfg: DictConfig) -> Iterable[list[str]]:
+    commands = OmegaConf.select(cfg, "experiment.suite_commands", default=[])
+    for command in commands or []:
+        yield [str(part) for part in command]
+
+
+def _run_suite(cfg: DictConfig) -> None:
+    project_root = Path(get_original_cwd())
+    validate_config(cfg)
+    for command in _suite_commands(cfg):
+        child = [sys.executable, str(project_root / "run.py"), *command]
+        subprocess.run(child, cwd=project_root, check=True)
+
+
+def _run_plot(cfg: DictConfig) -> None:
+    project_root = Path(get_original_cwd())
+    validate_config(cfg)
+    run_dir = attach_to_existing_run(
+        cfg,
+        project_root=project_root,
+        run_dir=cfg.run_dir,
+        script_name="run.py:plot",
+    )
+    generate_plots(cfg, project_root=project_root, run_dir=run_dir)
+
+
+def _run_export(cfg: DictConfig) -> None:
+    project_root = Path(get_original_cwd())
+    if not cfg.runs:
+        raise ValueError("Provide runs=[outputs/run1,outputs/run2,...] for export.")
+    tracker = initialize_run(cfg, project_root=project_root, script_name="run.py:export")
+    compare_runs(cfg, project_root=project_root)
+    generated = build_suite_artifacts(
+        run_dirs=[resolve_path(project_root, run) for run in cfg.runs],
+        output_dir=tracker.run_dir,
+        project_root=project_root,
+    )
+    tracker.write_json(
+        "suite_artifacts.json",
+        {
+            "input_runs": [str(run) for run in cfg.runs],
+            "generated_files": {name: str(path) for name, path in sorted(generated.items())},
+        },
+    )
+
+
+@hydra.main(config_path="src/configs", config_name="config_fl", version_base=None)
+def main(cfg: DictConfig) -> None:
+    pipeline = _pipeline(cfg)
+
+    if pipeline == "suite":
+        _run_suite(cfg)
+        return
+    if pipeline == "plot":
+        _run_plot(cfg)
+        return
+    if pipeline in {"export", "suite_artifacts"}:
+        _run_export(cfg)
+        return
+
+    extra_required = ("evaluation.checkpoint_path",) if pipeline == "evaluate" else ()
+    context = prepare_run_context(
+        cfg,
+        script_name=f"run.py:{pipeline}",
+        extra_required=extra_required,
+        with_device=pipeline not in {"preprocess", "compare"},
+        with_tracker=pipeline not in {"plot"},
+    )
+
+    if pipeline == "preprocess":
+        assert context.tracker is not None
+        metadata = run_preprocessing(cfg, project_root=context.project_root)
+        context.tracker.write_json("preprocess_metadata.json", metadata)
+        return
+
+    if pipeline == "compare":
+        compare_runs(cfg, project_root=context.project_root)
+        return
+
+    if pipeline in {"full", "reproduce"}:
+        assert context.device is not None
+        assert context.tracker is not None
+        run_preprocessing(cfg, project_root=context.project_root)
+        run_federated_simulation(
+            cfg,
+            project_root=context.project_root,
+            tracker=context.tracker,
+        )
+        run_evaluation(
+            cfg,
+            project_root=context.project_root,
+            device=context.device,
+            tracker=context.tracker,
+        )
+        return
+
+    if pipeline == "centralized":
+        assert context.device is not None
+        assert context.tracker is not None
+        run_preprocessing(cfg, project_root=context.project_root)
+        run_training(
+            cfg,
+            project_root=context.project_root,
+            device=context.device,
+            tracker=context.tracker,
+        )
+        run_evaluation(
+            cfg,
+            project_root=context.project_root,
+            device=context.device,
+            tracker=context.tracker,
+        )
+        return
+
+    if pipeline == "train":
+        assert context.device is not None
+        assert context.tracker is not None
+        run_training(
+            cfg,
+            project_root=context.project_root,
+            device=context.device,
+            tracker=context.tracker,
+        )
+        return
+
+    if pipeline == "federated":
+        assert context.tracker is not None
+        run_federated_simulation(
+            cfg,
+            project_root=context.project_root,
+            tracker=context.tracker,
+        )
+        return
+
+    if pipeline == "evaluate":
+        assert context.device is not None
+        assert context.tracker is not None
+        run_evaluation(
+            cfg,
+            project_root=context.project_root,
+            device=context.device,
+            tracker=context.tracker,
+        )
+        return
+
+    raise ValueError(
+        f"Unknown experiment.pipeline={pipeline!r}. "
+        "Use full, centralized, preprocess, train, federated, evaluate, plot, compare, or export."
+    )
+
+
+if __name__ == "__main__":
+    main()
+

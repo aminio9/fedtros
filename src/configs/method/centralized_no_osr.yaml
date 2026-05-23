@@ -1,0 +1,8 @@
+# @package _global_
+experiment:
+  method: Centralized_No_OSR
+  pipeline: centralized
+open_set:
+  evt:
+    enabled: false
+

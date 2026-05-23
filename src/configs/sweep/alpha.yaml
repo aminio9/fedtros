@@ -1,0 +1,11 @@
+# @package _global_
+sweep:
+  name: alpha
+  description: Dirichlet heterogeneity sweep for the selected experiment.
+
+hydra:
+  sweeper:
+    params:
+      dataset.preprocessing.alpha: 0.1,0.5,1.0,10.0
+      dataset.preprocessing.iid: false
+
