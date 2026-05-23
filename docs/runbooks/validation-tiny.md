@@ -19,6 +19,7 @@ python run.py experiment=validation runtime=tiny seed=42
 
 ```powershell
 python run.py experiment=validation seed=42
+python scripts/experiments/run_validation_tiny.ps1
 python scripts/experiments/validate_configs.ps1
 ```
 
