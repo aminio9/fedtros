@@ -16,7 +16,8 @@ Verify that the unified model preserves known-class performance on B-NAT.
 Default run-local paths:
 
 - `dataset.preprocessing.output_dir=${tracking.run_dir}/processed`
-- `tracking.run_id=e1_${experiment.method}_alpha${dataset.preprocessing.alpha}_seed${seed}`
+- `dataset.preprocessing.iid=true`
+- `tracking.run_id=e1_${experiment.method}_iid_seed${seed}`
 
 ## Override Examples
 
@@ -75,6 +76,7 @@ python scripts/experiments/e1_closed_set.ps1
 ## Validation
 
 - Confirm `resolved_config.yaml` records the chosen method overlay.
+- Confirm `resolved_config.yaml` records `dataset.preprocessing.iid: true`.
 - Confirm `evaluation_metrics.json` contains closed-set metrics.
 - Confirm the run-local `processed/` directory exists.
 
@@ -84,4 +86,3 @@ python scripts/experiments/e1_closed_set.ps1
 - If the run reuses the wrong output directory, inspect `tracking.run_id`.
 - If the checkpoint is missing, check `checkpointing.save_best` and
   `checkpointing.save_latest`.
-
