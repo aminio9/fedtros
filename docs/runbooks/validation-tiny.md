@@ -6,7 +6,7 @@ Check the full pipeline with a tiny client/round/episode budget.
 
 ## Hydra Config Used
 
-`experiment=validation`
+`experiment=validation` with `runtime=tiny`
 
 ## Override Examples
 
