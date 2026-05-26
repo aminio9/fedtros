@@ -1,12 +1,12 @@
 name: gpu
 device_prefer: gpu
-allow_cpu_fallback: true
+allow_cpu_fallback: false
 move_data_to_device: false
 deterministic: true
-benchmark: false
+benchmark: true
 use_deterministic_algorithms: false
 client_num_cpus: 1
 client_num_gpus: 1.0
 simulation_gpu_batches:
-  enabled: false
+  enabled: true
   batch_size: 5

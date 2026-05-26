@@ -30,13 +30,12 @@ logger = logging.getLogger(__name__)
 def _central_train_path(cfg: DictConfig, project_root: Path) -> Path:
     """Use the full known-train tensor for centralized baselines."""
     known_train_path = resolve_path(project_root, cfg.paths.known_train_data)
-    if known_train_path.exists():
-        return known_train_path
-    logger.warning(
-        "Centralized known-train tensor not found at %s; falling back to client_1 shard.",
-        known_train_path,
-    )
-    return resolve_path(project_root, cfg.paths.data_client_1)
+    if not known_train_path.exists():
+        raise FileNotFoundError(
+            f"Centralized known-train tensor not found: {known_train_path}. "
+            "Run preprocessing first."
+        )
+    return known_train_path
 
 
 def run_training(
@@ -47,10 +46,6 @@ def run_training(
     tracker: LocalRunTracker,
 ) -> dict[str, Any]:
     train_data_path = _central_train_path(cfg, project_root)
-    if not train_data_path.exists():
-        raise FileNotFoundError(
-            f"Training tensor not found: {train_data_path}. Run scripts/preprocess.py first."
-        )
 
     env = BlockchainIntrusionEnv(
         processed_data_path=str(train_data_path),

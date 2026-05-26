@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +47,7 @@ def prepare_run_context(
         benchmark=bool(cfg.device.benchmark),
         use_deterministic_algorithms=bool(cfg.device.use_deterministic_algorithms),
     )
+    logging.getLogger(__name__).info("Resolved device for %s: %s", script_name, device)
     if tracker is not None:
         tracker.metadata["seed_settings"] = seed_settings
         tracker.save_metadata()

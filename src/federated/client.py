@@ -70,6 +70,14 @@ class FlowerClient(fl.client.NumPyClient):
         self._move_data_to_device = bool(cfg.device.move_data_to_device)
 
         self.logger.info("Client %s: Initializing...", cid)
+        self.logger.info(
+            "Client %s device context | init_device=%s | execution_device=%s | rest_device=%s | batching=%s",
+            cid,
+            self.device,
+            self._simulation_execution_device,
+            self._simulation_rest_device,
+            self._simulation_gpu_batching,
+        )
         self.model_factory = OpenSetQChainModelFactory(cfg.model)
 
         # NON-IID FIX: Pass global number of actions to Environment
@@ -147,6 +155,12 @@ class FlowerClient(fl.client.NumPyClient):
         target_device = torch.device(device)
         if target_device == self.device:
             return
+        self.logger.info(
+            "Client %s device switch | from=%s | to=%s",
+            self.cid,
+            self.device,
+            target_device,
+        )
         self.agent.to(target_device)
         self.policy.device = target_device
         self.device = target_device
@@ -158,6 +172,7 @@ class FlowerClient(fl.client.NumPyClient):
         switched = target_device != self.device
         if switched:
             self._switch_runtime_device(target_device)
+        self.logger.info("Client %s active execution device: %s", self.cid, target_device)
         return target_device, switched
 
     def _exit_execution_device(self, target_device: torch.device, switched: bool) -> None:
@@ -166,6 +181,11 @@ class FlowerClient(fl.client.NumPyClient):
         self._switch_runtime_device(self._simulation_rest_device)
         if target_device.type == "cuda" and torch.cuda.is_available():
             torch.cuda.empty_cache()
+        self.logger.info(
+            "Client %s released execution device | restored_device=%s",
+            self.cid,
+            self._simulation_rest_device,
+        )
 
     def get_parameters(self, config: dict[str, Any]) -> list[np.ndarray]:
         _ = config

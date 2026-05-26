@@ -76,17 +76,15 @@ def run_evaluation(
     evt_cfg = cfg.open_set.evt
     if bool(evt_cfg.enabled):
         calibration_data_path = resolve_path(project_root, cfg.evaluation.validation_data)
-        if calibration_data_path.exists():
-            calibration_features, calibration_labels = load_tensor_dataset(
-                calibration_data_path,
-                map_location="cpu",
+        if not calibration_data_path.exists():
+            raise FileNotFoundError(
+                "EVT calibration requires validation-only data. Missing: "
+                f"{calibration_data_path}"
             )
-        else:
-            logger.warning(
-                "EVT calibration data not found at %s; falling back to closed-set test data.",
-                calibration_data_path,
-            )
-            calibration_features, calibration_labels = closed_features, closed_labels
+        calibration_features, calibration_labels = load_tensor_dataset(
+            calibration_data_path,
+            map_location="cpu",
+        )
 
         evt_output_dir = output_dir / "evt"
         evt_output_dir.mkdir(parents=True, exist_ok=True)

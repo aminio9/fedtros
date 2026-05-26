@@ -54,6 +54,17 @@ def test_experiment_config_uses_run_local_processed_dir():
     assert cfg.evaluation.mode == "closed_set"
 
 
+def test_open_set_experiment_uses_iid_run_local_processed_dir():
+    with initialize_config_dir(version_base=None, config_dir=_config_dir()):
+        cfg = compose(config_name="config_fl", overrides=["experiment=exp2"])
+
+    assert cfg.experiment.pipeline == "full"
+    assert cfg.dataset.preprocessing.output_dir == "outputs/e2_FMRL_LA_iid_seed42/processed"
+    assert cfg.dataset.preprocessing.iid is True
+    assert cfg.open_set.evt.enabled is True
+    assert cfg.evaluation.mode == "open_set"
+
+
 def test_method_overlay_updates_strategy_and_method():
     with initialize_config_dir(version_base=None, config_dir=_config_dir()):
         cfg = compose(config_name="config_fl", overrides=["experiment=exp3", "+method=fedavg"])
@@ -77,4 +88,14 @@ def test_runtime_gpu_overlay_updates_device_preference():
         cfg = compose(config_name="config_fl", overrides=["experiment=ablation", "runtime=gpu"])
 
     assert cfg.device.prefer == "gpu"
+    assert cfg.device.allow_cpu_fallback is False
     assert cfg.runtime.client_num_gpus == 1.0
+    assert cfg.runtime.simulation_gpu_batches.enabled is True
+
+
+def test_validation_rejects_cpu_fallback():
+    with initialize_config_dir(version_base=None, config_dir=_config_dir()):
+        cfg = compose(config_name="config_fl", overrides=["runtime.allow_cpu_fallback=true"])
+
+    with pytest.raises(ValueError, match=r"Automatic CPU fallback is disabled"):
+        validate_config(cfg)

@@ -135,6 +135,14 @@ class LocalRunTracker:
                 "python": platform.python_version(),
                 "platform": platform.platform(),
                 "torch": torch.__version__,
+                "torch_cuda_version": torch.version.cuda,
+                "cuda_available": bool(torch.cuda.is_available()),
+                "cuda_device_count": int(torch.cuda.device_count()) if torch.cuda.is_available() else 0,
+                "cuda_device_name": (
+                    torch.cuda.get_device_name(torch.cuda.current_device())
+                    if torch.cuda.is_available()
+                    else None
+                ),
                 "dataset": str(self.cfg.dataset.name),
                 "model": str(self.cfg.model.name),
                 "method": str(self.cfg.experiment.method),

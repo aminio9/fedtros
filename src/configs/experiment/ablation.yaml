@@ -6,7 +6,7 @@ experiment:
   method: FMRL_LA
   pipeline: full
   description: Module ablation and sensitivity checks.
-  objective: Isolate EVT, generator, federation strategy, and heterogeneity effects.
+  objective: Isolate EVT, generator, client selection, federation strategy, and heterogeneity effects.
   primary_metrics:
     - test/macro_f1
     - open_set/auroc
@@ -18,6 +18,7 @@ experiment:
   expected_artifacts:
     - evaluation_metrics.json
     - open_set_metrics.json
+    - communication_metrics.csv
     - ablation_metrics.csv
 federated:
   num_clients: 10
@@ -35,4 +36,3 @@ evaluation:
   export_latent_embeddings: true
 tracking:
   run_id: e5_${experiment.method}_alpha${dataset.preprocessing.alpha}_seed${seed}
-

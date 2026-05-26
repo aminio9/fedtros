@@ -2,7 +2,10 @@
 experiment:
   method: Centralized_No_OSR
   pipeline: centralized
+federated:
+  strategy:
+    name: centralized
+    aggregation_strategy: centralized
 open_set:
   evt:
     enabled: false
-

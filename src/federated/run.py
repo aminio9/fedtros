@@ -205,6 +205,11 @@ def run_federated_simulation(
     cfg = _resolve_runtime_config(cfg)
     gpu_batching_enabled = _simulation_gpu_batches_enabled(cfg)
     gpu_batch_size = _simulation_gpu_batch_size(cfg) if gpu_batching_enabled else 1
+    if gpu_batching_enabled and not torch.cuda.is_available():
+        raise RuntimeError(
+            "runtime.simulation_gpu_batches.enabled=true but CUDA is unavailable. "
+            "Disable GPU batching only for explicit CPU validation runs."
+        )
     simulation_execution_device = (
         torch.device("cuda")
         if gpu_batching_enabled and torch.cuda.is_available()
@@ -228,18 +233,17 @@ def run_federated_simulation(
         use_deterministic_algorithms=bool(cfg.device.use_deterministic_algorithms),
     )
     logger.info(
-        "Starting Flower simulation | clients=%d | logical_rounds=%d | flower_rounds=%d | strategy=%s",
+        "Starting Flower simulation | clients=%d | logical_rounds=%d | flower_rounds=%d | strategy=%s | simulation_device=%s | gpu_batching=%s | batch_size=%d",
         int(cfg.federated.num_clients),
         int(cfg.federated.num_rounds),
         get_effective_num_rounds(cfg),
         str(cfg.federated.strategy.name),
+        simulation_execution_device,
+        gpu_batching_enabled,
+        gpu_batch_size,
     )
     server = Server(client_manager=client_manager, strategy=get_strategy(cfg))
     if gpu_batching_enabled:
-        if simulation_execution_device.type != "cuda":
-            logger.warning(
-                "GPU batch mode is enabled, but CUDA is unavailable. Falling back to CPU workers."
-            )
         server.set_max_workers(gpu_batch_size)
         logger.info(
             "Local Flower simulation worker batching enabled | batch_size=%d | execution_device=%s",
@@ -295,7 +299,9 @@ def run_federated_server(
     *,
     device: torch.device | None = None,
 ) -> None:
-    run_server(cfg, device=device if device is not None else resolve_device_from_config(cfg))
+    resolved_device = device if device is not None else resolve_device_from_config(cfg)
+    logger.info("Launching standalone Flower server | requested_device=%s", resolved_device)
+    run_server(cfg, device=resolved_device)
 
 
 def run_federated_client(
@@ -308,11 +314,18 @@ def run_federated_client(
     data_path = resolve_path(project_root, cfg.federated.client_data_path)
     if not data_path.exists():
         raise FileNotFoundError(f"Client tensor not found: {data_path}")
+    resolved_device = device if device is not None else resolve_device_from_config(cfg)
+    logger.info(
+        "Launching standalone Flower client | client_id=%d | requested_device=%s | data_path=%s",
+        client_id,
+        resolved_device,
+        data_path,
+    )
     client = FlowerClient(
         cid=str(client_id),
         cfg=cfg,
         data_path=str(data_path),
-        device=device if device is not None else resolve_device_from_config(cfg),
+        device=resolved_device,
     )
     fl.client.start_client(
         server_address=str(cfg.federated.server.address),

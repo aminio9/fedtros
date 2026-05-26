@@ -8,6 +8,8 @@ Run from the repository root with PowerShell.
 - `run_full_suite.ps1`: sequential batch runner for E1-E6.
 - `multirun_main_methods.ps1`: Hydra multirun over FedAvg, FedProx, and FMRL-LA for E3.
 - `multirun_alpha_seed_sensitivity.ps1`: Hydra multirun over seeds and alpha values for E4.
+- `e5_ablation.ps1`: full ablation matrix, including no-EVT, no-generator, no-selection, FedAvg, and FedProx variants.
+- `e6_efficiency_scalability.ps1`: client-count and round-budget sweep for FedAvg and FMRL-LA.
 - `resume_commands.ps1`: resume federated or centralized training from a checkpoint.
 - `evaluate_commands.ps1`: regenerate evaluation and plots from a checkpoint.
 - `export_results.ps1`: export suite-level CSVs and plots from completed run directories.

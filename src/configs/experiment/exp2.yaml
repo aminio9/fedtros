@@ -29,8 +29,8 @@ federated:
 dataset:
   preprocessing:
     output_dir: ${tracking.run_dir}/processed
-    alpha: 100.0
-    iid: false
+    alpha: 1.0
+    iid: true
 open_set:
   evt:
     enabled: true
@@ -38,5 +38,4 @@ evaluation:
   mode: open_set
   export_latent_embeddings: true
 tracking:
-  run_id: e2_${experiment.method}_alpha${dataset.preprocessing.alpha}_seed${seed}
-
+  run_id: e2_${experiment.method}_iid_seed${seed}

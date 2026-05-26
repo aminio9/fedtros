@@ -24,8 +24,6 @@ from omegaconf import DictConfig, OmegaConf
 from src.agents.agent import Agent
 from src.checkpointing.checkpoints import load_agent_checkpoint
 from src.models.models import OpenSetQChainModelFactory
-from src.utils.utils import get_device
-
 logger = logging.getLogger("Server")
 
 EPS = 1e-8
@@ -76,7 +74,12 @@ def init_global_agent_ref(cfg: DictConfig, device: torch.device):
         model_factory = OpenSetQChainModelFactory(cfg.model)
         # We don't need the optimizer or replay buffer on the server, just the nets
         GLOBAL_AGENT_REF = Agent(model_factory, cfg.training, device)
-        logger.info("Global Agent reference initialized for model saving.")
+        logger.info(
+            "Server model reference initialized | device=%s | strategy=%s | clients=%s",
+            device,
+            str(cfg.strategy.name),
+            int(cfg.federated.num_clients),
+        )
     except Exception as e:
         logger.error(f"Failed to initialize Global Agent reference: {e}")
 
@@ -236,7 +239,7 @@ class FMRLLearnableAggregationStrategy(FedAvg):
         from .server_models import AsyncCritic, CentralizedAggregator
 
         self.cfg = cfg
-        self.device = get_device()
+        self.device = torch.device("cpu")
         self.latent_dim = int(cfg.model.latent_dim)
         self.max_agents = int(cfg.strategy.max_agents)
         self.scalar_dim = len(AUDIT_SCALAR_KEYS)
@@ -751,7 +754,14 @@ def aggregate_evaluate_metrics(
 
 def get_strategy(cfg: DictConfig) -> Strategy:
     strat_name = str(cfg.strategy.name).lower()
-    device = get_device()
+    device = torch.device("cpu")
+    logger.info(
+        "Server strategy setup | strategy=%s | server_device=%s | logical_rounds=%d | flower_rounds=%d",
+        strat_name,
+        device,
+        int(cfg.server.num_rounds),
+        get_effective_num_rounds(cfg),
+    )
 
     args = dict(
         fraction_fit=cfg.server.fraction_fit,
@@ -791,15 +801,17 @@ def get_effective_num_rounds(cfg: DictConfig) -> int:
 
 def run_server(cfg: DictConfig, device: torch.device | None = None) -> None:
     # Initialize the global agent reference for saving capabilities
-    if device is None:
-        device = get_device()
-    init_global_agent_ref(cfg, device)
+    requested_device = device
+    server_device = torch.device("cpu")
+    init_global_agent_ref(cfg, server_device)
 
     strategy = get_strategy(cfg)
 
     logger.info(
-        "Starting server at %s for %s Flower rounds (%s logical rounds).",
+        "Starting server at %s | requested_device=%s | effective_device=%s | flower_rounds=%s | logical_rounds=%s",
         cfg.server.address,
+        requested_device,
+        server_device,
         get_effective_num_rounds(cfg),
         cfg.server.num_rounds,
     )

@@ -7,7 +7,7 @@ seed: 42
 
 device:
   prefer: cpu
-  allow_cpu_fallback: true
+  allow_cpu_fallback: false
   move_data_to_device: false
   deterministic: true
   benchmark: false

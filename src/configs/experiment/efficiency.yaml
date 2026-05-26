@@ -35,5 +35,4 @@ evaluation:
   mode: closed_set
   export_latent_embeddings: false
 tracking:
-  run_id: e6_${experiment.method}_clients${federated.num_clients}_seed${seed}
-
+  run_id: e6_${experiment.method}_clients${federated.num_clients}_rounds${federated.num_rounds}_seed${seed}

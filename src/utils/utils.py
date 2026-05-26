@@ -91,7 +91,7 @@ def _normalize_device_preference(prefer: str | None) -> str | None:
 def get_device(
     prefer: str | None = None,
     *,
-    allow_cpu_fallback: bool = True,
+    allow_cpu_fallback: bool = False,
     cache: bool = True,
     logger: logging.Logger | None = None,
 ) -> torch.device:
@@ -100,7 +100,7 @@ def get_device(
 
     - Honors env vars: FEDOSQ_DEVICE / DEVICE / TORCH_DEVICE
     - Caches the first resolved device so every module shares it
-    - Optionally refuses to fall back to CPU if CUDA is requested
+    - Fails fast instead of silently falling back from CUDA to CPU
     """
     global _GLOBAL_DEVICE
     active_logger = logger or logging.getLogger(__name__)
@@ -125,7 +125,7 @@ def get_device(
     elif prefer == "cuda":
         if torch.cuda.is_available():
             device = torch.device("cuda")
-            active_logger.info("Using CUDA device (torch %s)", torch.__version__)
+            _log_cuda_device(active_logger, device)
         # elif torch_directml is not None:
         #     logger.warning("CUDA requested but unavailable; trying DirectML as fallback.")
         #     device = _resolve_directml_device(logger, allow_cpu_fallback)
@@ -134,18 +134,25 @@ def get_device(
             device = torch.device("cpu")
         else:
             raise RuntimeError(
-                "CUDA requested but not available. Set allow_cpu_fallback=True to fall back to CPU."
+                "CUDA requested but not available. Install a CUDA-enabled PyTorch build, "
+                "check NVIDIA drivers, or run with an explicit CPU runtime only for non-training jobs."
             )
     elif prefer == "directml":
         device = _resolve_directml_device(active_logger, allow_cpu_fallback)
     else:
         if torch.cuda.is_available():
             device = torch.device("cuda")
-            active_logger.info("Auto-selected CUDA device (torch %s)", torch.__version__)
+            _log_cuda_device(active_logger, device)
         # elif torch_directml is not None:
         #     device = _resolve_directml_device(logger, allow_cpu_fallback)
         else:
-            device = torch.device("cpu")
+            if allow_cpu_fallback:
+                active_logger.warning("No accelerator detected; falling back to CPU.")
+                device = torch.device("cpu")
+            else:
+                raise RuntimeError(
+                    "No CUDA device detected and no explicit CPU runtime was requested."
+                )
 
     if cache:
         _GLOBAL_DEVICE = device
@@ -197,6 +204,19 @@ def _resolve_directml_device(logger: logging.Logger, allow_cpu_fallback: bool) -
         raise RuntimeError(f"DirectML requested but failed to initialize: {exc}") from exc
 
 
+def _log_cuda_device(logger: logging.Logger, device: torch.device) -> None:
+    index = device.index if device.index is not None else torch.cuda.current_device()
+    props = torch.cuda.get_device_properties(index)
+    logger.info(
+        "Using CUDA device %d: %s | torch=%s | cuda=%s | total_memory_gb=%.2f",
+        index,
+        props.name,
+        torch.__version__,
+        torch.version.cuda,
+        props.total_memory / (1024**3),
+    )
+
+
 def set_device(device: str | torch.device) -> torch.device:
     """Force-set the global device cache (useful for entrypoints/tests)."""
     global _GLOBAL_DEVICE
@@ -212,7 +232,7 @@ def resolve_device_from_config(cfg: object | None) -> torch.device:
     """
     device_cfg = getattr(cfg, "device", None)
     prefer = None
-    allow_cpu_fallback = True
+    allow_cpu_fallback = False
     if device_cfg is not None:
         prefer = getattr(device_cfg, "prefer", None) or getattr(device_cfg, "preference", None)
         allow_cpu_fallback = bool(getattr(device_cfg, "allow_cpu_fallback", True))
