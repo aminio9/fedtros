@@ -2,11 +2,11 @@
 
 ## Objective
 
-Quantify communication cost, runtime proxy, and accuracy versus client count.
+Quantify communication cost, runtime proxy, and accuracy versus client count and round budget.
 
 ## Hydra Config Used
 
-`experiment=efficiency` with client-count overrides or the client sweep preset.
+`experiment=efficiency` with client-count and round-budget overrides or the sweep preset.
 
 ## Override Examples
 
@@ -14,6 +14,7 @@ Quantify communication cost, runtime proxy, and accuracy versus client count.
 python run.py experiment=efficiency +method=fmrl_la seed=42 federated.num_clients=3
 python run.py experiment=efficiency +method=fmrl_la seed=42 federated.num_clients=10
 python run.py experiment=efficiency +method=fedavg seed=42 federated.num_clients=3
+python run.py experiment=efficiency +method=fedavg seed=42 federated.num_clients=3 federated.num_rounds=50
 ```
 
 ## Execution Commands
@@ -60,6 +61,7 @@ python scripts/experiments/e6_efficiency_scalability.ps1
 ## Validation
 
 - Confirm the client count sweep uses the same seed.
+- Confirm the round sweep uses the same seed.
 - Confirm cumulative MB increases monotonically across rounds.
 - Confirm the suite exporter can stage `communication_metrics.csv`.
 
@@ -68,4 +70,3 @@ python scripts/experiments/e6_efficiency_scalability.ps1
 - If communication metrics are empty, confirm a checkpoint exists.
 - If client counts do not change, inspect the Hydra override syntax.
 - If the run takes too long on GPU, override `runtime=cpu` for validation.
-

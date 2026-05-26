@@ -26,7 +26,7 @@ src/configs/config.yaml
   runtime: runtime/cpu.yaml | runtime/gpu.yaml | runtime/directml.yaml | runtime/tiny.yaml
   output: output/local.yaml | output/tiny.yaml
   sweep: sweep/none.yaml | sweep/seeds.yaml | sweep/alpha.yaml | sweep/clients.yaml
-  experiment: experiment/baseline.yaml | experiment/exp1.yaml ... experiment/all.yaml
+  experiment: experiment/baseline.yaml | experiment/validation.yaml | experiment/exp1.yaml ... experiment/all.yaml
   optional overlays: method/*, evaluation/*, CLI overrides
 ```
 
@@ -50,6 +50,7 @@ Single run:
 python run.py experiment=exp1
 python run.py experiment=exp2 dataset=bnat model=transformer
 python run.py experiment=ablation runtime=gpu
+python run.py experiment=validation runtime=tiny
 ```
 
 Hydra multirun:
@@ -159,4 +160,3 @@ Suite exports are built from saved run directories only:
 python run.py experiment.pipeline=export runs='[outputs/run1,outputs/run2]'
 python scripts/build_suite_artifacts.py runs='[outputs/run1,outputs/run2]'
 ```
-

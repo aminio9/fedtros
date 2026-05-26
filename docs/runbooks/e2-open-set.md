@@ -6,7 +6,7 @@ Measure EVT-based unknown rejection on B-NAT with `FoT` as the held-out attack.
 
 ## Hydra Config Used
 
-`experiment=exp2` with `open_set.evt.enabled=true` and the chosen method overlay.
+`experiment=exp2` with `dataset.preprocessing.iid=true`, `open_set.evt.enabled=true`, and the chosen method overlay.
 
 ## Override Examples
 
@@ -20,7 +20,9 @@ python run.py experiment=exp2 +method=centralized_osr seed=42
 
 ```powershell
 python run.py experiment=exp2 +method=fmrl_la seed=42
-python run.py experiment=exp2 +method=centralized_osr seed=42
+python run.py experiment=exp2 +method=fmrl_la open_set.evt.enabled=false experiment.method=ClosedSet_No_EVT tracking.run_id=e2_no_evt_seed42 seed=42
+python run.py experiment=exp2 +method=centralized_osr tracking.run_id=e2_central_osr_seed42 seed=42
+python run.py experiment=exp2 +method=centralized_no_osr tracking.run_id=e2_central_no_osr_seed42 seed=42
 python scripts/experiments/e2_open_set.ps1
 ```
 
@@ -69,7 +71,6 @@ python scripts/experiments/e2_open_set.ps1
 
 ## Troubleshooting
 
-- If EVT calibration falls back to test data, check `validation.pt`.
+- If the run errors during EVT calibration, check that `validation.pt` exists.
 - If unknown rejection never triggers, inspect `open_set.evt.decision_threshold`.
 - If latent export is missing, check `evaluation.export_latent_embeddings`.
-

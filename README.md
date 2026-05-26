@@ -1,6 +1,7 @@
-# Cooperative Federated MARL for Open-Set Blockchain Traffics Intrusion Detection
+# cf_marlos
+Cooperative Federated Multi-Agent Reinforcement Learning with Learnable Aggregation for Open-Set Blockchain Intrusion Detection
 
-This repository implements a local, reproducible research pipeline for federated Blockchain Traffics intrusion detection with cooperative multi-agent reinforcement learning, Double Q-learning, EVT open-set recognition, and Flower-based federated training.
+This repository implements the `cf_marlos` research pipeline for cooperative federated multi-agent reinforcement learning, Double Q-learning, EVT open-set recognition, and Flower-based federated training on B-NAT blockchain traffic.
 
 ## Project Layout
 
@@ -54,14 +55,14 @@ poetry run python run.py experiment=all
 Federated simulation:
 
 ```bash
-poetry run python scripts/federated_train.py federated.num_clients=10 federated.num_rounds=50
+poetry run python scripts/federated_train.py runtime=cpu federated.num_clients=10 federated.num_rounds=50
 ```
 
 Manual Flower server/client:
 
 ```bash
-poetry run python scripts/federated_server.py
-poetry run python scripts/federated_client.py federated.client_id=1 federated.client_data_path=data/processed/client_1_train.pt
+poetry run python scripts/federated_server.py runtime=cpu
+poetry run python scripts/federated_client.py runtime=cpu federated.client_id=1 federated.client_data_path=data/processed/client_1_train.pt
 ```
 
 Evaluation:
@@ -109,7 +110,7 @@ Experiment command files and batch scripts live in `scripts/experiments/`.
 Smoke test:
 
 ```bash
-poetry run python scripts/smoke_test.py experiment=smoke device.prefer=cpu
+poetry run python scripts/smoke_test.py experiment=smoke runtime=tiny
 ```
 
 ## Outputs

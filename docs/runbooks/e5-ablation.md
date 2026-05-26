@@ -2,7 +2,7 @@
 
 ## Objective
 
-Isolate the contribution of EVT, generator training, and federated strategy.
+Isolate the contribution of EVT, generator training, client selection, and federated strategy.
 
 ## Hydra Config Used
 
@@ -10,7 +10,9 @@ Isolate the contribution of EVT, generator training, and federated strategy.
 
 - `training.generator.enabled=false`
 - `open_set.evt.enabled=false`
+- `federated.strategy.utility_threshold=-1.0`
 - `+method=fedavg`
+- `+method=fedprox`
 - `+method=centralized_osr`
 - `+method=centralized_no_osr`
 
@@ -26,10 +28,13 @@ python run.py experiment=ablation +method=fedavg open_set.evt.enabled=false seed
 
 ```powershell
 python run.py experiment=ablation +method=fmrl_la seed=42
-python run.py experiment=ablation +method=fmrl_la training.generator.enabled=false seed=42
-python run.py experiment=ablation +method=fedavg open_set.evt.enabled=false seed=42
-python run.py experiment=ablation +method=centralized_osr seed=42
-python run.py experiment=ablation +method=centralized_no_osr seed=42
+python run.py experiment=ablation +method=fmrl_la open_set.evt.enabled=false experiment.method=No_EVT tracking.run_id=ablation_no_evt_seed42 seed=42
+python run.py experiment=ablation +method=fmrl_la training.generator.enabled=false experiment.method=No_Generator tracking.run_id=ablation_no_generator_seed42 seed=42
+python run.py experiment=ablation +method=fmrl_la federated.strategy.utility_threshold=-1.0 experiment.method=No_Selection tracking.run_id=ablation_no_selection_seed42 seed=42
+python run.py experiment=ablation +method=fedavg open_set.evt.enabled=false tracking.run_id=ablation_fedavg_no_osr_seed42 seed=42
+python run.py experiment=ablation +method=fedprox open_set.evt.enabled=false tracking.run_id=ablation_fedprox_no_osr_seed42 seed=42
+python run.py experiment=ablation +method=centralized_osr tracking.run_id=ablation_central_osr_seed42 seed=42
+python run.py experiment=ablation +method=centralized_no_osr tracking.run_id=ablation_central_no_osr_seed42 seed=42
 python scripts/experiments/e5_ablation.ps1
 ```
 
@@ -37,7 +42,7 @@ python scripts/experiments/e5_ablation.ps1
 
 - `evaluation_metrics.json`
 - `open_set_metrics.json`
-- `ablation_metrics.csv`
+- `ablation_metrics.csv` from the suite export
 - `communication_metrics.csv`
 
 ## Checkpoints
@@ -75,6 +80,6 @@ python scripts/experiments/e5_ablation.ps1
 ## Troubleshooting
 
 - If `training.generator.enabled=false` is ignored, check the overlay order.
+- If the selection ablation still filters clients, check `federated.strategy.utility_threshold`.
 - If the centralized baseline still uses OSR, inspect `open_set.evt.enabled`.
 - If the run id collides, override `tracking.run_id`.
-

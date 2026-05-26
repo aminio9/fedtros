@@ -31,6 +31,6 @@ Every figure and metric should be traceable to:
 ## Recommended Reproduction
 
 ```bash
-poetry run python scripts/reproduce_experiment.py tracking.run_id=fmrl_alpha01_seed42 seed=42 federated.num_clients=10 federated.num_rounds=50 dataset.preprocessing.alpha=0.1 dataset.preprocessing.iid=false
+poetry run python scripts/reproduce_experiment.py tracking.run_id=fmrl_alpha01_seed42 seed=42 runtime=cpu federated.num_clients=10 federated.num_rounds=50 dataset.preprocessing.alpha=0.1 dataset.preprocessing.iid=false dataset.preprocessing.output_dir=outputs/fmrl_alpha01_seed42/processed
 poetry run python scripts/plot.py run_dir=outputs/fmrl_alpha01_seed42
 ```

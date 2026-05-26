@@ -13,7 +13,7 @@ Metrics include `test/loss`, `test/accuracy`, balanced accuracy, macro precision
 
 ## Open-Set / EVT
 
-Open-set evaluation fits EVT models on known calibration samples, calibrates a threshold using validation/known samples, and evaluates samples with unknown labels encoded as `-1`.
+Open-set evaluation fits EVT models on known calibration samples from `validation.pt`, calibrates a threshold on that validation split, and evaluates samples with unknown labels encoded as `-1`.
 
 Outputs:
 

@@ -1,8 +1,8 @@
-# Research and Engineering Documentation Package
+# cf_marlos Research and Engineering Documentation Package
 
-This document consolidates the current research method, system design, algorithms, implementation details, and validation status for the repository snapshot under `D:\Research\cf_marlos`.
+This document consolidates the current research method, system design, algorithms, implementation details, and validation status for the `cf_marlos` repository snapshot under `D:\Research\cf_marlos`.
 
-[ASSUMPTION] This report is the canonical narrative for the current code base and supersedes the more fragmented supporting notes in `docs/evaluation.md`, `docs/federated-learning.md`, `docs/fmrlla-adaptation.md`, `docs/experiment-plan.md`, `docs/q1-experiment-and-results-demo.md`, `docs/reproducibility.md`, `docs/checkpoints.md`, `docs/logging.md`, `docs/plots.md`, and `docs/tiny-experiment-validation.md`.
+[ASSUMPTION] This report is the canonical narrative for the current code base and supersedes the more fragmented supporting notes in `docs/evaluation.md`, `docs/federated-learning.md`, `docs/cf_marlos-fmrlla-adaptation.md`, `docs/cf_marlos-experiment-plan.md`, `docs/reproducibility.md`, `docs/checkpoints.md`, `docs/logging.md`, `docs/plots.md`, `docs/hydra-experiment-execution.md`, and the `docs/runbooks/` files.
 
 [TODO] Final manuscript claims still require full benchmark runs, cross-seed aggregation, and the external dataset pipeline described in the runbook.
 
@@ -35,14 +35,15 @@ Supporting documentation reviewed:
 - `README.md`
 - `docs/evaluation.md`
 - `docs/federated-learning.md`
-- `docs/fmrlla-adaptation.md`
-- `docs/experiment-plan.md`
-- `docs/improved-experiment-plan-runbook.md`
-- `docs/q1-experiment-and-results-demo.md`
+- `docs/cf_marlos-fmrlla-adaptation.md`
+- `docs/cf_marlos-experiment-plan.md`
 - `docs/reproducibility.md`
 - `docs/checkpoints.md`
 - `docs/logging.md`
 - `docs/plots.md`
+- `docs/hydra-experiment-execution.md`
+- `docs/runbooks/all-suite.md`
+- `docs/runbooks/validation-tiny.md`
 - `docs/tiny-experiment-validation.md`
 
 ---
@@ -318,7 +319,7 @@ The evaluation pipeline reports three families of metrics:
 2. Open-set metrics: AUROC, AUPRC, FPR@95%TPR, unknown F1, unknown detection rate, known accuracy after rejection.
 3. Federated metrics: round-level losses and accuracies, communication cost, selected-client ratios, and utility traces.
 
-The open-set calibration is fit on `validation.pt` when available and only falls back to the closed-set test tensor if validation data are missing.
+The open-set calibration is fit on `validation.pt` and now requires that validation split to exist; the run aborts if the file is missing.
 
 ### Validation Process
 
@@ -706,8 +707,8 @@ Important runtime paths:
 The current code base now reflects the following corrected behaviors:
 
 1. FedProx is implemented as a real client-side proximal penalty inside `Agent.train_step` and `Agent.train_generation_network`.
-2. The centralized baseline loads `known_train.pt` first and only falls back to `client_1_train.pt` if the canonical training tensor is missing.
-3. EVT calibration prefers `validation.pt` and only falls back to the closed-set test tensor when validation data are absent.
+2. The centralized baseline requires `known_train.pt` and aborts if the canonical training tensor is missing.
+3. EVT calibration requires `validation.pt` and aborts if the calibration split is absent.
 4. Open-set thresholds, unknown ids, and error scaling are config-driven.
 5. Server-side checkpoint saving hard-synchronizes the target Q-network before writing the checkpoint.
 6. Flower sample weighting for FedAvg/FedProx uses local dataset size, while training-step counts remain separate diagnostics.

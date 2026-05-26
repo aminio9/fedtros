@@ -1,6 +1,6 @@
-# Experimental Plan for Closed-Set, Open-Set, and Non-IID Federated Intrusion Detection
+# cf_marlos Experimental Plan for Closed-Set, Open-Set, and Non-IID Federated Intrusion Detection
 
-This plan defines the final evaluation protocol for the unified intrusion-detection system implemented in the repository. The system combines CVAE-style latent modeling, Double DQN training, EVT-based open-set rejection, and horizontal federated learning with FedAvg, FedProx, and FMRL-LA. All experiments use the BNaT/B-NAT traffic dataset, frozen preprocessing, and seed-controlled client partitions.
+This plan defines the final evaluation protocol for the unified intrusion-detection system implemented in the `cf_marlos` repository. The system combines CVAE-style latent modeling, Double DQN training, EVT-based open-set rejection, and horizontal federated learning with FedAvg, FedProx, and FMRL-LA. All experiments use the BNaT/B-NAT traffic dataset, frozen preprocessing, and seed-controlled client partitions.
 
 ## 1. Scope and Research Questions
 

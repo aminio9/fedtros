@@ -24,6 +24,7 @@ Default run-local paths:
 ```powershell
 python run.py experiment=exp1 +method=fmrl_la seed=42
 python run.py experiment=exp1 +method=fedavg seed=42
+python run.py experiment=exp1 +method=fedprox seed=42
 python run.py experiment=exp1 +method=centralized_no_osr seed=42
 ```
 

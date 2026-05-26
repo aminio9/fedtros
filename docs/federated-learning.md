@@ -5,10 +5,10 @@ Flower code lives under `src/federated/`.
 Entry points:
 
 ```bash
-poetry run python scripts/preprocess.py federated.num_clients=10
-poetry run python scripts/federated_train.py federated.num_clients=10 federated.num_rounds=50
-poetry run python scripts/federated_server.py
-poetry run python scripts/federated_client.py federated.client_id=1 federated.client_data_path=data/processed/client_1_train.pt
+poetry run python scripts/preprocess.py runtime=cpu federated.num_clients=10
+poetry run python scripts/federated_train.py runtime=cpu federated.num_clients=10 federated.num_rounds=50
+poetry run python scripts/federated_server.py runtime=cpu
+poetry run python scripts/federated_client.py runtime=cpu federated.client_id=1 federated.client_data_path=data/processed/client_1_train.pt
 ```
 
 Use the same `federated.num_clients` value for preprocessing and federated
