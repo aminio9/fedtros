@@ -1,7 +1,7 @@
 # Tiny Experiment Validation
 
 This note is legacy. Use `docs/runbooks/validation-tiny.md` and
-`scripts/experiments/run_validation_tiny.ps1` for the current tiny end-to-end
+`scripts/experiments/run_validation_tiny.sh` for the current tiny end-to-end
 validation path.
 
 Current tiny validation settings:

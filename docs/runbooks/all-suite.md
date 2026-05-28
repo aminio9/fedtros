@@ -10,7 +10,7 @@ Launch one representative run for each experiment block from a single Hydra conf
 
 ## Override Examples
 
-```powershell
+```bash
 python run.py experiment=all
 python run.py --multirun experiment=all
 python run.py experiment=all seed=42
@@ -18,10 +18,10 @@ python run.py experiment=all seed=42
 
 ## Execution Commands
 
-```powershell
+```bash
 python run.py experiment=all
 python run.py --multirun experiment=all
-python scripts/experiments/run_full_suite.ps1
+bash scripts/experiments/run_full_suite.sh
 ```
 
 ## Expected Outputs
@@ -56,4 +56,3 @@ python scripts/experiments/run_full_suite.ps1
 
 - If a child run recurses into the suite launcher, check the command list.
 - If the launcher exits early, inspect the first failing child command.
-
