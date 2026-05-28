@@ -1,0 +1,209 @@
+\documentclass[tikz,border=8pt]{standalone}
+\usepackage{xepersian}
+\settextfont{Tahoma}
+\setlatintextfont{Times New Roman}
+\usetikzlibrary{arrows.meta,positioning,fit,calc,decorations.pathreplacing}
+
+\definecolor{inputteal}{RGB}{0,110,122}
+\definecolor{coreblue}{RGB}{18,64,165}
+\definecolor{outputorange}{RGB}{234,98,23}
+\definecolor{softblue}{RGB}{223,236,255}
+\definecolor{softorange}{RGB}{255,242,235}
+\definecolor{softteal}{RGB}{233,248,247}
+
+\begin{document}
+\begin{tikzpicture}[
+  >=Stealth,
+  font=\small,
+  every node/.style={align=center}
+]
+  % Top band titles
+  \node[
+    draw=inputteal,
+    fill=inputteal,
+    text=white,
+    rounded corners=4pt,
+    minimum width=4.0cm,
+    minimum height=0.9cm
+  ] (lefttitle) at (2.0, 9.6) {\begin{RTL}ورودی لبه بلاک‌چین\end{RTL}};
+
+  \node[
+    draw=coreblue,
+    fill=coreblue,
+    text=white,
+    rounded corners=4pt,
+    minimum width=9.9cm,
+    minimum height=0.9cm
+  ] (centertitle) at (9.4, 9.6) {\begin{RTL}هسته فدرال\end{RTL}};
+
+  \node[
+    draw=outputorange,
+    fill=outputorange,
+    text=white,
+    rounded corners=4pt,
+    minimum width=3.9cm,
+    minimum height=0.9cm
+  ] (righttitle) at (16.4, 9.6) {\begin{RTL}خروجی مجموعه باز\end{RTL}};
+
+  % Left column
+  \node[
+    draw=inputteal!65,
+    fill=softteal,
+    rounded corners=4pt,
+    minimum width=3.8cm,
+    minimum height=1.5cm,
+    below=0.35cm of lefttitle
+  ] (l1) {\begin{RTL}\shortstack{ترافیک خام\\بلاک‌چین (CSV)}\end{RTL}};
+
+  \node[
+    draw=inputteal!65,
+    fill=softteal,
+    rounded corners=4pt,
+    minimum width=3.8cm,
+    minimum height=1.8cm,
+    below=0.30cm of l1
+  ] (l2) {\begin{RTL}\shortstack{پیش‌پردازش\\نوع‌دهی و مقیاس‌بندی\\نگاشت برچسب‌های شناخته‌شده}\end{RTL}};
+
+  \node[
+    draw=inputteal!65,
+    fill=softteal,
+    rounded corners=4pt,
+    minimum width=3.8cm,
+    minimum height=1.6cm,
+    below=0.30cm of l2
+  ] (l3) {\begin{RTL}\shortstack{کلاس‌های شناخته‌شده:\\Normal، BP، DoS، MitM\\FoT به‌عنوان ناشناخته}\end{RTL}};
+
+  \node[
+    draw=inputteal!65,
+    fill=softteal,
+    rounded corners=4pt,
+    minimum width=3.8cm,
+    minimum height=1.7cm,
+    below=0.30cm of l3
+  ] (l4) {\begin{RTL}\shortstack{مصنوعات تانسوری\\known\_train.pt\\validation.pt و ...}\end{RTL}};
+
+  \node[
+    draw=inputteal!65,
+    fill=softteal,
+    rounded corners=4pt,
+    minimum width=3.8cm,
+    minimum height=1.7cm,
+    below=0.30cm of l4
+  ] (l5) {\begin{RTL}\shortstack{قطعه‌بندی کلاینتی\\غیرهمسانِ دیریکله‌ای\\برای گره‌های فدرال}\end{RTL}};
+
+  \foreach \a/\b in {lefttitle/l1,l1/l2,l2/l3,l3/l4,l4/l5}
+    \draw[->, thick, inputteal!80] (\a.south) -- (\b.north);
+
+  % Center server box
+  \node[
+    draw=coreblue!70,
+    thick,
+    rounded corners=18pt,
+    minimum width=10.2cm,
+    minimum height=5.5cm,
+    below=0.35cm of centertitle
+  ] (serverbox) {};
+
+  \node[
+    font=\Large\bfseries,
+    text=coreblue!85
+  ] at (9.4, 8.05) {\begin{RTL}سرور تجمیع\end{RTL}};
+
+  \node[
+    draw=coreblue!40,
+    fill=white,
+    rounded corners=4pt,
+    minimum width=4.25cm,
+    minimum height=2.0cm,
+    anchor=north
+  ] (phasea) at (7.0, 7.45) {\begin{RTL}\shortstack{فاز A: آموزش و ممیزی\\\footnotesize{پاداش، F1، دقت، پایداری TD،}\\\footnotesize{نوآوری، آنتروپی، پوشش، گام‌ها}}\end{RTL}};
+
+  \node[
+    draw=coreblue!40,
+    fill=white,
+    rounded corners=4pt,
+    minimum width=4.25cm,
+    minimum height=2.0cm,
+    anchor=north
+  ] (phaseb) at (11.8, 7.45) {\begin{RTL}\shortstack{فاز B: وزن‌های انتخاب‌شده\\\footnotesize{تجمیعِ آگاه از سودمندی}\\\footnotesize{$\Delta\theta$ وزن‌دهی‌شده}}\end{RTL}};
+
+  \draw[-{Stealth[length=3mm]}, thick, coreblue!85] (phasea.east) -- (phaseb.west);
+  \node[font=\small, text=coreblue!85] at (9.4, 6.92) {\begin{RTL}دور گرم‌کردن \quad آستانه سودمندی \quad نسبت کلاینت‌های منتخب\end{RTL}};
+
+  % Client row
+  \node[
+    draw=coreblue!55,
+    dashed,
+    rounded corners=4pt,
+    minimum width=4.8cm,
+    minimum height=1.9cm
+  ] (client1) at (5.0, 4.05) {\begin{RTL}\shortstack{گره / کلاینت 1\\\footnotesize{یادگیری تقویتی Double-Q}\\\footnotesize{بازتکرار / \(\epsilon\)-حریصانه}}\end{RTL}};
+
+  \node[
+    draw=coreblue!55,
+    dashed,
+    rounded corners=4pt,
+    minimum width=4.8cm,
+    minimum height=1.9cm
+  ] (clienti) at (13.8, 4.05) {\begin{RTL}\shortstack{گره / کلاینت \(i\)\\\footnotesize{رمزگذاری نهفته و مولد}\\\footnotesize{به‌روزرسانی محلی}}\end{RTL}};
+
+  \node[
+    draw=coreblue!55,
+    dashed,
+    rounded corners=4pt,
+    minimum width=7.6cm,
+    minimum height=1.7cm
+  ] (clientk) at (9.4, 2.05) {\begin{RTL}\shortstack{گره / کلاینت \(K\)\\\footnotesize{هیچ داده خامی خارج نمی‌شود؛ فقط وزن‌ها و خلاصه‌های ممیزی}\\\footnotesize{به سرور ارسال می‌شوند}}\end{RTL}};
+
+  \node[
+    draw=coreblue!35,
+    fill=white,
+    rounded corners=4pt,
+    minimum width=3.0cm,
+    minimum height=1.15cm
+  ] (peer) at (9.4, 4.75) {\begin{RTL}تبادل ترافیک همتا به همتا\end{RTL}};
+
+  \draw[-{Stealth[length=3mm]}, thick, coreblue!75] (serverbox.south west) -- ++(-1.0,-0.7) -| (client1.north);
+  \draw[-{Stealth[length=3mm]}, thick, coreblue!75] (serverbox.south east) -- ++(1.0,-0.7) -| (clienti.north);
+  \draw[-{Stealth[length=3mm]}, thick, coreblue!75] (serverbox.south) -- (clientk.north);
+  \draw[-{Stealth[length=2.5mm]}, dashed, coreblue!70] (client1.east) -- (peer.west);
+  \draw[-{Stealth[length=2.5mm]}, dashed, coreblue!70] (peer.east) -- (clienti.west);
+
+  \draw[decorate, decoration={brace, amplitude=4pt}, coreblue!60]
+    (client1.south west) -- (clienti.south east)
+    node[midway, below=6pt, text=coreblue!75, font=\small]
+    {\begin{RTL}فقط به‌روزرسانی مدل و خلاصه ممیزی به اشتراک گذاشته می‌شود\end{RTL}};
+
+  % Right column
+  \node[
+    draw=outputorange!75,
+    fill=softorange,
+    rounded corners=4pt,
+    minimum width=3.6cm,
+    minimum height=2.1cm,
+    below=0.35cm of righttitle
+  ] (r1) {\begin{RTL}\shortstack{نمونه‌های شناخته‌شده\\در اعتبارسنجی\\\footnotesize{فقط نمونه‌های درست‌طبقه‌بندی‌شده}\\\footnotesize{دم‌های EVT به‌ازای هر کلاس}}\end{RTL}};
+
+  \node[
+    draw=outputorange!75,
+    fill=softorange,
+    rounded corners=4pt,
+    minimum width=3.6cm,
+    minimum height=2.35cm,
+    below=0.28cm of r1
+  ] (r2) {\begin{RTL}\shortstack{استنتاج\\\(\hat{y}=\arg\max Q(s)\)\\\(\hat{x}=G(q(s,\hat{y}),\hat{y})\)\\\footnotesize{خطای بازسازی و}\(P_{\mathrm{unknown}}\)}\end{RTL}};
+
+  \node[
+    draw=outputorange!75,
+    fill=softorange,
+    rounded corners=4pt,
+    minimum width=3.6cm,
+    minimum height=2.45cm,
+    below=0.28cm of r2
+  ] (r3) {\begin{RTL}\shortstack{مقایسه با آستانه\\\(\;P_{\mathrm{unknown}} \le \delta_{\mathrm{global}}\;\)\\\footnotesize{کلاس شناخته‌شده}\\\(\;P_{\mathrm{unknown}} > \delta_{\mathrm{global}}\;\)\\\footnotesize{ناشناخته / FoT}}\end{RTL}};
+
+  \draw[->, thick, outputorange!85] (r1.south) -- (r2.north);
+  \draw[->, thick, outputorange!85] (r2.south) -- (r3.north);
+
+\end{tikzpicture}
+\end{document}

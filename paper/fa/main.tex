@@ -1,0 +1,371 @@
+﻿\documentclass[10pt,twocolumn]{article}
+
+\usepackage[letterpaper,margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{microtype}
+\usepackage{hyperref}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{doi}
+\usepackage{enumitem}
+\usepackage{dblfloatfix}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{titlesec}
+\usepackage{xepersian}
+
+\settextfont[
+  Path=C:/Users/amini/AppData/Local/Microsoft/Windows/Fonts/,
+  Extension=.ttf,
+  UprightFont=BNazanin,
+  BoldFont=BNaznnBd,
+  ItalicFont=BNazannO,
+  BoldItalicFont=BNazannO,
+  Scale=1.05
+]{BNazanin}
+\settextdigitfont[
+  Path=C:/Users/amini/AppData/Local/Microsoft/Windows/Fonts/,
+  Extension=.ttf,
+  Scale=1.05
+]{BNazanin}
+\setlatintextfont{Times New Roman}
+\newfontfamily\LatinAcronymFont{Times New Roman}
+\DeclareRobustCommand{\LatinTerm}[1]{\LRE{{\LatinAcronymFont #1}}}
+\setlength{\columnsep}{18pt}
+\setlength{\emergencystretch}{2em}
+\newcommand{\CFMARLOS}{\texorpdfstring{\LatinTerm{CF-MARLOS}}{CF-MARLOS}}
+\newcommand{\CVAEDQN}{\texorpdfstring{\LatinTerm{CVAE-DQN}}{CVAE-DQN}}
+\newcommand{\DoubleDQN}{\texorpdfstring{\LatinTerm{Double DQN}}{Double DQN}}
+\newcommand{\FedAvg}{\texorpdfstring{\LatinTerm{FedAvg}}{FedAvg}}
+\newcommand{\FedProx}{\texorpdfstring{\LatinTerm{FedProx}}{FedProx}}
+\newcommand{\FMRLLA}{\texorpdfstring{\LatinTerm{FMRL-LA}}{FMRL-LA}}
+\newcommand{\EVT}{\texorpdfstring{\LatinTerm{EVT}}{EVT}}
+\newcommand{\BNat}{\texorpdfstring{\LatinTerm{B-NAT}}{B-NAT}}
+\newcommand{\FoT}{\texorpdfstring{\LatinTerm{FoT}}{FoT}}
+\newcommand{\DVal}{\texorpdfstring{\LatinTerm{D\_val}}{D_val}}
+\newcommand{\Di}{\texorpdfstring{\LatinTerm{D\_i}}{D_i}}
+\setlist[itemize]{leftmargin=*,itemsep=0.25em,topsep=0.25em}
+\setlist[enumerate]{leftmargin=*,itemsep=0.25em,topsep=0.25em}
+\titleformat{\section}{\large\bfseries}{\thesection}{0.7em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{0.7em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{0.7em}{}
+\titlespacing*{\section}{0pt}{1.0ex plus 0.3ex minus 0.2ex}{0.6ex}
+\titlespacing*{\subsection}{0pt}{0.8ex plus 0.2ex minus 0.2ex}{0.4ex}
+\titlespacing*{\subsubsection}{0pt}{0.6ex plus 0.2ex minus 0.1ex}{0.3ex}
+\floatname{algorithm}{الگوریتم}
+\renewcommand{\listalgorithmname}{فهرست الگوریتم‌ها}
+\algrenewcommand\algorithmicrequire{\textbf{ورودی:}}
+\algrenewcommand\algorithmicensure{\textbf{خروجی:}}
+\algrenewcommand\algorithmicfor{\textbf{برای}}
+\algrenewcommand\algorithmicforall{\textbf{برای هر}}
+\algrenewcommand\algorithmicif{\textbf{اگر}}
+\algrenewcommand\algorithmicthen{\textbf{آنگاه}}
+\algrenewcommand\algorithmicelse{\textbf{وگرنه}}
+\algrenewcommand\algorithmicdo{\textbf{انجام بده}}
+\algrenewcommand\algorithmicreturn{\textbf{بازگردان}}
+
+\title{\CFMARLOS: یادگیری تقویتی چندعامله فدرالِ همکارانه با تجمیع آموختنی برای تشخیص نفوذ مجموعه‌باز در ترافیک \BNat}
+\author{محمد حسن امینی\\{\small دانشجوی کارشناسی ارشد، دانشگاه علم و صنعت ایران}\\{\small \texttt{m\_amini79@cmps2.iust.ac.ir}}}
+\date{}
+
+\hypersetup{
+  pdftitle={چارچوب تشخیص نفوذ مجموعه‌باز در ترافیک B-NAT با یادگیری فدرال همکارانه},
+  pdfauthor={Mohammad Hassan Amini},
+  pdfkeywords={یادگیری فدرال، یادگیری تقویتی چندعامله، تشخیص نفوذ، تشخیص مجموعه‌باز، واسنجی دُم، ترافیک B-NAT}
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+این مقاله چارچوب \CFMARLOS{} را برای تشخیص نفوذ در ترافیک \BNat{} تحت یادگیری فدرال افقی و داده‌های غیرهمسان ارائه می‌کند. سامانه پیشنهادی سه جزء را به‌صورت هم‌زمان ترکیب می‌کند: عامل محلی \CVAEDQN{} برای طبقه‌بندی کلاس‌های شناخته‌شده، لایه تجمیع فدرال برای حفظ حریم خصوصی و مقیاس‌پذیری، و واسنجی \EVT{} برای رد نمونه‌های ناشناخته. در این معماری، فقط پارامترهای یادگیریِ مشترک میان کلاینت‌ها فدرال می‌شوند؛ حافظه بازپخش، وضعیت بهینه‌ساز، داده خام و مصنوعات \EVT{} محلی یا پساآموزشی باقی می‌مانند. پس از آموزش فدرال، مدل جهانی با خطاهای بازسازیِ نمونه‌های اعتبارسنجیِ درست‌طبقه‌بندی‌شده واسنجی می‌شود تا بتواند حملات دیده‌نشده را با آستانه‌ای کنترل‌شده رد کند. این طراحی برای بهبود هم‌زمانِ دقت کلاس‌های شناخته‌شده، پایداری تحت ناهمگنی کلاینتی، و تشخیص مجموعه باز مناسب است.
+\end{abstract}
+
+\noindent\textbf{کلیدواژه‌ها:} یادگیری فدرال، تشخیص نفوذ، تشخیص مجموعه باز، \EVT، \DoubleDQN، ترافیک \BNat
+
+\section{مقدمه}
+ترافیک \BNat{} و سامانه‌های توزیع‌شده مشابه، به‌طور طبیعی در چندین گره، سازمان یا نقطه پایش جداگانه ذخیره می‌شوند. در چنین محیط‌هایی، متمرکز کردن داده خام همواره ممکن یا مطلوب نیست. یادگیری فدرال یک راه‌حل طبیعی فراهم می‌کند، اما قواعد تجمیع استاندارد مانند \FedAvg{} در حضور توزیع‌های غیرهمسان می‌توانند ناپایدار شوند. دشواری مسئله در تشخیص نفوذ بیشتر می‌شود، زیرا مدل نه‌تنها باید حملات شناخته‌شده را طبقه‌بندی کند، بلکه باید حملات دیده‌نشده را نیز به‌درستی رد کند.
+
+پیاده‌سازی این پروژه یک خط لوله ترکیبی را دنبال می‌کند که در آن یادگیری بازنمایی نهفته، \DoubleDQN{}، مولد بازسازی، و \EVT{} در یک معماری فدرال همکارانه ادغام شده‌اند. در این مقاله، \CFMARLOS{} به‌عنوان یک روش یکپارچه برای طبقه‌بندی مجموعه بسته، رد ناشناخته و آموزش فدرال تحت ناهمگنی کلاینتی ارائه می‌شود.
+
+\section{پیشینه و صورت مسئله}
+در این چارچوب، هر کلاینت مجموعه داده محلی \Di{} را در اختیار دارد و داده خام را با سرور به اشتراک نمی‌گذارد. هدف فدرال، کمینه‌سازی مجموع وزن‌دار زیان‌های محلی است:
+
+\[
+\min_{\Theta}\sum_{i=1}^{N}\frac{n_i}{\sum_j n_j}F_i(\Theta),
+\]
+
+که در آن \(n_i\) تعداد نمونه‌های محلی کلاینت \(i\) است. در حالت \FedProx{}، هدف محلی با جمله پروگزیمال به‌صورت زیر اصلاح می‌شود:
+
+\[
+F_i^{\mathrm{prox}}(\Theta)=F_i(\Theta)+\frac{\mu}{2}\lVert \Theta-\Theta^{k-1}\rVert_2^2.
+\]
+
+برای تشخیص مجموعه باز، به‌جای اتکا به اعتماد نرمِ مجموعه بسته، از خطای بازسازی و مدل‌سازی دم \EVT{} استفاده می‌شود. این کار به مدل اجازه می‌دهد تا نمونه‌هایی را که به توزیع کلاس‌های شناخته‌شده تعلق ندارند، با آستانه‌ای واسنجی‌شده رد کند.
+
+\section{روش‌شناسی پیشنهادی}
+
+\subsection{نمای کلی سامانه}
+شکل~\ref{fig:overview-fa} نمای کلی \CFMARLOS{} را نشان می‌دهد. ترافیک خام \BNat{} از \LatinTerm{CSV} به مصنوعات تانسوری تبدیل می‌شود، کلاس‌های شناخته‌شده به فضای برچسب ثابت نگاشت می‌شوند، و داده آموزش به قطعات کلاینتی غیرهمسان تقسیم می‌شود. هر کلاینت فقط قطعه خود را مشاهده می‌کند و عامل \CVAEDQN{} محلی را آموزش می‌دهد. سرور در هر دور فقط پارامترهای مدل یا خلاصه‌های ممیزی را دریافت می‌کند، آن‌ها را تجمیع می‌کند، و در پایان آموزش، مدل جهانی را با \EVT{} واسنجی می‌کند. برای سازگاری میان نسخه انگلیسی و فارسی مقاله، همین شکل انگلیسی در هر دو نسخه استفاده شده است.
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{figures/proposed_method_overview.png}
+  \caption{نمای کلی \CFMARLOS{}: پیش‌پردازش، قطعه‌های غیرهمسان کلاینتی، آموزش محلی \CVAEDQN{}، تجمیع فدرال، و استنتاج مجموعه‌باز مبتنی بر \EVT{}.}
+  \label{fig:overview-fa}
+\end{figure*}
+
+\begin{algorithm}[t]
+\caption{آموزش فدرال \CVAEDQN{} و واسنجی مجموعه‌باز}
+\begin{algorithmic}[1]
+\Require مجموعه داده‌های کلاینت‌ها $\{D_i\}_{i=1}^N$، مجموعه اعتبارسنجی $D_{\mathrm{val}}$، تعداد دورها $K$، پیکربندی محلی $H$، و راهبرد $S \in \{\mathrm{\FedAvg}, \mathrm{\FedProx}, \mathrm{\FMRLLA}\}$
+\Ensure مدل نهایی $\theta^\ast$، مدل‌های \EVT{} $M_{\mathrm{evt}}$، و آستانه رد $\delta$
+\State پارامترهای اولیه $\theta^0=\{\theta_p^0,\theta_r^0,\theta_Q^0,\theta_G^0\}$ را مقداردهی کن
+\For{$k = 1$ to $K$}
+  \State سرور کلاینت‌های $C_k$ را نمونه‌گیری کرده و $\theta^{k-1}$ را به آن‌ها پخش می‌کند
+  \ForAll{$i \in C_k$ \textbf{به‌صورت موازی}}
+    \State $\mu_i \gets \mu$ اگر $S=\mathrm{\FedProx}$ باشد، و در غیر این صورت $\mu_i \gets 0$
+    \State $(\theta_i^k, m_i^k) \gets \textsc{ClientLocalUpdate}(D_i,\theta^{k-1},H,\mu_i)$
+  \EndFor
+  \If{$S=\mathrm{\FMRLLA}$}
+    \State $\theta^k \gets \textsc{FMRLLAUpdate}(\theta^{k-1},\{(\theta_i^k,m_i^k)\})$
+  \Else
+    \State $\theta^k \gets \frac{\sum_{i\in C_k} n_i \theta_i^k}{\sum_{i\in C_k} n_i}$
+  \EndIf
+\EndFor
+\State $\theta^\ast \gets \theta^K$
+\State $(M_{\mathrm{evt}}, \delta) \gets \textsc{EVTCalibration}(D_{\mathrm{val}}, \theta^\ast)$
+\State \Return $\theta^\ast, M_{\mathrm{evt}}, \delta$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{عامل محلی \CVAEDQN}
+فرض کنید \(s \in \mathbb{R}^d\) بردار ویژگی ترافیک و \(a \in \{1,\ldots,C\}\) یکی از کلاس‌های شناخته‌شده باشد. هر کلاینت مسئله را به‌صورت یک فرمول‌بندی تقویتیِ مبتنی بر مخزن داده مدل می‌کند؛ در این فرمول‌بندی، کنش همان کلاس پیش‌بینی‌شده است و پاداش با درستیِ پیش‌بینی تعیین می‌شود.
+
+عامل محلی از چهار مؤلفه اصلی تشکیل شده است:
+\begin{itemize}
+  \item شبکه پیشین \(p_\theta(z \mid s)\) برای نگاشت حالت به توزیع نهفته؛
+  \item شبکه بازشناسی \(q_\phi(z \mid s,a)\) برای استنتاج نهفته وابسته به کلاس؛
+  \item شبکه Q اصلی \(Q_\psi(z,s)\) برای انتخاب کلاس شناخته‌شده؛
+  \item شبکه Q هدف \(Q_{\psi^-}(z,s)\) برای پایدارسازی \DoubleDQN{}؛
+  \item مولد \(G_\omega(z,a)\) برای بازسازی ویژگی‌ها.
+\end{itemize}
+
+شبکه پیشین با شبکه بازشناسی هم‌تراز می‌شود:
+
+\[
+L_{\mathrm{prior}}=
+\mathrm{KL}\!\left(q_\phi(z \mid s,a^\ast)\,\|\,p_\theta(z \mid s)\right).
+\]
+
+برای به‌روزرسانی TD، از هدف Double-DQN استفاده می‌شود:
+
+\begin{align*}
+a'&=\arg\max_a Q_\psi(z',s',a),\\
+y&=r+\gamma(1-d)\,Q_{\psi^-}(z',s',a').
+\end{align*}
+
+\[
+L_{\mathrm{TD}}=
+\mathrm{Huber}\!\left(Q_\psi(z,s,a)-y\right).
+\]
+
+بازپخش تجربه و سیاست \(\epsilon\)-حریصانه برای یادگیری محلی استفاده می‌شوند. شبکه هدف فقط به‌صورت محلی همگام می‌شود و به‌عنوان یک مؤلفه فدرال مستقل ارسال نمی‌شود. اگر \FedProx{} فعال باشد، جمله پروگزیمال زیر نیز به هدف محلی افزوده می‌شود:
+
+\[
+L_{\mathrm{prox}}=
+\frac{\mu}{2}\lVert \Theta_i-\Theta^{k-1}\rVert_2^2.
+\]
+
+\begin{algorithm}[t]
+\caption{به‌روزرسانی محلی \CVAEDQN{} با گزینه \FedProx{}}
+\begin{algorithmic}[1]
+\Require داده محلی $D_i$، پارامترهای پخش‌شده $\theta^{k-1}$، پیکربندی محلی $H$، و ضریب پروگزیمال $\mu_i$
+\Ensure پارامترهای به‌روزشده $\theta_i^k$ و شاخص‌های ممیزی $m_i^k$
+\State $\theta^{k-1}$ را در $p_\theta$، $q_\phi$، $Q_\psi$ و $G_\omega$ بارگذاری کن
+\State شبکه هدف را با $Q_\psi^- \gets Q_\psi$ مقداردهی کرده و $\theta^{k-1}$ را مرجع \FedProx{} قرار بده
+\State حافظه بازپخش $B_i$ و سیاست $\epsilon$-حریصانه $\pi_i$ را مقداردهی کن
+\For{هر اپیزود محلی}
+  \State با محیط محلی تعامل کن و گذارهای $(s_t,a_t,r_t,s_{t+1},d_t,a_t^\ast)$ را در $B_i$ ذخیره کن
+  \If{$|B_i|$ کافی باشد}
+    \State یک مینی‌بچ از $B_i$ نمونه‌گیری کن
+    \State $p_\theta$ را با $L_{\mathrm{prior}}$ و در صورت فعال بودن با جریمه \FedProx{} به‌روزرسانی کن
+    \State $q_\phi$ و $Q_\psi$ را با $L_{\mathrm{TD}}$ و در صورت فعال بودن با جریمه \FedProx{} به‌روزرسانی کن
+    \State $Q_\psi^-$ را به‌صورت نرم یا دوره‌ای از $Q_\psi$ همگام کن
+  \EndIf
+\EndFor
+\State مجموعه نمونه‌های شناخته‌شده و درست‌طبقه‌بندی‌شده را بساز
+\If{آموزش مولد فعال باشد}
+  \State $G_\omega$ را فقط روی نمونه‌های شناخته‌شده و درست‌طبقه‌بندی‌شده آموزش بده
+\EndIf
+\State \Return $\theta_i^k=\{\theta_p,\theta_r,\theta_Q,\theta_G\}$ و $m_i^k$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{بازسازی مبتنی بر مولد}
+مولد پس از پیش‌بینی کلاس، نمونه را به‌صورت شرطی بازسازی می‌کند:
+
+\[
+\hat{x}=G_\omega(z,\hat{a}),
+\qquad
+e(x)=\frac{1}{d}\lVert x-\hat{x}\rVert_2^2 \cdot \kappa.
+\]
+
+مولد فقط روی نمونه‌های شناخته‌شده و درست‌طبقه‌بندی‌شده آموزش داده می‌شود. این انتخاب باعث می‌شود فضای بازسازی به منیفلد کلاس‌های شناخته‌شده نزدیک بماند و خطای بازسازی برای نمونه‌های ناشناخته، سیگنال معنادارتری داشته باشد.
+
+\subsection{اشتراک‌گذاری پارامترها}
+در CF-MARLOS، فقط پارامترهای یادگیریِ مشترک فدرال می‌شوند:
+
+\begin{table}[t]
+\centering
+\caption{مؤلفه‌های فدرال‌شده و فدرال‌نشده در CF-MARLOS}
+\begin{tabular}{p{0.42\linewidth}p{0.48\linewidth}}
+\toprule
+\textbf{مؤلفه فدرال‌شده} & \textbf{نقش} \\
+\midrule
+شبکه پیشین $p_\theta(z|s)$ & بازنمایی نهفته مشترک \\
+شبکه بازشناسی $q_\phi(z|s,a)$ & استنتاج نهفته و بازسازی \\
+شبکه Q اصلی $Q_\psi(z,s)$ & سیاست جهانی کلاس‌های شناخته‌شده \\
+مولد $G_\omega(z,a)$ & رفتار بازسازی مشترک \\
+\midrule
+\textbf{مؤلفه فدرال‌نشده} & \textbf{نقش} \\
+\midrule
+شبکه Q هدف $Q_\psi^-$ & کپی محلی برای پایدارسازی \\
+حافظه بازپخش & تاریخچه محلی گذارها \\
+وضعیت بهینه‌ساز & وضعیت خصوصی آموزش \\
+مدل‌ها و آستانه‌های EVT & مصنوعات واسنجی پساآموزشی \\
+داده خام کلاینت & روی کلاینت باقی می‌ماند \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+این مرزبندی به حفظ حریم خصوصی، کاهش هزینه ارتباطی، و جلوگیری از تجمیع اشیای گذرای محلی کمک می‌کند.
+
+\subsection{\FedAvg{} و \FedProx{} به‌عنوان مبنا}
+\FedAvg{} از میانگین وزن‌دار بر اساس تعداد نمونه استفاده می‌کند:
+
+\[
+\Theta^k=\sum_{i \in C_k}\frac{n_i}{\sum_{j \in C_k}n_j}\Theta_i^k.
+\]
+
+\FedProx{} همان منطق سمت سرور را حفظ می‌کند، اما با جمله پروگزیمال، انحراف به‌روزرسانی‌های محلی را محدود می‌سازد. \FedAvg{} و \FedProx{} در این مقاله مبنا هستند و به‌عنوان مشارکت اصلی روش پیشنهادی تلقی نمی‌شوند.
+
+\subsection{تجمیع همکارانه \FMRLLA{}}
+\FMRLLA{} مؤلفه نوآورانه اصلی این کار است. این روش به‌جای فرض مساوی بودن تمام کلاینت‌ها، سودمندی هر کلاینت را پیش از تجمیع برآورد می‌کند. در فاز A، کلاینت‌ها محلی آموزش می‌بینند و فراداده ممیزی شامل پاداش، F1، دقت، پایداری TD، نوآوری مبتنی بر KL، آنتروپی، پوشش برچسب، کیفیت مولد و تعداد گام‌ها را ارسال می‌کنند. سرور این اطلاعات را با یک منتقد ناهمگام ارزیابی می‌کند و امتیاز سودمندی \(u_i\) را به دست می‌آورد.
+
+در فاز B، کلاینت‌های منتخب وزن‌های ذخیره‌شده را می‌فرستند و سرور دلتاهای پارامتری را با وزن سودمندی تجمیع می‌کند:
+
+\[
+\Delta_i=\Theta_i^k-\Theta^{k-1},
+\qquad
+\Theta^k=
+\Theta^{k-1}+
+\eta\frac{\sum_{i \in A_k}u_i\Delta_i}{\sum_{i \in A_k}u_i}.
+\]
+
+این طرح، به‌ویژه در داده‌های غیرهمسان، می‌تواند پایداری و کارایی ارتباطی را بهتر کند. در مقابل، هزینه آن افزایش هماهنگی است، زیرا هر دور منطقی شامل دو فاز جداگانه است.
+
+\begin{algorithm}[t]
+\caption{انتخاب و تجمیع آگاه از سودمندی در \FMRLLA{}}
+\begin{algorithmic}[1]
+\Require پارامترهای جهانی قبلی $\theta^{k-1}$، به‌روزرسانی‌ها و شاخص‌های کلاینتی $\{(\theta_i^k,m_i^k)\}$، آستانه سودمندی $\lambda$، حداقل کلاینت منتخب $q_{\min}$، حداکثر نسبت $\rho_{\max}$، و نرخ گام $\eta$
+\Ensure پارامترهای جهانی به‌روزشده $\theta^k$
+\State سودمندی $u_i$ را برای هر کلاینت با استفاده از خلاصه‌های نهفته و شاخص‌ها برآورد کن
+\State مجموعه $A_k = \{i : u_i \ge \lambda\}$ را انتخاب کن
+\If{$|A_k| < q_{\min}$}
+  \State کلاینت‌های با بیشترین سودمندی را اضافه کن تا $|A_k| = q_{\min}$ شود
+\EndIf
+\State $|A_k| \le \lceil \rho_{\max}|C_k| \rceil$ را اعمال کن
+\ForAll{$i \in A_k$}
+  \State $\Delta_i \gets \theta_i^k - \theta^{k-1}$
+\EndFor
+\State $\theta^k \gets \theta^{k-1} + \eta \frac{\sum_{i \in A_k} u_i\Delta_i}{\sum_{i \in A_k} u_i}$
+\State منتقدهای سمت سرور و مخلوط‌کننده را با بازخورد سودمندی دور به‌روزرسانی کن
+\State \Return $\theta^k$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{واسنجی \EVT{} و استنتاج مجموعه باز}
+پس از آموزش فدرال، مدل جهانی با \EVT{} واسنجی می‌شود. فقط نمونه‌های اعتبارسنجیِ شناخته‌شده و درست‌طبقه‌بندی‌شده برای برازش دم استفاده می‌شوند. برای هر کلاس، دم بالایی خطای بازسازی با توزیع پارتوی تعمیم‌یافته مدل می‌شود و سپس احتمال ناشناختگی محاسبه می‌گردد:
+
+\[
+P_{\mathrm{unknown}}(x)=M_{\mathrm{EVT},\hat{a}}(e(x)).
+\]
+
+آستانه جهانی \(\delta_{\mathrm{global}}\) از داده اعتبارسنجی تنظیم می‌شود. در زمان استنتاج، اگر
+
+\[
+P_{\mathrm{unknown}}(x)<\delta_{\mathrm{global}},
+\]
+
+نمونه به‌عنوان کلاس شناخته‌شده پذیرفته می‌شود؛ در غیر این صورت به‌عنوان ناشناخته رد می‌شود. این مرحله مدل را از طبقه‌بند مجموعه بسته به آشکارساز نفوذ مجموعه باز تبدیل می‌کند.
+
+\begin{algorithm}[t]
+\caption{واسنجی \EVT{} و استنتاج مجموعه باز}
+\begin{algorithmic}[1]
+\Require مجموعه اعتبارسنجی $D_{\mathrm{val}}$، مدل آموزش‌دیده $\theta^\ast$، کسر دُم $\alpha_{\mathrm{evt}}$، و نرخ مثبت کاذب هدف $\beta$
+\Ensure مدل‌های EVT $M_{\mathrm{evt}}$، آستانه جهانی $\delta$، و پیش‌بینی نهایی $\hat{y}$
+\State خطاهای بازسازی نمونه‌های شناخته‌شده و درست‌طبقه‌بندی‌شده را جمع‌آوری کن
+\ForAll{کلاس‌های شناخته‌شده $c$}
+  \State یک مدل دُم EVT را برای دُم بالایی خطاهای کلاس $c$ برازش کن
+\EndFor
+\State احتمالات ناشناختگی روی داده اعتبارسنجی را تخمین بزن و $\delta$ را از کمیتِ $(1-\beta)$ تعیین کن
+\For{هر نمونه استنتاجی $x$}
+  \State کلاس پیش‌بینی‌شده $\hat{c} = \arg\max_c Q_\psi(p_\theta(x),x,c)$ را محاسبه کن
+  \State خطای بازسازی $e_x$ را با $q_\phi$ و $G_\omega$ محاسبه کن
+  \State $p_u = M_{\mathrm{evt}}[\hat{c}](e_x)$ را محاسبه کن
+  \If{$p_u \ge \delta$}
+    \State $\hat{y} \gets$ ناشناخته
+  \Else
+    \State $\hat{y} \gets \hat{c}$
+  \EndIf
+\EndFor
+\State \Return $M_{\mathrm{evt}}, \delta, \hat{y}$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{الگوریتم‌ها}
+شبه‌کدهای اصلی این روش در چهار الگوریتم بالا ارائه شده‌اند. الگوریتم 1 جریان کامل آموزش فدرال و واسنجی نهایی را خلاصه می‌کند. الگوریتم 2 به‌روزرسانی محلی \CVAEDQN{} را با یا بدون \FedProx{} مشخص می‌کند. الگوریتم 3 قاعده انتخاب و تجمیع \FMRLLA{} را توضیح می‌دهد. الگوریتم 4 نیز برازش \EVT{} و تصمیم‌گیری مجموعه‌باز در مرحله استنتاج را نشان می‌دهد.
+
+\subsection{منطق طراحی}
+هر مؤلفه در \CFMARLOS{} یک شکست مشخص را هدف می‌گیرد: عامل \CVAEDQN{} رفتار طبقه‌بندی مجموعه بسته را می‌آموزد، مولد سیگنال بازسازی را فراهم می‌کند، لایه فدرال آموزش توزیع‌شده را ممکن می‌سازد، \FMRLLA{} ناهمگنی کلاینتی را مدیریت می‌کند، و \EVT{} قانون ردِ واسنجی‌شده را برای حملات ناشناخته ارائه می‌دهد. این جداسازی وظایف، روش را برای آزمایش‌های حذف مؤلفه و تحلیل حساسیت مناسب می‌سازد.
+
+\section{پیکربندی تجربی}
+این مخزن برای داده‌های \BNat{} و کلاس‌های «نرمال»، «بی‌پی»، «دی‌او‌اس» و «میتم» به‌عنوان کلاس‌های شناخته‌شده پیکربندی شده است و «فوت» را به‌عنوان حمله ناشناخته نگه می‌دارد. در نسخه نهایی مقاله، ارزیابی باید با تعداد ثابتی از کلاینت‌ها، چند بذر تصادفی، و چند راهبرد فدرال انجام شود تا مقایسه منصفانه باشد. معیارهای اصلی شامل دقت، F1 کلان، AUROC، AUPRC، FPR@95\%TPR، نرخ تشخیص ناشناخته، و هزینه ارتباطی هستند.
+
+\section{جمع‌بندی}
+\CFMARLOS{} یک چارچوب یکپارچه برای تشخیص نفوذ مجموعه باز در محیط‌های فدرال و غیرهمسان ارائه می‌دهد. این روش با ترکیب یادگیری محلی \CVAEDQN{}، تجمیع فدرال، و واسنجی \EVT{}، تلاش می‌کند هم دقت کلاس‌های شناخته‌شده را حفظ کند و هم توانایی رد حملات ناشناخته را بهبود دهد. در نسخه نهایی مقاله، نتایج تجربی باید برتری این طرح را نسبت به \FedAvg{} و \FedProx{} در برابر ناهمگنی داده و در سناریوهای مجموعه باز نشان دهند.
+
+\begin{latin}
+\begin{thebibliography}{99}
+\bibitem{mcmahan2017}
+H.~B. McMahan, E. Moore, D. Ramage, S. Hampson, and B.~A. y Arcas.
+\newblock Communication-efficient learning of deep networks from decentralized data.
+\newblock In \emph{Proceedings of AISTATS}, pages 1273--1282, 2017.
+
+\bibitem{li2020}
+T. Li, A.~K. Sahu, A. Talwalkar, and V. Smith.
+\newblock Federated optimization in heterogeneous networks.
+\newblock In \emph{Proceedings of MLSys}, 2020.
+
+\bibitem{hasselt2016}
+H. van Hasselt, A. Guez, and D. Silver.
+\newblock Deep reinforcement learning with double Q-learning.
+\newblock In \emph{Proceedings of AAAI}, 2016.
+
+\bibitem{bendale2016}
+A. Bendale and T.~E. Boult.
+\newblock Towards open set deep networks.
+\newblock In \emph{Proceedings of CVPR}, pages 1563--1572, 2016.
+
+\bibitem{rudd2018}
+E.~M. Rudd, L.~P. Jain, W.~J. Scheirer, and T.~E. Boult.
+\newblock The extreme value machine.
+\newblock \emph{IEEE Transactions on Pattern Analysis and Machine Intelligence}, 40(3):762--768, 2018.
+\end{thebibliography}
+\end{latin}
+
+\end{document}
+
+
