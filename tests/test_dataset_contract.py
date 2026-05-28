@@ -36,3 +36,13 @@ def test_bnat_csv_contains_expected_source_labels():
         "DoS": 15000,
         "FoT": 15000,
     }
+
+
+def test_exp7_config_is_labelwise_open_set():
+    with initialize_config_dir(version_base=None, config_dir=_config_dir()):
+        cfg = compose(config_name="config_fl", overrides=["experiment=exp7"])
+
+    assert cfg.experiment.name == "exp7_labelwise_open_set"
+    assert cfg.model.num_actions == 4
+    assert cfg.dataset.known_labels == ["Normal", "BP", "DoS", "FoT"]
+    assert cfg.evaluation.export_latent_embeddings is True

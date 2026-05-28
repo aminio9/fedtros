@@ -1,15 +1,19 @@
 # Experiment Execution Scripts
 
-Run from the repository root with PowerShell.
+Run from the repository root with Bash.
 
-- `validate_configs.ps1`: resolves all experiment configs without running training.
-- `run_validation_tiny.ps1`: runs the tiny end-to-end validation path and then plots it.
-- `e1_closed_set.ps1` through `e6_efficiency_scalability.ps1`: experiment command files.
-- `run_full_suite.ps1`: sequential batch runner for E1-E6.
-- `multirun_main_methods.ps1`: Hydra multirun over FedAvg, FedProx, and FMRL-LA for E3.
-- `multirun_alpha_seed_sensitivity.ps1`: Hydra multirun over seeds and alpha values for E4.
-- `e5_ablation.ps1`: full ablation matrix, including no-EVT, no-generator, no-selection, FedAvg, and FedProx variants.
-- `e6_efficiency_scalability.ps1`: client-count and round-budget sweep for FedAvg and FMRL-LA.
-- `resume_commands.ps1`: resume federated or centralized training from a checkpoint.
-- `evaluate_commands.ps1`: regenerate evaluation and plots from a checkpoint.
-- `export_results.ps1`: export suite-level CSVs and plots from completed run directories.
+- `validate_configs.sh`: resolves all experiment configs without running training.
+- `run_validation_tiny.sh`: runs the tiny end-to-end validation path and then plots it.
+- `e1_closed_set.sh` through `e7_labelwise_open_set.sh`: experiment command files.
+- `run_full_suite.sh`: sequential batch runner for E1-E7.
+- `multirun_main_methods.sh`: Hydra multirun over FedAvg, FedProx, and FMRL-LA for E3.
+- `e3_federated_noniid.sh` and `e4_combined_open_set_noniid.sh`: sweep Dirichlet alpha values `0.01`, `0.5`, and `1.0`.
+- `multirun_alpha_seed_sensitivity.sh`: Hydra multirun over seeds and alpha values for E4.
+- `e5_ablation.sh`: full ablation matrix, including no-EVT, no-generator, no-selection, FedAvg, and FedProx variants.
+- `e6_efficiency_scalability.sh`: client-count and round-budget sweep for FedAvg and FMRL-LA.
+- `e7_labelwise_open_set.sh`: label-wise open-set stress test used for latent-space visual proof.
+- `resume_commands.sh`: resume federated training from a checkpoint; centralized resume commands are commented references.
+- `evaluate_commands.sh`: regenerate evaluation and plots from a checkpoint.
+- `export_results.sh`: export suite-level CSVs and plots from completed run directories.
+
+Centralized `centralized_no_osr` and `centralized_osr` experiment runs are kept as commented reference commands and are skipped by the runnable experiment scripts.

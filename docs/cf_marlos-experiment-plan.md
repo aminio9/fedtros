@@ -1,12 +1,12 @@
 # cf_marlos Experimental Plan for Closed-Set, Open-Set, and Non-IID Federated Intrusion Detection
 
-This plan defines the final evaluation protocol for the unified intrusion-detection system implemented in the `cf_marlos` repository. The system combines CVAE-style latent modeling, Double DQN training, EVT-based open-set rejection, and horizontal federated learning with FedAvg, FedProx, and FMRL-LA. All experiments use the BNaT/B-NAT traffic dataset, frozen preprocessing, and seed-controlled client partitions.
+This plan defines the final evaluation protocol for the unified intrusion-detection system implemented in the `cf_marlos` repository. The system combines CVAE-style latent modeling, Double DQN training, EVT-based open-set rejection, and horizontal federated learning with FedAvg, FedProx, and FMRL-LA. All experiments use the BNaT/B-NAT traffic dataset, frozen preprocessing, and seed-controlled client partitions. Closed-set experiments use the full source label set with no unknown labels held out; open-set experiments keep `FoT` as the held-out unknown attack.
 
 ## 1. Scope and Research Questions
 
 The goal is to show that the full pipeline:
 
-1. Preserves known-class performance in the closed-set setting.
+1. Preserves performance in the closed-set setting when all dataset labels are included.
 2. Rejects unknown attacks reliably with open-set detection.
 3. Improves federated training under non-IID client data.
 4. Remains stable when open-set detection and federated non-IID training are combined.
@@ -90,7 +90,7 @@ Each federated baseline should be labeled by the exact local objective used in t
 | ----------- | --------------------- | ------------------------------------------------------------- |
 | Independent | Inference mode        | Closed-set only, open-set enabled                             |
 | Independent | Federation strategy   | Local training, FedAvg, FedProx, FMRL-LA                      |
-| Independent | Data heterogeneity    | IID, Dirichlet non-IID with multiple alpha values             |
+| Independent | Data heterogeneity    | IID closed-set over all labels, Dirichlet non-IID with alpha values 0.01, 0.5, and 1.0  |
 | Independent | Unknown composition   | Leave-one-attack-out or multi-unknown holdout                 |
 | Independent | Random seed           | Fixed seed list, reused across all methods                    |
 | Dependent   | Closed-set quality    | Accuracy, macro F1, balanced accuracy, per-class scores       |
@@ -113,11 +113,11 @@ The main rule is simple: every method in a comparison must see the same data spl
 The raw CSV file is transformed into tensor datasets through the following steps:
 
 1. Detect numeric and categorical columns.
-2. Map known labels to contiguous integer classes.
-3. Keep unknown labels out of the training set.
+2. For closed-set experiments, map all source labels to contiguous integer classes.
+3. For open-set experiments, keep the unknown labels out of the training set.
 4. Fit scaling and encoding only on the training portion.
-5. Build known-class train, validation, and closed-set test tensors.
-6. Build an open-set test tensor by combining known test samples with held-out unknown samples.
+5. Build closed-set train, validation, and test tensors from the full source label set.
+6. Build an open-set test tensor by combining known test samples with held-out unknown samples when the open-set protocol is active.
 7. Partition the known training data into client shards with Dirichlet sampling.
 
 ### 4.2 Stored artifacts
@@ -146,24 +146,25 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 
 | ID  | Experiment                   | Main question                                                                   | Main baseline(s)                                                                                                   | Main outputs                                                         |
 | --- | ---------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
-| E1  | Closed-set validation        | Does the full model preserve known-class performance?                           | Centralized training, local-only, FedAvg, FedProx                                                                  | Accuracy, macro F1, balanced accuracy, convergence                   |
+| E1  | Closed-set validation        | Does the full model preserve performance when all labels are treated as closed-set classes? | Centralized training, local-only, FedAvg, FedProx                                                                  | Accuracy, macro F1, balanced accuracy, convergence                   |
 | E2  | Open-set detection           | Can unknown attacks be rejected without hurting known classes?                  | Closed-set classifier without EVT, softmax-only baseline                                                           | AUROC, AUPRC, FPR@95%TPR, unknown F1, confusion matrices             |
-| E3  | Federated non-IID comparison | Does FMRL-LA outperform standard federated methods under heterogeneous clients? | FedAvg, FedProx, local-only, centralized pooled training                                                           | Final accuracy, stability, convergence speed, communication cost     |
-| E4  | Combined open-set + non-IID  | Does the full system remain effective when both challenges are active?          | Closed-set classifier without EVT, softmax-only baseline, FedAvg, FedProx, local-only, centralized pooled training | Known-class metrics, unknown metrics, per-client robustness          |
+| E3  | Federated non-IID comparison | Does FMRL-LA outperform standard federated methods under heterogeneous clients? | FedAvg, FedProx, local-only                                                                                         | Final accuracy, stability, convergence speed, communication cost     |
+| E4  | Combined open-set + non-IID  | Does the full system remain effective when both challenges are active?          | Closed-set classifier without EVT, softmax-only baseline, FedAvg, FedProx, local-only                               | Known-class metrics, unknown metrics, per-client robustness          |
 | E5  | Ablation and sensitivity     | Which module contributes most to the gains?                                     | Base model, no EVT, no generator, FedAvg, FedProx, FMRL-LA                                                         | Metric deltas, threshold sensitivity, seed stability                 |
 | E6  | Efficiency and scalability   | How does performance change with more clients and more rounds?                  | FedAvg vs FMRL-LA                                                                                                  | Runtime, bytes transmitted, rounds to convergence, accuracy per cost |
+| E7  | Label-wise open-set stress test | Can the detector separate each held-out label from the remaining labels?      | IID open-set run, FedAvg open-set run, per-label latent export                                                  | AUROC, AUPRC, unknown F1, latent-space separation                    |
 
 ## 6. Detailed Experimental Protocols
 
 ### 6.1 E1: Closed-Set Validation
 
-**Purpose:** verify that adding open-set capability does not reduce known-class classification quality.
+**Purpose:** verify that the closed-set pipeline preserves classification quality across the full label set.
 
 **Setup**
 
-- Train on known-class data only.
+- Train on the full B-NAT label set.
 - Evaluate on the closed-set test tensor.
-- Compare centralized training on the pooled known-training tensor, local-only training, FedAvg, FedProx, and FMRL-LA under the same split.
+- Compare local-only training, FedAvg, FedProx, and FMRL-LA under the same split. Centralized pooled commands are retained in the scripts as commented reference baselines only.
 - Report both global averages and per-class results.
 
 **Metrics**
@@ -213,9 +214,9 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 
 **Setup**
 
-- Generate client shards with multiple Dirichlet alpha values.
+- Generate client shards with multiple Dirichlet alpha values: 0.01, 0.5, and 1.0 over the full label set.
 - Run the same training budget for all strategies.
-- Compare FedAvg, FedProx, local-only training, centralized pooled training on the full known-training tensor, and FMRL-LA.
+- Compare FedAvg, FedProx, local-only training, and FMRL-LA. Centralized pooled commands are retained in the scripts as commented reference baselines only.
 - Use the same client sampling fraction, seed list, and local epoch count for every run.
 
 **Metrics**
@@ -276,7 +277,7 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 
 **Sensitivity checks**
 
-- Dirichlet alpha sweep
+- Dirichlet alpha sweep over 0.01, 0.5, and 1.0
 - EVT threshold sweep
 - random-seed sweep
 - client-count sweep
@@ -307,6 +308,32 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 **Expected outcome**
 
 - FMRL-LA may add coordination overhead, but the selected-client update path should improve utility per round under non-IID data.
+
+### 6.7 E7: Label-Wise Open-Set Stress Test
+
+**Purpose:** demonstrate open-set separation when one source label is held out at a time and the latent tensor is saved per run.
+
+**Setup**
+
+- Hold out one source label per run.
+- Keep the remaining labels in the known set for that run.
+- Run the IID open-set configuration and the FedAvg open-set configuration for each held-out label.
+- Export latent embeddings from the active open-set evaluation tensor only, without duplicating closed-set rows.
+
+**Metrics**
+
+- AUROC
+- AUPRC
+- FPR@95%TPR
+- unknown F1
+- known accuracy after rejection
+- latent-space class separation
+
+**Expected outcome**
+
+- Known samples should form a tighter cluster than the unknown samples in latent space.
+- Unknown rejection should remain stable as the held-out label changes.
+- The latent-space proof for this experiment should be the canonical figure source for the paper.
 
 ## 7. Detailed Training and Evaluation Workflow
 
@@ -363,7 +390,7 @@ The final report should contain:
 - one plot set per experiment block
 - one summary table for statistical significance
 - one reproducibility log with commands, seeds, and output paths
-- one appendix dashboard for supplementary figures
+- one appendix plot set for supplementary figures
 
 ### Recommended figure groups
 
@@ -373,6 +400,7 @@ The final report should contain:
 - E4: combined robustness and per-client detection plots
 - E5: ablation bars and sensitivity sweeps
 - E6: runtime and communication-efficiency plots
+- E7: Label-wise latent-space separation and open-set proof plots
 
 ## 10. Final Execution Checklist
 
@@ -380,12 +408,13 @@ The final report should contain:
 - [ ] Label mapping frozen
 - [ ] Known train, validation, and test splits saved
 - [ ] Dirichlet client partitions generated and archived
-- [ ] Closed-set runs completed for all strategies
+- [ ] Closed-set runs completed for all strategies over the full label set
 - [ ] Open-set runs completed with validation-only calibration
 - [ ] Federated non-IID runs completed across alpha values
 - [ ] Combined open-set + non-IID runs completed
 - [ ] Ablation runs completed
 - [ ] Efficiency and scalability runs completed
+- [ ] Label-wise open-set stress-test runs completed
 - [ ] Tables filled from logged metrics
 - [ ] Figures regenerated from saved outputs
 - [ ] Statistical tests reported
@@ -399,3 +428,4 @@ The final system should show four consistent results:
 2. EVT rejection separates unknown attacks from known traffic with strong threshold-independent performance.
 3. FMRL-LA is more robust than FedAvg and FedProx under non-IID client partitions.
 4. The combined system remains usable when both open-set detection and federated heterogeneity are active at the same time.
+5. The label-wise open-set stress test cleanly separates each held-out label from the known set in the latent-space proof.

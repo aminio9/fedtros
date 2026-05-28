@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-experiments=("baseline" "exp1" "exp2" "exp3" "exp4" "ablation" "efficiency" "validation" "all")
+experiments=("baseline" "exp1" "exp2" "exp3" "exp4" "exp7" "ablation" "efficiency" "validation" "all")
 for experiment in "${experiments[@]}"; do
   poetry run python run.py "experiment=$experiment" --cfg job --resolve >/dev/null
 done
@@ -9,10 +9,10 @@ done
 poetry run python run.py "experiment=validation" "runtime=tiny" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=smoke" "runtime=tiny" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp1" "+method=fedprox" --cfg job --resolve >/dev/null
-poetry run python run.py "experiment=exp1" "+method=centralized_no_osr" --cfg job --resolve >/dev/null
+# poetry run python run.py "experiment=exp1" "+method=centralized_no_osr" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp2" "+method=fmrl_la" "open_set.evt.enabled=false" "experiment.method=ClosedSet_No_EVT" --cfg job --resolve >/dev/null
-poetry run python run.py "experiment=exp2" "+method=centralized_osr" --cfg job --resolve >/dev/null
-poetry run python run.py "experiment=exp2" "+method=centralized_no_osr" --cfg job --resolve >/dev/null
+# poetry run python run.py "experiment=exp2" "+method=centralized_osr" --cfg job --resolve >/dev/null
+# poetry run python run.py "experiment=exp2" "+method=centralized_no_osr" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=ablation" "+method=fmrl_la" "open_set.evt.enabled=false" "experiment.method=No_EVT" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=ablation" "+method=fmrl_la" "training.generator.enabled=false" "experiment.method=No_Generator" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=ablation" "+method=fmrl_la" "federated.strategy.utility_threshold=-1.0" "experiment.method=No_Selection" --cfg job --resolve >/dev/null
@@ -22,9 +22,13 @@ poetry run python run.py "experiment=efficiency" "federated.num_clients=20" "fed
 poetry run python run.py "experiment=efficiency" "federated.num_clients=20" "federated.num_rounds=100" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp3" "+method=fedavg" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp3" "+method=fedprox" --cfg job --resolve >/dev/null
-poetry run python run.py "experiment=exp3" "+method=centralized_no_osr" --cfg job --resolve >/dev/null
+# poetry run python run.py "experiment=exp3" "+method=centralized_no_osr" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp4" "+method=fmrl_la" "open_set.evt.enabled=false" "experiment.method=ClosedSet_No_EVT" --cfg job --resolve >/dev/null
-poetry run python run.py "experiment=exp4" "+method=centralized_osr" --cfg job --resolve >/dev/null
-poetry run python run.py "experiment=exp4" "+method=centralized_no_osr" --cfg job --resolve >/dev/null
+# poetry run python run.py "experiment=exp4" "+method=centralized_osr" --cfg job --resolve >/dev/null
+# poetry run python run.py "experiment=exp4" "+method=centralized_no_osr" --cfg job --resolve >/dev/null
+poetry run python run.py "experiment=exp7" "+method=fmrl_la" "dataset.known_labels=[Normal,BP,DoS,FoT]" --cfg job --resolve >/dev/null
+poetry run python run.py "experiment=exp7" "+method=fmrl_la" "dataset.known_labels=[Normal,BP,DoS,MitM]" --cfg job --resolve >/dev/null
+poetry run python run.py "experiment=exp7" "+method=fedavg" "dataset.known_labels=[Normal,BP,DoS,FoT]" --cfg job --resolve >/dev/null
+poetry run python run.py "experiment=exp7" "+method=fedavg" "dataset.known_labels=[Normal,BP,DoS,MitM]" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=ablation" "runtime=gpu" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=efficiency" "federated.num_clients=20" "federated.num_rounds=200" --cfg job --resolve >/dev/null
