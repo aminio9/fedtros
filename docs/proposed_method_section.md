@@ -1,314 +1,400 @@
-# Proposed Method
+# Section 4. Proposed Methodology: CF-MARLOS with Cooperative Federated CVAE-DQN, Utility-Aware Aggregation, and EVT Calibration
 
-This draft is written in manuscript style for a high-quality journal paper. It is aligned with the implemented framework in `cf_marlos`, whose full name is **Cooperative Federated Multi-Agent Reinforcement Learning with Learnable Aggregation for Open-Set Blockchain Intrusion Detection**. The method combines local CVAE-DQN learning, federated aggregation, generator-based reconstruction, and EVT-based open-set calibration for B-NAT blockchain traffic.
+This file is the manuscript-ready source for the proposed-method section. It is written in two versions:
 
-## 4. Proposed Method
+- English version for `paper/en/main.tex`.
+- Persian (FA) version for `paper/fa/main.tex`.
 
-We consider a horizontal federated learning setting with `N` clients. Client `i` owns a local dataset `D_i`, while the server has access only to aggregated model updates and a validation set `D_val`. The learning objective is to preserve known-class classification quality, remain stable under non-IID client partitions, and reject previously unseen attacks rather than forcing them into known classes.
+The overview figure should be placed at the beginning of Section 4.1 and used at full text width because the internal labels are dense:
 
-Each client trains a CVAE-DQN agent locally. The shared trainable parameters are aggregated by FedAvg, FedProx, or FMRL-LA. After federated training, the reconstruction behavior of the global model is calibrated with EVT on validation data to produce a thresholded unknown-rejection rule.
+- Shared English figure for both manuscripts: `docs/figures/proposed_method_overview.png`
+- In the Persian manuscript, keep the figure caption in Persian while reusing the same English artwork.
 
-### Notation
+The detailed pseudocode blocks should be placed in the algorithm section or immediately after the corresponding subsections, following `docs/paper_algorithms.md`.
+For the Persian manuscript, algorithm captions and short descriptions should be written in Persian even though the displayed figure remains in English.
 
-- `theta = {theta_p, theta_r, theta_Q, theta_G}`: federated parameters of the prior network, recognition network, main Q-network, and generator.
-- `theta_Q^-`: local target Q-network parameters.
-- `K`: number of federated rounds.
-- `mu`: FedProx proximal coefficient.
-- `M_evt`: class-conditional EVT models.
-- `delta`: global open-set rejection threshold.
+---
+
+## English Version
+
+## 4. CF-MARLOS: Cooperative Federated CVAE-DQN with Utility-Aware Aggregation and EVT Open-Set Calibration
+
+This section presents the proposed CF-MARLOS framework for open-set blockchain intrusion detection under horizontally federated and non-IID data. The method is designed for monitoring settings in which traffic records are naturally distributed across blockchain edge nodes, raw data cannot be centralized, and the detector must classify known attacks while rejecting attacks that were not available during training. Closed-set experiments use the full source label set, while the open-set protocol keeps `FoT` as the held-out unknown attack. CF-MARLOS therefore combines three tightly coupled components: a local CVAE-DQN intrusion-detection agent, a cooperative federated aggregation layer, and an EVT-based open-set calibration stage.
+
+The key idea is to federate only the neural components that define the shared representation and decision policy, while keeping local training state, replay memory, raw traffic, and EVT calibration artifacts private or post-training. Each client trains a CVAE-DQN agent on its local shard. The server then aggregates the prior network, recognition network, main Q-network, and generator using FedAvg, FedProx, or the proposed FMRL-LA strategy. After federated training, the final global model is calibrated with EVT using validation reconstruction errors from correctly classified known samples. At inference time, a sample is first assigned to the most likely known class by the Q-network; it is then rejected as unknown when its calibrated EVT unknown score exceeds the global threshold.
 
 ### 4.1 System Overview
 
-The complete pipeline starts with raw B-NAT traffic and ends with calibrated open-set inference. Raw records are preprocessed into tensor datasets, then partitioned into client shards using a non-IID split. Each client performs local CVAE-DQN training on its private shard, and the server aggregates the resulting updates into a global model. Once the shared representation has converged, EVT is fitted on validation reconstruction errors to transform the reconstruction score into a calibrated unknown probability.
+Figure 1 summarizes the complete CF-MARLOS pipeline. Raw B-NAT blockchain traffic is first converted from CSV records into typed, scaled, and encoded tensor artifacts. The preprocessing stage maps the closed-set label space for full-label experiments and withholds the unknown class only for the open-set protocol. In the current repository configuration, closed-set runs use all labels, while `FoT` is treated as the held-out unknown attack during open-set evaluation. The known training split is then partitioned into client shards, typically with a Dirichlet non-IID partition to simulate heterogeneous blockchain nodes.
 
-![Overview of the proposed method](D:/Research/cf_marlos/docs/figures/proposed_method_overview.png)
+Each client receives only its own shard and trains a local CVAE-DQN agent. The client-side model learns a latent representation, estimates Q-values for known classes, and trains a generator that reconstructs input features conditioned on the latent state and predicted class. During federated rounds, clients exchange no raw traffic records. They upload either trainable model parameters or, in FMRL-LA, a small audit summary used for client utility estimation. The server produces a global model by aggregating selected client updates. Finally, EVT calibration is performed on validation reconstruction errors so that the global model can distinguish high-error unknown samples from known-class traffic.
 
-*Figure 4.1. Overview of the cooperative federated open-set intrusion detection pipeline.*
-
-**Algorithm 1 belongs here** because it captures the full end-to-end workflow.
-
-```text
-Algorithm 1: Federated CVAE-DQN Training and Open-Set Calibration
-
-Input:
-    Client datasets {D_i}_{i=1}^N
-    Validation set D_val
-    Federated rounds K
-    Local training configuration H
-    Aggregation strategy S in {FedAvg, FedProx, FMRL-LA}
-
-Output:
-    Final global model theta*
-    Class-conditional EVT models M_evt
-    Global rejection threshold delta
-
-1:  Initialize global parameters theta^0 = {theta_p^0, theta_r^0, theta_Q^0, theta_G^0}
-2:  for round k = 1, ..., K do
-3:      Server samples available clients C_k
-4:      Server broadcasts theta^{k-1} to each client in C_k
-5:      for each client i in C_k in parallel do
-6:          Set mu_i = mu if S = FedProx, otherwise mu_i = 0
-7:          theta_i^k, m_i^k <- ClientLocalUpdate(D_i, theta^{k-1}, H, mu_i)
-8:      end for
-9:      if S = FMRL-LA then
-10:         theta^k <- FMRLLAUpdate(theta^{k-1}, {theta_i^k, m_i^k}_{i in C_k})
-11:     else
-12:         theta^k <- sum_{i in C_k} n_i theta_i^k / sum_{i in C_k} n_i
-13:     end if
-14: end for
-15: theta* <- theta^K
-16: M_evt, delta <- EVTCalibration(D_val, theta*)
-17: return theta*, M_evt, delta
-```
-
-This algorithm is the correct top-level statement of the method because it makes the dependency chain explicit: local training precedes aggregation, and aggregation precedes open-set calibration. It also shows that FedAvg and FedProx share the same aggregation skeleton, while FMRL-LA replaces uniform averaging with utility-aware aggregation.
+This design separates the roles of the learning stages. The CVAE-DQN agent learns the closed-set decision policy and the latent reconstruction structure. The federated layer improves scalability and privacy by avoiding centralized data collection. The EVT layer converts reconstruction error into a calibrated unknown-attack score, which is more appropriate for open-set intrusion detection than relying only on the closed-set Q-value maximum.
 
 ### 4.2 Local CVAE-DQN Agent
 
-Each client is modeled as a local agent that interacts with its private shard of traffic data. Given a traffic feature vector `s_t`, the agent selects a class action `a_t` using an epsilon-greedy policy and receives a reward that is positive when the predicted class matches the true class and negative otherwise. This formulation allows the classification task to be trained as a reinforcement learning problem while still preserving the structure of supervised class prediction.
+Let \(s \in \mathbb{R}^d\) denote a processed traffic feature vector and let \(a \in \{1,\ldots,C\}\) denote one of the known attack classes. Each client models intrusion detection as a sampled data-pool reinforcement-learning problem. The action is the predicted class, and the reward is positive when the prediction matches the known label and negative otherwise. Although the next state is sampled from the local data pool rather than generated by a physical network transition, the reinforcement-learning formulation allows the system to learn a value-based class-selection policy under replay and target-network stabilization.
 
-The client architecture contains four learned modules. The prior network `p_theta(z|s)` maps state features into a latent distribution, the recognition network `q_phi(z|s,a)` conditions the latent code on the state-action pair, the main Q-network `Q_psi(z,s)` predicts known-class values, and the target Q-network `Q_psi^-` stabilizes temporal-difference learning. In addition, the client maintains a replay buffer for experience replay and an epsilon-greedy policy for exploration.
+The local agent contains the following neural components.
 
-The local optimization objective is a sum of three interacting components. First, the prior network is updated by minimizing the KL divergence between the posterior and prior latent distributions. Second, the recognition network and main Q-network are updated using a Double-DQN temporal-difference loss. Third, when FedProx is active, a proximal penalty is added to constrain local drift from the current global parameters. In compact form:
+| Component | Notation | Function |
+|---|---|---|
+| Prior network | \(p_\theta(z \mid s)\) | Encodes the state into a latent distribution used for action-value prediction. |
+| Recognition network | \(q_\phi(z \mid s,a)\) | Infers a class-conditioned latent distribution used during TD learning and reconstruction. |
+| Main Q-network | \(Q_\psi(z,s)\) | Produces known-class action values and defines the closed-set prediction. |
+| Target Q-network | \(Q_{\psi^-}(z,s)\) | Local stabilization copy used to compute Double-DQN targets. |
+| Generator | \(G_\omega(z,a)\) | Reconstructs traffic features from latent and class-conditioned inputs. |
 
-```text
-L_prior = KL(q_phi(z|s,a*) || p_theta(z|s))
-L_TD    = Huber(Q_psi(z,s,a) - y)
-y       = r + gamma (1 - d) Q_psi^-(z', s', argmax_a Q_psi(z', s', a))
-L_prox  = (mu / 2) ||theta - theta^{k-1}||_2^2
-```
+The prior network is trained to align with the recognition network on the true class. For a known sample \((s,a^\ast)\), the latent regularization term is
 
-The target Q-network is not federated as a separate global object. It is a local stabilization copy that is synchronized from the main Q-network after aggregation and refreshed periodically during local training.
+\[
+L_{\mathrm{prior}} =
+\mathrm{KL}\!\left(q_\phi(z \mid s,a^\ast)\,\|\,p_\theta(z \mid s)\right).
+\]
 
-**Algorithm 2 belongs here** because it describes the exact local update procedure.
+The recognition network and main Q-network are trained through a Double-DQN target. The main Q-network selects the next action, while the target Q-network evaluates it:
 
-```text
-Algorithm 2: Client-Side CVAE-DQN Local Update with Optional FedProx
+\[
+a' = \arg\max_a Q_\psi(z',s',a),
+\]
 
-Input:
-    Local client dataset D_i
-    Broadcast global parameters theta^{k-1}
-    Local training configuration H
-    Proximal coefficient mu_i
+\[
+y = r + \gamma(1-d)\,Q_{\psi^-}(z',s',a'),
+\]
 
-Output:
-    Updated client parameters theta_i^k
-    Client diagnostics m_i^k
+\[
+L_{\mathrm{TD}} =
+\mathrm{Huber}\!\left(Q_\psi(z,s,a)-y\right).
+\]
 
-1:  Load theta^{k-1} into p_theta, q_phi, Q_psi, and G_omega
-2:  Set local target network Q_psi^- <- Q_psi
-3:  Store theta^{k-1} as the proximal reference
-4:  Initialize replay buffer B_i and epsilon-greedy policy pi_i
-5:  for each local episode e = 1, ..., E do
-6:      Reset the local environment and observe s_t
-7:      for each step t = 1, ..., T do
-8:          Select action a_t using pi_i
-9:          Observe r_t, s_{t+1}, done flag d_t, and true class a_t*
-10:         Store (s_t, a_t, r_t, s_{t+1}, d_t, a_t*) in B_i
-11:         if |B_i| is sufficient then
-12:             Sample mini-batch b from B_i
-13:             L_p <- KL(q_phi(z|s,a*) || p_theta(z|s))
-14:             if mu_i > 0 then
-15:                 L_p <- L_p + (mu_i / 2)||theta_p - theta_p^{k-1}||_2^2
-16:             end if
-17:             Update theta_p using L_p
-18:             y <- r + gamma(1-d) Q_psi^-(z', s', argmax_a Q_psi(z', s', a))
-19:             L_Q <- Huber(Q_psi(z,s,a) - y)
-20:             if mu_i > 0 then
-21:                 L_Q <- L_Q + (mu_i / 2)(
-                          ||theta_r - theta_r^{k-1}||_2^2
-                        + ||theta_Q - theta_Q^{k-1}||_2^2)
-22:             end if
-23:             Update theta_r and theta_Q using L_Q
-24:             Periodically update Q_psi^- from Q_psi
-25:         end if
-26:     end for
-27: end for
-28: Build C_i = correctly classified known samples from D_i
-29: if generator training is enabled and |C_i| is sufficient then
-30:     Train G_omega on C_i using reconstruction loss MSE(G_omega(z,a), s)
-31:     Add FedProx generator penalty if mu_i > 0
-32: end if
-33: Return theta_i^k = {theta_p, theta_r, theta_Q, theta_G} and diagnostics m_i^k
-```
+Experience replay is used to break the correlation between consecutive samples, and an epsilon-greedy policy balances exploration and exploitation during local training. The target network is updated locally through soft or hard synchronization from the main Q-network. It is not uploaded as an independent federated object because it is a stabilizing copy, not a separate global model.
 
-The value of this algorithm is that it makes the hybrid nature of the client update explicit. It is not a standard classifier update, nor is it a purely RL update. It combines latent-variable modeling, Double-DQN learning, replay-based optimization, and optional proximal regularization in a single local procedure. The generator is trained only after the client identifies correctly classified known samples, which protects the reconstruction model from contamination by ambiguous or misclassified traffic.
+When FedProx is enabled, the local objective includes a proximal penalty that constrains local drift from the broadcast global parameters:
+
+\[
+L_{\mathrm{prox}} =
+\frac{\mu}{2}\lVert \theta_i-\theta^{k-1}\rVert_2^2.
+\]
+
+This term is applied to the same trainable blocks that participate in federated learning. When \(\mu=0\), the same local update becomes the FedAvg-style client update.
 
 ### 4.3 Generator-Based Reconstruction
 
-The generator `G_omega(z,a)` reconstructs the input feature vector from a latent code and a class condition. In this framework, the generator is not used as a standalone decoder for data synthesis; instead, it serves as the bridge between the latent representation and the open-set detector. During training, the generator is updated only on correctly classified known samples. This design choice is important because the reconstruction error must represent the geometry of known classes, not the noise introduced by incorrect labels or unknown traffic.
+The generator provides the link between closed-set policy learning and open-set detection. After the Q-network predicts a class, the recognition network encodes the sample with that class condition, and the generator reconstructs the input:
 
-For a sample `x`, reconstruction error is computed as:
+\[
+\hat{x}=G_\omega(z,\hat{a}).
+\]
 
-```text
-e(x) = MSE(x, G_omega(q_phi(x, a_hat), a_hat))
-```
+The reconstruction error is computed as
 
-where `a_hat` is the predicted known class. Known samples should yield low reconstruction error, while unknown samples should typically produce larger error because they do not lie on the learned known-class manifold.
+\[
+e(x)=\frac{1}{d}\lVert x-\hat{x}\rVert_2^2 \cdot \kappa,
+\]
 
-No separate algorithm is required here because generator training is already embedded in Algorithm 2. A separate algorithm would duplicate the client-side update.
+where \(\kappa\) is the configurable error-scaling factor used by the open-set module.
+
+The generator is trained only on correctly classified known samples. This is a critical design choice. If misclassified samples are used, the generator may learn inconsistent class-conditioned reconstructions. If unknown samples contaminate the generator, reconstruction error becomes less reliable as an unknownness signal. By restricting generator training to correctly classified known samples, CF-MARLOS encourages the generator to model the known-class manifold and makes large reconstruction errors more meaningful during EVT calibration.
 
 ### 4.4 Federated Parameter Sharing
 
-The federated contract is deliberately narrow. Only trainable parameters that define the shared representation are exchanged across clients. Local state, calibration artifacts, and privacy-sensitive buffers remain private to each client.
+CF-MARLOS uses horizontal federated learning: all clients share the same feature schema and label space, but each client owns a different subset of samples. The server coordinates training rounds but never receives raw traffic records. The federated parameter vector is
 
-| Federated component | Role |
+\[
+\Theta = \{\theta_p,\theta_r,\theta_Q,\theta_G\},
+\]
+
+where \(\theta_p\), \(\theta_r\), \(\theta_Q\), and \(\theta_G\) are the parameters of the prior network, recognition network, main Q-network, and generator, respectively.
+
+The following separation is important for the paper because it explains what is actually federated.
+
+| Federated component | Reason |
 |---|---|
-| Prior network `p_theta(z|s)` | Learns shared latent structure from traffic features |
-| Recognition network `q_phi(z|s,a)` | Supports latent inference and reconstruction |
-| Main Q-network `Q_psi(z,s)` | Learns the global known-class decision policy |
-| Generator `G_omega(z,a)` | Learns shared reconstruction behavior for open-set detection |
+| Prior network \(p_\theta(z \mid s)\) | Shares the latent representation used by the global policy. |
+| Recognition network \(q_\phi(z \mid s,a)\) | Shares class-conditioned latent inference for TD learning and reconstruction. |
+| Main Q-network \(Q_\psi(z,s)\) | Shares the closed-set intrusion-detection policy. |
+| Generator \(G_\omega(z,a)\) | Shares reconstruction behavior needed for open-set scoring. |
 
-| Not federated | Role |
+| Non-federated component | Reason |
 |---|---|
-| Target Q-network `Q_psi^-` | Local stabilization copy of the main Q-network |
-| Replay buffer | Stores local transitions and interaction history |
-| Optimizer states | Local training state, not required for aggregation |
-| EVT models and thresholds | Calibration artifacts fitted after training |
-| Raw local data | Remains on the client for privacy and federation assumptions |
+| Target Q-network \(Q_{\psi^-}\) | A local stabilization copy synchronized from the main Q-network after aggregation. |
+| Replay buffer | Contains local sample trajectories and remains private. |
+| Optimizer state | Local training state; sharing it would increase communication and leak training dynamics. |
+| EVT models and thresholds | Fitted after training on validation reconstruction errors, not optimized by FL. |
+| Raw traffic records | Remain on clients to preserve the federated-learning assumption. |
 
-In the current implementation, the target Q-network is synchronized locally after aggregation and should be described as a local stabilizer, not as a separately shared model. Likewise, EVT is a calibration layer rather than a federated representation learner, so it should remain outside the aggregation loop.
+This boundary improves scalability and privacy while preserving enough shared structure for a global intrusion detector. It also prevents the server from aggregating transient local objects, such as replay memory or optimizer momentum, that are not meaningful across heterogeneous client distributions.
 
 ### 4.5 FedAvg and FedProx Baselines
 
-FedAvg serves as the canonical federated baseline. After local training, the server aggregates client parameters by sample count:
+FedAvg is used as the standard federated baseline. At round \(k\), the server broadcasts the current global model \(\Theta^{k-1}\), receives client models \(\Theta_i^k\), and computes a sample-weighted average:
 
-```text
-theta^k = sum_i n_i theta_i^k / sum_i n_i
-```
+\[
+\Theta^k =
+\sum_{i \in C_k}
+\frac{n_i}{\sum_{j \in C_k} n_j}\Theta_i^k,
+\]
 
-FedProx retains the same server-side averaging rule but modifies the local objective by penalizing drift from the broadcast global model:
+where \(C_k\) is the sampled client set and \(n_i\) is the local sample count.
 
-```text
-F_i^prox(theta) = F_i(theta) + (mu / 2) ||theta - theta^{k-1}||_2^2
-```
+FedProx keeps the same server aggregation rule but changes the client objective by adding the proximal term described in Section 4.2. This makes FedProx more robust when client data are heterogeneous because local updates are discouraged from moving too far away from the global model. The trade-off is that an overly large \(\mu\) can slow local adaptation, especially for clients that contain rare or skewed attack distributions.
 
-In this repository, the proximal term is applied on the client side to the federated blocks learned during local training. This makes FedProx more stable under non-IID client data, but also more conservative when the proximal coefficient is too large. For that reason, FedAvg and FedProx should be presented as optimization baselines rather than as separate algorithm blocks.
+In this paper, FedAvg and FedProx are treated as baselines rather than main algorithmic contributions. They are included to determine whether the proposed FMRL-LA aggregation strategy improves performance beyond standard sample-weighted aggregation and proximal regularization.
 
 ### 4.6 FMRL-LA Cooperative Aggregation
 
-FMRL-LA is the main federated contribution of the method. It replaces uniform aggregation with a two-phase cooperative protocol that estimates client utility before deciding which updates should influence the global model. The server does not treat every client as equally informative; instead, it scores each client using latent summaries and training diagnostics that reflect reward, classification quality, stability, novelty, and data coverage.
+The main cooperative component of CF-MARLOS is FMRL-LA, a utility-aware federated aggregation strategy adapted to the CVAE-DQN intrusion-detection setting. Unlike FedAvg, which assumes that all selected client updates should contribute according to sample count, FMRL-LA estimates the usefulness of each update before aggregation. This is important under non-IID partitions, where a client may have missing classes, unstable TD learning, weak generator quality, or a local distribution that is not representative of the global task.
 
-The client-side audit vector combines the mean latent summary from the prior network with scalar diagnostics derived from local training. These diagnostics include recent reward, historical reward, macro F1, accuracy, TD stability, novelty, class entropy, label coverage, generator quality, and interaction count. The server uses these signals to estimate client utility through a learned critic and then selects the clients whose updates are most likely to improve the global objective.
+FMRL-LA operates in two phases for each logical round.
 
-The aggregation step is utility-weighted rather than purely sample-weighted:
+**Phase A: local training and audit upload.** The server broadcasts \(\Theta^{k-1}\) to sampled clients. Each client trains locally and returns audit metadata rather than immediately contributing its weights. The audit vector contains latent summaries and scalar diagnostics such as recent reward, historical reward, macro F1, accuracy, TD stability, KL-derived novelty, class entropy, label coverage, generator-correct fraction, and local step count. The server evaluates this metadata with a client-specific asynchronous critic and obtains a nonnegative utility score \(u_i\).
 
-```text
-theta^k = theta^{k-1} + eta * sum_{i in A_k} u_i (theta_i^k - theta^{k-1}) / sum_{i in A_k} u_i
-```
+**Phase B: selected upload and weighted aggregation.** The server selects clients using a utility threshold, a minimum-client rule, a maximum selected-client fraction, and a warm-up policy. Selected clients upload cached model weights from Phase A. The server aggregates parameter deltas rather than raw model values:
 
-where `A_k` is the selected client set and `u_i` is the estimated utility of client `i`. During early rounds, the utility model is warmed up so that selection does not become overly aggressive before the server has enough evidence about client quality.
+\[
+\Delta_i = \Theta_i^k-\Theta^{k-1},
+\]
 
-**Algorithm 3 belongs here** because it is the novel cooperative federated mechanism.
+\[
+\Theta^k =
+\Theta^{k-1} +
+\eta
+\frac{\sum_{i \in A_k} u_i \Delta_i}
+{\sum_{i \in A_k} u_i},
+\]
 
-```text
-Algorithm 3: FMRL-LA Utility-Aware Client Selection and Aggregation
+where \(A_k\) is the selected client set and \(\eta\) is the aggregation learning rate.
 
-Input:
-    Previous global parameters theta^{k-1}
-    Client updates and diagnostics {theta_i^k, m_i^k}_{i in C_k}
-    Minimum selected clients q_min
-    Maximum selected fraction rho_max
-    Utility threshold lambda
-    Aggregation step size eta
+The server also maintains a centralized mixer that predicts system-level utility from the per-client utilities and the padded global client-state vector. A round-level target combines reward, F1, accuracy, TD stability, novelty, and communication efficiency. This provides a learnable feedback mechanism for improving client scoring over rounds.
 
-Output:
-    Updated global parameters theta^k
+The expected benefit of FMRL-LA is improved robustness and communication efficiency under heterogeneous clients. Its cost is higher coordination complexity: one logical round requires a metadata/audit stage and a selected-weight upload stage. Therefore, the paper should report both predictive performance and communication cost when comparing FMRL-LA with FedAvg and FedProx.
 
-Phase A: utility estimation and client selection
-1:  for each client i in C_k do
-2:      Extract latent summary h_i
-3:      Extract scalar diagnostics x_i from m_i^k:
-            reward, historical reward, F1, accuracy, TD stability,
-            novelty, class entropy, label coverage, generator quality,
-            and local step count
-4:      Estimate utility u_i = C_i(h_i, x_i)
-5:      Clip or temperature-scale u_i
-6:  end for
-7:  Select A_k = {i : u_i >= lambda}
-8:  if |A_k| < q_min then
-9:      Add highest-utility clients until |A_k| = q_min
-10: end if
-11: Limit |A_k| so that |A_k| <= ceil(rho_max |C_k|)
+### 4.7 EVT Open-Set Calibration and Inference
 
-Phase B: utility-weighted aggregation
-12: for each selected client i in A_k do
-13:     Delta_i <- theta_i^k - theta^{k-1}
-14: end for
-15: theta^k <- theta^{k-1}
-              + eta * sum_{i in A_k} u_i Delta_i / sum_{i in A_k} u_i
-16: Compute round-level system utility
-17: Update server-side critics and centralized mixer
-18: Save theta^k and monitoring records
-19: return theta^k
-```
+After federated training, the final global model is calibrated for open-set recognition using Extreme Value Theory. EVT is not trained during federated optimization and is not shared as a client parameter. It is a post-training calibration layer fitted on validation reconstruction errors.
 
-The advantage of FMRL-LA is that it can suppress low-quality or unstable client updates under heterogeneous data distributions. The tradeoff is additional communication and coordination overhead, because the method requires audit metadata, client selection, cached uploads, and server-side utility learning. This overhead is justified when robustness and final utility are more important than minimizing coordination cost.
+For each validation sample, the model first predicts a known class:
 
-### 4.7 EVT Open-Set Calibration
+\[
+\hat{a}=\arg\max_a Q_\psi(p_\theta(z\mid s),s,a).
+\]
 
-The final stage converts the trained classifier into an open-set detector. EVT is fitted after federated training, using only validation samples that are both known and correctly classified. For each known class, the reconstruction errors form a class-conditional distribution, and the upper tail of that distribution is modeled with a generalized Pareto distribution. This yields a probabilistic unknown score for each sample.
+Only validation samples that are correctly classified as known are used for calibration. For each known class \(c\), the upper tail of the reconstruction-error distribution is extracted and modeled with a generalized Pareto distribution. The class-conditional EVT model maps a reconstruction error to an unknown probability:
 
-The calibration procedure is:
+\[
+P_{\mathrm{unknown}}(x)=
+M_{\mathrm{EVT},\hat{a}}(e(x)).
+\]
 
-1. Run the trained global model on validation data.
-2. Keep reconstruction errors only for correctly classified known samples.
-3. Fit an EVT tail model per class.
-4. Estimate per-class unknown probabilities from reconstruction error.
-5. Set the global threshold `delta` using validation known-sample probabilities.
+The global decision threshold \(\delta_{\mathrm{global}}\) is calibrated from validation unknown probabilities according to the target known false-positive rate. During inference, a sample is accepted as the predicted known class when
 
-At inference time, a sample is rejected as unknown when its EVT score exceeds the calibrated threshold. If no EVT tail is available for the predicted class, the safe behavior is to treat the sample as unknown rather than silently accepting it as known.
+\[
+P_{\mathrm{unknown}}(x) < \delta_{\mathrm{global}},
+\]
 
-```text
-Algorithm 4: EVT Calibration and Open-Set Inference
+and rejected as unknown when
 
-Input:
-    Validation set D_val
-    Sample x for inference
-    Trained global model theta*
-    EVT tail fraction alpha_evt
-    Target known false-positive rate beta
+\[
+P_{\mathrm{unknown}}(x) \geq \delta_{\mathrm{global}}.
+\]
 
-Output:
-    EVT models M_evt
-    Global threshold delta
-    Final prediction y_hat
+This stage converts the model from a closed-set classifier into an open-set intrusion detector. The main advantage is that unknown rejection depends on class-conditioned reconstruction behavior rather than only on the magnitude of a Q-value or softmax-like confidence. The main limitation is calibration sensitivity: EVT performance depends on the validation split, the number of correctly classified calibration samples, the tail fraction, and the selected known false-positive rate.
 
-Calibration:
-1:  Initialize empty reconstruction-error set E_c for each known class c
-2:  for each validation sample (s,y) in D_val do
-3:      c_hat <- argmax_c Q_psi(p_theta(s), s, c)
-4:      if c_hat = y then
-5:          z <- q_phi(s,c_hat)
-6:          s_hat <- G_omega(z,c_hat)
-7:          e <- MSE(s_hat, s)
-8:          Add e to E_{c_hat}
-9:      end if
-10: end for
-11: for each known class c with sufficient errors E_c do
-12:     Choose tail threshold u_c from the upper alpha_evt tail of E_c
-13:     Fit a generalized Pareto distribution to excesses e - u_c
-14:     Store fitted model M_evt[c]
-15: end for
-16: Compute validation unknown probabilities using M_evt
-17: Set delta to the (1 - beta) quantile of validation unknown probabilities
+### 4.8 Methodological Rationale
 
-Inference:
-18: c_hat <- argmax_c Q_psi(p_theta(x), x, c)
-19: z <- q_phi(x,c_hat)
-20: x_hat <- G_omega(z,c_hat)
-21: e_x <- MSE(x_hat, x)
-22: p_u <- M_evt[c_hat](e_x)
-23: if p_u >= delta then
-24:     y_hat <- Unknown
-25: else
-26:     y_hat <- c_hat
-27: end if
-28: return M_evt, delta, y_hat
-```
+The proposed architecture follows a modular design because each module solves a different failure mode. The CVAE-DQN agent learns discriminative known-class behavior while retaining a latent structure suitable for reconstruction. The generator transforms the learned latent representation into an open-set signal. The federated layer enables distributed training without raw-data centralization. FMRL-LA addresses non-IID client quality variation by weighting informative updates more heavily. EVT then provides a calibrated rejection rule for unknown attacks.
 
-This stage is critical for the security setting because it provides a calibrated rejection mechanism instead of a raw confidence threshold. The main benefit is that unknown detection is tied to the reconstruction geometry of the known classes. The main limitation is sensitivity to validation quality and EVT tail size, so the results section should report both threshold-independent metrics and threshold-dependent metrics.
+The same framework also supports controlled ablations. Removing EVT tests whether reconstruction calibration is necessary. Removing the generator tests whether the open-set signal depends on reconstruction. Replacing FMRL-LA with FedAvg or FedProx tests whether utility-aware aggregation improves federated training. These ablations make the method suitable for a high-quality journal paper because each claimed contribution can be tied to a measurable experimental comparison.
 
-## Summary
+---
 
-The proposed method is intentionally structured as one pipeline rather than a collection of isolated modules. Local CVAE-DQN learning provides the known-class representation, federated aggregation shares useful knowledge across clients, FMRL-LA improves robustness under heterogeneity, and EVT adds a calibrated open-set rejection layer. Together, these components form the cooperative federated open-set intrusion detection framework described by the repository.
+## Persian (FA) Version
+
+## 4. چارچوب CF-MARLOS: یادگیری فدرال همکارانه CVAE-DQN با تجمیع آگاه از سودمندی و واسنجی EVT برای تشخیص مجموعه باز
+
+در این بخش، چارچوب پیشنهادی CF-MARLOS برای تشخیص نفوذ در ترافیک بلاک‌چین در شرایط یادگیری فدرال افقی و داده‌های غیرهمسان معرفی می‌شود. این روش برای سناریوهایی طراحی شده است که داده‌های ترافیکی میان گره‌های لبه بلاک‌چین توزیع شده‌اند، انتقال داده خام به یک مرکز واحد مطلوب یا مجاز نیست، و مدل باید علاوه بر طبقه‌بندی حملات شناخته‌شده، حملات دیده‌نشده را نیز به‌عنوان نمونه ناشناخته رد کند. بنابراین CF-MARLOS سه مؤلفه اصلی را با یکدیگر ترکیب می‌کند: عامل محلی CVAE-DQN برای تشخیص نفوذ، لایه تجمیع فدرال همکارانه، و مرحله واسنجی مجموعه باز مبتنی بر نظریه مقدار حدی یا EVT.
+
+ایده اصلی این است که فقط مؤلفه‌های عصبی مشترک که بازنمایی و سیاست تصمیم‌گیری را می‌سازند فدرال شوند، در حالی که وضعیت آموزش محلی، حافظه بازپخش، داده خام و مصنوعات واسنجی EVT محلی یا پساآموزشی باقی می‌مانند. هر کلاینت یک عامل CVAE-DQN را روی قطعه داده محلی خود آموزش می‌دهد. سپس سرور پارامترهای شبکه پیشین، شبکه بازشناسی، شبکه Q اصلی و مولد را با یکی از روش‌های FedAvg، FedProx یا راهبرد پیشنهادی FMRL-LA تجمیع می‌کند. پس از پایان آموزش فدرال، مدل جهانی نهایی با استفاده از خطاهای بازسازی نمونه‌های اعتبارسنجی شناخته‌شده و درست‌طبقه‌بندی‌شده واسنجی می‌شود. در زمان استنتاج، ابتدا Q-network محتمل‌ترین کلاس شناخته‌شده را تعیین می‌کند؛ سپس اگر امتیاز ناشناختگی EVT از آستانه جهانی بیشتر باشد، نمونه به‌عنوان ناشناخته رد می‌شود.
+
+### 4.1 نمای کلی سامانه
+
+شکل 1 جریان کامل CF-MARLOS را نشان می‌دهد. ترافیک خام B-NAT ابتدا از رکوردهای CSV به مصنوعات تانسوری تبدیل می‌شود؛ در این مرحله نوع ستون‌ها مشخص می‌شود، ویژگی‌ها مقیاس‌بندی و کدگذاری می‌شوند، و نگاشت برچسب‌های مجموعه بسته ساخته می‌شود. در آزمایش‌های closed-set، کل برچسب‌های منبع استفاده می‌شوند و `FoT` فقط در پروتکل open-set به‌عنوان برچسب ناشناخته کنار گذاشته می‌شود. سپس بخش آموزش به قطعات کلاینتی تقسیم می‌شود؛ معمولاً از تقسیم‌بندی دیریکله غیرهمسان استفاده می‌شود تا ناهمگنی میان گره‌های بلاک‌چین شبیه‌سازی شود.
+
+هر کلاینت فقط قطعه داده خود را دریافت می‌کند و عامل CVAE-DQN محلی را آموزش می‌دهد. مدل محلی یک بازنمایی نهفته می‌آموزد، برای کلاس‌های شناخته‌شده مقدار Q تخمین می‌زند، و یک مولد را آموزش می‌دهد که ویژگی‌های ورودی را بر اساس حالت نهفته و کلاس پیش‌بینی‌شده بازسازی می‌کند. در طول دورهای فدرال، هیچ رکورد خامی از کلاینت‌ها خارج نمی‌شود. در روش‌های استاندارد، کلاینت‌ها پارامترهای قابل‌آموزش را ارسال می‌کنند؛ در FMRL-LA نیز خلاصه‌های ممیزی برای برآورد سودمندی کلاینت استفاده می‌شود. سرور با تجمیع به‌روزرسانی‌های انتخاب‌شده، مدل جهانی را تولید می‌کند. در پایان، واسنجی EVT روی خطاهای بازسازی اعتبارسنجی انجام می‌شود تا مدل جهانی بتواند نمونه‌های ناشناخته با خطای زیاد را از ترافیک شناخته‌شده جدا کند.
+
+این طراحی نقش مراحل مختلف را از هم جدا می‌کند. عامل CVAE-DQN سیاست تصمیم‌گیری مجموعه بسته و ساختار بازسازی نهفته را می‌آموزد. لایه فدرال مقیاس‌پذیری و حریم خصوصی را با حذف نیاز به متمرکزسازی داده خام بهبود می‌دهد. لایه EVT خطای بازسازی را به امتیاز واسنجی‌شده برای حمله ناشناخته تبدیل می‌کند؛ این رویکرد برای تشخیص نفوذ مجموعه باز مناسب‌تر از اتکا به بیشینه مقدار Q یا اعتماد طبقه‌بند مجموعه بسته است.
+
+### 4.2 عامل محلی CVAE-DQN
+
+فرض کنید \(s \in \mathbb{R}^d\) بردار ویژگی پردازش‌شده یک نمونه ترافیکی و \(a \in \{1,\ldots,C\}\) یکی از کلاس‌های حمله شناخته‌شده باشد. هر کلاینت مسئله تشخیص نفوذ را به‌صورت یک مسئله یادگیری تقویتی مبتنی بر مخزن داده مدل می‌کند. کنش همان کلاس پیش‌بینی‌شده است و پاداش زمانی مثبت می‌شود که پیش‌بینی با برچسب واقعی شناخته‌شده برابر باشد و در غیر این صورت منفی است. اگرچه حالت بعدی از مخزن داده محلی نمونه‌گیری می‌شود و نتیجه یک گذار فیزیکی شبکه نیست، این فرمول‌بندی امکان یادگیری سیاست انتخاب کلاس مبتنی بر مقدار را با استفاده از بازپخش تجربه و شبکه هدف فراهم می‌کند.
+
+عامل محلی شامل مؤلفه‌های عصبی زیر است.
+
+| مؤلفه | نماد | نقش |
+|---|---|---|
+| شبکه پیشین | \(p_\theta(z \mid s)\) | حالت را به توزیع نهفته‌ای تبدیل می‌کند که برای پیش‌بینی مقدار کنش استفاده می‌شود. |
+| شبکه بازشناسی | \(q_\phi(z \mid s,a)\) | توزیع نهفته وابسته به کلاس را برای یادگیری TD و بازسازی تخمین می‌زند. |
+| شبکه Q اصلی | \(Q_\psi(z,s)\) | مقدار کنش‌های کلاس‌های شناخته‌شده را تولید می‌کند و پیش‌بینی مجموعه بسته را می‌سازد. |
+| شبکه Q هدف | \(Q_{\psi^-}(z,s)\) | کپی پایدارساز محلی برای محاسبه هدف Double-DQN است. |
+| مولد | \(G_\omega(z,a)\) | ویژگی‌های ترافیکی را از ورودی نهفته و شرط کلاسی بازسازی می‌کند. |
+
+شبکه پیشین با هدف نزدیک شدن به شبکه بازشناسی روی کلاس واقعی آموزش داده می‌شود. برای نمونه شناخته‌شده \((s,a^\ast)\)، جمله منظم‌سازی نهفته به‌صورت زیر است:
+
+\[
+L_{\mathrm{prior}} =
+\mathrm{KL}\!\left(q_\phi(z \mid s,a^\ast)\,\|\,p_\theta(z \mid s)\right).
+\]
+
+شبکه بازشناسی و شبکه Q اصلی با هدف Double-DQN آموزش داده می‌شوند. شبکه Q اصلی کنش بعدی را انتخاب می‌کند و شبکه Q هدف مقدار آن را ارزیابی می‌کند:
+
+\[
+a' = \arg\max_a Q_\psi(z',s',a),
+\]
+
+\[
+y = r + \gamma(1-d)\,Q_{\psi^-}(z',s',a'),
+\]
+
+\[
+L_{\mathrm{TD}} =
+\mathrm{Huber}\!\left(Q_\psi(z,s,a)-y\right).
+\]
+
+بازپخش تجربه برای کاهش همبستگی میان نمونه‌های متوالی استفاده می‌شود و سیاست \(\epsilon\)-حریصانه تعادل میان اکتشاف و بهره‌برداری را در آموزش محلی برقرار می‌کند. شبکه هدف فقط به‌صورت محلی از شبکه Q اصلی به‌روزرسانی نرم یا سخت دریافت می‌کند. این شبکه به‌عنوان یک شیء فدرال مستقل ارسال نمی‌شود، زیرا نقش آن پایدارسازی آموزش است و مدل جهانی مستقلی محسوب نمی‌شود.
+
+هنگامی که FedProx فعال باشد، هدف محلی شامل جریمه پروگزیمال است تا انحراف به‌روزرسانی محلی از پارامترهای جهانی پخش‌شده محدود شود:
+
+\[
+L_{\mathrm{prox}} =
+\frac{\mu}{2}\lVert \theta_i-\theta^{k-1}\rVert_2^2.
+\]
+
+این جمله روی همان بلوک‌های قابل‌آموزشی اعمال می‌شود که در یادگیری فدرال مشارکت دارند. زمانی که \(\mu=0\) باشد، همین به‌روزرسانی محلی به به‌روزرسانی مشابه FedAvg تبدیل می‌شود.
+
+### 4.3 بازسازی مبتنی بر مولد
+
+مولد ارتباط میان یادگیری سیاست مجموعه بسته و تشخیص مجموعه باز را برقرار می‌کند. پس از آنکه Q-network یک کلاس را پیش‌بینی کرد، شبکه بازشناسی نمونه را با همان شرط کلاسی رمزگذاری می‌کند و مولد ورودی را بازسازی می‌کند:
+
+\[
+\hat{x}=G_\omega(z,\hat{a}).
+\]
+
+خطای بازسازی به‌صورت زیر محاسبه می‌شود:
+
+\[
+e(x)=\frac{1}{d}\lVert x-\hat{x}\rVert_2^2 \cdot \kappa,
+\]
+
+که در آن \(\kappa\) ضریب مقیاس‌دهی قابل‌تنظیم خطا در ماژول مجموعه باز است.
+
+مولد فقط روی نمونه‌های شناخته‌شده‌ای آموزش داده می‌شود که مدل آن‌ها را درست طبقه‌بندی کرده است. این انتخاب طراحی اهمیت زیادی دارد. اگر نمونه‌های نادرست‌طبقه‌بندی‌شده وارد آموزش مولد شوند، مولد ممکن است بازسازی‌های ناسازگار با شرط کلاسی بیاموزد. اگر نمونه‌های ناشناخته نیز وارد آموزش شوند، خطای بازسازی دیگر نشانه قابل‌اعتمادی برای ناشناختگی نخواهد بود. بنابراین، محدود کردن آموزش مولد به نمونه‌های شناخته‌شده و درست‌طبقه‌بندی‌شده باعث می‌شود مولد منیفلد کلاس‌های شناخته‌شده را مدل کند و خطاهای بازسازی بزرگ در مرحله EVT معنای بیشتری داشته باشند.
+
+### 4.4 اشتراک‌گذاری پارامترها در یادگیری فدرال
+
+CF-MARLOS از یادگیری فدرال افقی استفاده می‌کند؛ یعنی همه کلاینت‌ها فضای ویژگی و فضای برچسب مشترک دارند، اما هر کلاینت مالک زیرمجموعه متفاوتی از نمونه‌ها است. سرور دورهای آموزش را هماهنگ می‌کند، اما رکوردهای خام ترافیکی را دریافت نمی‌کند. بردار پارامترهای فدرال به‌صورت زیر تعریف می‌شود:
+
+\[
+\Theta = \{\theta_p,\theta_r,\theta_Q,\theta_G\},
+\]
+
+که در آن \(\theta_p\)، \(\theta_r\)، \(\theta_Q\) و \(\theta_G\) به‌ترتیب پارامترهای شبکه پیشین، شبکه بازشناسی، شبکه Q اصلی و مولد هستند.
+
+تفکیک زیر برای مقاله مهم است، زیرا نشان می‌دهد دقیقاً کدام مؤلفه‌ها فدرال می‌شوند.
+
+| مؤلفه فدرال‌شده | دلیل |
+|---|---|
+| شبکه پیشین \(p_\theta(z \mid s)\) | بازنمایی نهفته مشترک برای سیاست جهانی را فراهم می‌کند. |
+| شبکه بازشناسی \(q_\phi(z \mid s,a)\) | استنتاج نهفته وابسته به کلاس را برای یادگیری TD و بازسازی به اشتراک می‌گذارد. |
+| شبکه Q اصلی \(Q_\psi(z,s)\) | سیاست تشخیص نفوذ مجموعه بسته را به اشتراک می‌گذارد. |
+| مولد \(G_\omega(z,a)\) | رفتار بازسازی موردنیاز برای امتیازدهی مجموعه باز را به اشتراک می‌گذارد. |
+
+| مؤلفه فدرال‌نشده | دلیل |
+|---|---|
+| شبکه Q هدف \(Q_{\psi^-}\) | کپی پایدارساز محلی است و پس از تجمیع از شبکه Q اصلی همگام می‌شود. |
+| حافظه بازپخش | شامل مسیرها و نمونه‌های محلی است و خصوصی باقی می‌ماند. |
+| وضعیت بهینه‌ساز | وضعیت آموزش محلی است و اشتراک آن هزینه ارتباطی و خطر افشای دینامیک آموزش را افزایش می‌دهد. |
+| مدل‌ها و آستانه‌های EVT | پس از آموزش و بر اساس خطای بازسازی اعتبارسنجی برازش می‌شوند، نه در فرایند FL. |
+| داده خام ترافیکی | برای حفظ فرض یادگیری فدرال روی کلاینت باقی می‌ماند. |
+
+این مرزبندی مقیاس‌پذیری و حریم خصوصی را بهبود می‌دهد و هم‌زمان ساختار مشترک کافی برای ساخت یک آشکارساز جهانی نفوذ را حفظ می‌کند. همچنین مانع از تجمیع اشیای گذرای محلی مانند حافظه بازپخش یا مومنتوم بهینه‌ساز می‌شود؛ زیرا این اشیا در میان توزیع‌های ناهمسان کلاینتی معنای مشترک ندارند.
+
+### 4.5 مبناهای فدرال FedAvg و FedProx
+
+FedAvg به‌عنوان مبنای استاندارد یادگیری فدرال استفاده می‌شود. در دور \(k\)، سرور مدل جهانی فعلی \(\Theta^{k-1}\) را پخش می‌کند، مدل‌های محلی \(\Theta_i^k\) را دریافت می‌کند و میانگین وزن‌دار بر اساس تعداد نمونه را محاسبه می‌کند:
+
+\[
+\Theta^k =
+\sum_{i \in C_k}
+\frac{n_i}{\sum_{j \in C_k} n_j}\Theta_i^k,
+\]
+
+که در آن \(C_k\) مجموعه کلاینت‌های نمونه‌گیری‌شده و \(n_i\) تعداد نمونه‌های محلی کلاینت \(i\) است.
+
+FedProx همان قاعده تجمیع سمت سرور را حفظ می‌کند، اما هدف محلی را با افزودن جمله پروگزیمال بخش 4.2 تغییر می‌دهد. این روش در شرایط داده‌های غیرهمسان مقاوم‌تر است، زیرا به‌روزرسانی‌های محلی را از فاصله گرفتن بیش از حد از مدل جهانی بازمی‌دارد. هزینه این کار آن است که اگر \(\mu\) بیش از حد بزرگ باشد، سازگاری محلی کند می‌شود؛ به‌ویژه برای کلاینت‌هایی که توزیع حملات نادر یا بسیار چوله دارند.
+
+در این مقاله، FedAvg و FedProx به‌عنوان مبنا در نظر گرفته می‌شوند، نه مشارکت الگوریتمی اصلی. هدف از قرار دادن آن‌ها بررسی این است که آیا FMRL-LA نسبت به تجمیع وزن‌دار استاندارد و منظم‌سازی پروگزیمال، بهبود معناداری ایجاد می‌کند یا خیر.
+
+### 4.6 تجمیع همکارانه FMRL-LA
+
+مؤلفه همکارانه اصلی CF-MARLOS، روش FMRL-LA است؛ یک راهبرد تجمیع فدرال آگاه از سودمندی که برای محیط CVAE-DQN تشخیص نفوذ سازگار شده است. برخلاف FedAvg که فرض می‌کند همه به‌روزرسانی‌های انتخاب‌شده باید بر اساس تعداد نمونه مشارکت کنند، FMRL-LA پیش از تجمیع، مفید بودن هر به‌روزرسانی را تخمین می‌زند. این موضوع در تقسیم‌بندی‌های غیرهمسان اهمیت دارد، زیرا برخی کلاینت‌ها ممکن است کلاس‌های ناقص، یادگیری TD ناپایدار، کیفیت ضعیف مولد، یا توزیعی غیرنماینده نسبت به وظیفه جهانی داشته باشند.
+
+FMRL-LA در هر دور منطقی دو فاز دارد.
+
+**فاز A: آموزش محلی و ارسال ممیزی.** سرور \(\Theta^{k-1}\) را برای کلاینت‌های نمونه‌گیری‌شده ارسال می‌کند. هر کلاینت به‌صورت محلی آموزش می‌بیند و به‌جای ارسال فوری وزن‌ها، فراداده ممیزی را برمی‌گرداند. بردار ممیزی شامل خلاصه‌های نهفته و شاخص‌های عددی مانند پاداش اخیر، پاداش تاریخی، F1 کلان، دقت، پایداری TD، نوآوری مبتنی بر KL، آنتروپی کلاس، پوشش برچسب، نسبت نمونه‌های درست برای آموزش مولد و تعداد گام‌های محلی است. سرور این فراداده را با یک منتقد ناهمگام مخصوص کلاینت ارزیابی می‌کند و یک امتیاز سودمندی نامنفی \(u_i\) به دست می‌آورد.
+
+**فاز B: ارسال انتخابی و تجمیع وزن‌دار.** سرور کلاینت‌ها را با استفاده از آستانه سودمندی، قاعده حداقل تعداد کلاینت، حداکثر نسبت انتخاب‌شده و سیاست گرم‌کردن اولیه انتخاب می‌کند. کلاینت‌های انتخاب‌شده وزن‌های ذخیره‌شده فاز A را ارسال می‌کنند. سرور به‌جای میانگین‌گیری مستقیم وزن‌ها، دلتاهای پارامتری را تجمیع می‌کند:
+
+\[
+\Delta_i = \Theta_i^k-\Theta^{k-1},
+\]
+
+\[
+\Theta^k =
+\Theta^{k-1} +
+\eta
+\frac{\sum_{i \in A_k} u_i \Delta_i}
+{\sum_{i \in A_k} u_i},
+\]
+
+که در آن \(A_k\) مجموعه کلاینت‌های انتخاب‌شده و \(\eta\) نرخ یادگیری تجمیع است.
+
+سرور همچنین یک مخلوط‌کننده مرکزی نگه می‌دارد که سودمندی کل سامانه را از سودمندی‌های کلاینتی و بردار حالت جهانی پدشده پیش‌بینی می‌کند. هدف سطح دور از ترکیب پاداش، F1، دقت، پایداری TD، نوآوری و کارایی ارتباطی ساخته می‌شود. این سازوکار یک حلقه بازخورد یادگیرنده برای بهبود امتیازدهی کلاینت‌ها در طول دورها فراهم می‌کند.
+
+مزیت مورد انتظار FMRL-LA، افزایش پایداری و کارایی ارتباطی در حضور کلاینت‌های ناهمسان است. هزینه آن پیچیدگی هماهنگی بیشتر است: هر دور منطقی به یک مرحله ممیزی/فراداده و یک مرحله ارسال وزن‌های انتخاب‌شده نیاز دارد. بنابراین در مقاله باید علاوه بر عملکرد پیش‌بینی، هزینه ارتباطی نیز هنگام مقایسه FMRL-LA با FedAvg و FedProx گزارش شود.
+
+### 4.7 واسنجی EVT و استنتاج مجموعه باز
+
+پس از پایان آموزش فدرال، مدل جهانی نهایی برای تشخیص مجموعه باز با نظریه مقدار حدی یا EVT واسنجی می‌شود. EVT در طول بهینه‌سازی فدرال آموزش داده نمی‌شود و به‌عنوان پارامتر کلاینت به اشتراک گذاشته نمی‌شود. این بخش یک لایه پساآموزشی است که روی خطاهای بازسازی مجموعه اعتبارسنجی برازش می‌شود.
+
+برای هر نمونه اعتبارسنجی، مدل ابتدا یک کلاس شناخته‌شده را پیش‌بینی می‌کند:
+
+\[
+\hat{a}=\arg\max_a Q_\psi(p_\theta(z\mid s),s,a).
+\]
+
+فقط نمونه‌های اعتبارسنجی که به‌درستی به‌عنوان کلاس شناخته‌شده طبقه‌بندی شده‌اند برای واسنجی استفاده می‌شوند. برای هر کلاس شناخته‌شده \(c\)، دم بالایی توزیع خطای بازسازی استخراج و با توزیع پارتوی تعمیم‌یافته مدل می‌شود. مدل EVT وابسته به کلاس، خطای بازسازی را به احتمال ناشناختگی تبدیل می‌کند:
+
+\[
+P_{\mathrm{unknown}}(x)=
+M_{\mathrm{EVT},\hat{a}}(e(x)).
+\]
+
+آستانه تصمیم جهانی \(\delta_{\mathrm{global}}\) از احتمالات ناشناختگی روی اعتبارسنجی و بر اساس نرخ خطای مثبت کاذب هدف برای نمونه‌های شناخته‌شده تنظیم می‌شود. در زمان استنتاج، نمونه زمانی به‌عنوان کلاس شناخته‌شده پیش‌بینی‌شده پذیرفته می‌شود که
+
+\[
+P_{\mathrm{unknown}}(x) < \delta_{\mathrm{global}},
+\]
+
+و زمانی به‌عنوان ناشناخته رد می‌شود که
+
+\[
+P_{\mathrm{unknown}}(x) \geq \delta_{\mathrm{global}}.
+\]
+
+این مرحله مدل را از یک طبقه‌بند مجموعه بسته به یک آشکارساز نفوذ مجموعه باز تبدیل می‌کند. مزیت اصلی آن این است که رد نمونه ناشناخته بر رفتار بازسازی وابسته به کلاس تکیه دارد، نه فقط بر بزرگی مقدار Q یا اعتماد شبه-softmax. محدودیت اصلی آن حساسیت واسنجی است: عملکرد EVT به تقسیم اعتبارسنجی، تعداد نمونه‌های درست‌طبقه‌بندی‌شده برای واسنجی، اندازه دم، و نرخ مثبت کاذب هدف وابسته است.
+
+### 4.8 منطق روش‌شناختی طراحی
+
+معماری پیشنهادی به‌صورت ماژولار طراحی شده است، زیرا هر ماژول یک نوع خطای متفاوت را هدف می‌گیرد. عامل CVAE-DQN رفتار تفکیکی برای کلاس‌های شناخته‌شده را می‌آموزد و هم‌زمان ساختار نهفته مناسب برای بازسازی را حفظ می‌کند. مولد بازنمایی نهفته را به سیگنال مجموعه باز تبدیل می‌کند. لایه فدرال آموزش توزیع‌شده را بدون متمرکزسازی داده خام امکان‌پذیر می‌سازد. FMRL-LA تغییرات کیفیت کلاینت‌ها را در شرایط غیرهمسان مدیریت می‌کند و به‌روزرسانی‌های مفیدتر را با وزن بیشتری وارد مدل جهانی می‌کند. EVT نیز قانون رد واسنجی‌شده برای حملات ناشناخته را فراهم می‌کند.
+
+این چارچوب همچنین از مطالعات حذف مؤلفه پشتیبانی می‌کند. حذف EVT نشان می‌دهد آیا واسنجی بازسازی برای رد ناشناخته ضروری است یا خیر. حذف مولد مشخص می‌کند آیا سیگنال مجموعه باز واقعاً به بازسازی وابسته است. جایگزینی FMRL-LA با FedAvg یا FedProx نشان می‌دهد آیا تجمیع آگاه از سودمندی آموزش فدرال را بهبود می‌دهد یا نه. این ساختار برای مقاله ژورنالی سطح بالا مناسب است، زیرا هر ادعای روش‌شناختی را می‌توان به یک مقایسه تجربی قابل‌اندازه‌گیری متصل کرد.
