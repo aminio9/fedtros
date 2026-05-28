@@ -35,6 +35,9 @@ dataset:
 open_set:
   evt:
     enabled: false
+training:
+  generator:
+    enabled: false
 evaluation:
   mode: closed_set
   export_latent_embeddings: false

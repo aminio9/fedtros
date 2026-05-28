@@ -53,6 +53,23 @@ def test_experiment_config_uses_run_local_processed_dir():
     assert cfg.dataset.preprocessing.iid is True
     assert cfg.federated.num_clients == 10
     assert cfg.evaluation.mode == "closed_set"
+    assert cfg.training.generator.enabled is False
+
+
+def test_closed_set_federated_experiment_disables_generator_training():
+    with initialize_config_dir(version_base=None, config_dir=_config_dir()):
+        cfg = compose(config_name="config_fl", overrides=["experiment=exp3"])
+
+    assert cfg.evaluation.mode == "closed_set"
+    assert cfg.training.generator.enabled is False
+
+
+def test_efficiency_experiment_disables_generator_training():
+    with initialize_config_dir(version_base=None, config_dir=_config_dir()):
+        cfg = compose(config_name="config_fl", overrides=["experiment=efficiency"])
+
+    assert cfg.evaluation.mode == "closed_set"
+    assert cfg.training.generator.enabled is False
 
 
 def test_open_set_experiment_uses_iid_run_local_processed_dir():
