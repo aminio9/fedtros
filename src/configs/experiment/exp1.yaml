@@ -5,8 +5,8 @@ experiment:
   family: closed_set
   method: FMRL_LA
   pipeline: full
-  description: Closed-set validation on known B-NAT classes.
-  objective: Preserve known-class classification quality under the unified model.
+  description: Closed-set validation on all B-NAT labels.
+  objective: Preserve classification quality across the full B-NAT label set.
   primary_metrics:
     - test/accuracy
     - test/balanced_accuracy
@@ -24,7 +24,10 @@ experiment:
 federated:
   num_clients: 10
   num_rounds: 100
+model:
+  num_actions: 5
 dataset:
+  known_labels: ${dataset.source_labels}
   preprocessing:
     output_dir: ${tracking.run_dir}/processed
     alpha: 1.0

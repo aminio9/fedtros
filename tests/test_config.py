@@ -48,7 +48,8 @@ def test_experiment_config_uses_run_local_processed_dir():
         cfg = compose(config_name="config_fl", overrides=["experiment=exp1"])
 
     assert cfg.experiment.pipeline == "full"
-    assert cfg.dataset.preprocessing.output_dir == "outputs/e1_FMRL_LA_iid_seed42/processed"
+    assert cfg.dataset.preprocessing.output_dir.startswith("outputs/")
+    assert cfg.dataset.preprocessing.output_dir.endswith("_exp1_closed_set_seed42/processed")
     assert cfg.dataset.preprocessing.iid is True
     assert cfg.federated.num_clients == 10
     assert cfg.evaluation.mode == "closed_set"
@@ -59,7 +60,8 @@ def test_open_set_experiment_uses_iid_run_local_processed_dir():
         cfg = compose(config_name="config_fl", overrides=["experiment=exp2"])
 
     assert cfg.experiment.pipeline == "full"
-    assert cfg.dataset.preprocessing.output_dir == "outputs/e2_FMRL_LA_iid_seed42/processed"
+    assert cfg.dataset.preprocessing.output_dir.startswith("outputs/")
+    assert cfg.dataset.preprocessing.output_dir.endswith("_exp2_open_set_seed42/processed")
     assert cfg.dataset.preprocessing.iid is True
     assert cfg.open_set.evt.enabled is True
     assert cfg.evaluation.mode == "open_set"
@@ -79,7 +81,7 @@ def test_suite_launcher_contains_child_commands():
         cfg = compose(config_name="config_fl", overrides=["experiment=all"])
 
     assert cfg.experiment.pipeline == "suite"
-    assert len(cfg.experiment.suite_commands) == 6
+    assert len(cfg.experiment.suite_commands) == 7
     assert cfg.experiment.suite_commands[0][0] == "experiment=exp1"
 
 

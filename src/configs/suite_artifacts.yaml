@@ -1,5 +1,4 @@
 defaults:
-  - tracking: local
   - logging: default
   - _self_
 
@@ -29,7 +28,14 @@ model:
 runs: []
 
 tracking:
+  output_dir: outputs
   run_id: suite_artifacts
+  run_dir: ${tracking.output_dir}/${tracking.run_id}
+  metrics_jsonl: ${tracking.run_dir}/metrics.jsonl
+  metrics_csv: ${tracking.run_dir}/metrics.csv
+  metadata_json: ${tracking.run_dir}/metadata.json
+  config_yaml: ${tracking.run_dir}/config.yaml
+  resolved_config_yaml: ${tracking.run_dir}/resolved_config.yaml
 
 run_dir: ${tracking.run_dir}
 

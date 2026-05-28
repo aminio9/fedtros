@@ -5,8 +5,8 @@ experiment:
   family: federated_noniid
   method: FMRL_LA
   pipeline: full
-  description: Non-IID federated comparison under Dirichlet client partitions.
-  objective: Compare FMRL-LA, FedAvg, and FedProx under matched partitions.
+  description: Non-IID federated comparison over all B-NAT labels.
+  objective: Compare FMRL-LA, FedAvg, and FedProx under matched partitions with no unknown holdout.
   primary_metrics:
     - test/accuracy
     - test/macro_f1
@@ -23,7 +23,10 @@ experiment:
 federated:
   num_clients: 10
   num_rounds: 100
+model:
+  num_actions: 5
 dataset:
+  known_labels: ${dataset.source_labels}
   preprocessing:
     output_dir: ${tracking.run_dir}/processed
     alpha: 0.1
@@ -36,4 +39,3 @@ evaluation:
   export_latent_embeddings: false
 tracking:
   run_id: e3_${experiment.method}_alpha${dataset.preprocessing.alpha}_seed${seed}
-

@@ -23,7 +23,10 @@ experiment:
 federated:
   num_clients: 10
   num_rounds: 100
+model:
+  num_actions: 5
 dataset:
+  known_labels: ${dataset.source_labels}
   preprocessing:
     output_dir: ${tracking.run_dir}/processed
     alpha: 0.1
