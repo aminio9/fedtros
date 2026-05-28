@@ -351,6 +351,11 @@ class FlowerClient(fl.client.NumPyClient):
             except Exception as exc:
                 self.logger.warning(f"Generator training failed: {exc}")
 
+        # Local evaluation is pure bookkeeping; run it on the rest device when
+        # simulation batching is sharing a GPU across several clients.
+        if self._simulation_gpu_batching and self.device.type == "cuda":
+            self._switch_runtime_device(self._simulation_rest_device)
+
         # Optional Local Eval
         self._run_local_eval_logic(metrics, "LOCAL")
         return num_steps_trained, metrics
@@ -450,9 +455,17 @@ class FlowerClient(fl.client.NumPyClient):
         }
 
     def _run_local_eval_logic(self, metrics: dict[str, float], _prefix: str):
-        if self.eval_enabled:
+        if not self.eval_enabled:
+            return
+        try:
             _, _, local_metrics = self._evaluate_closed_set(0, prefix="LOCAL_PRE_AGG")
-            metrics.update({f"local_{k}": v for k, v in local_metrics.items()})
+        except Exception:
+            self.logger.exception(
+                "Client %s: local closed-set evaluation failed; keeping training result.",
+                self.cid,
+            )
+            return
+        metrics.update({f"local_{k}": v for k, v in local_metrics.items()})
 
     def evaluate(
         self, parameters: list[np.ndarray] | Parameters, config: dict[str, Any]
@@ -466,6 +479,9 @@ class FlowerClient(fl.client.NumPyClient):
                 parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
             )
             self.set_parameters(param_list)
+
+            if self._simulation_gpu_batching and self.device.type == "cuda":
+                self._switch_runtime_device(self._simulation_rest_device)
 
             try:
                 round_index = int(round_num)
@@ -653,9 +669,11 @@ class FlowerClient(fl.client.NumPyClient):
         if num_examples == 0:
             return loss, 0, {"accuracy": accuracy, "f1_macro": 0.0, "num_examples": 0}
 
+        labels = list(range(len(self.eval_class_names)))
         report = classification_report(
             y_true,
             y_pred,
+            labels=labels,
             target_names=self.eval_class_names,
             digits=4,
             zero_division=0,

@@ -270,6 +270,7 @@ class FMRLLearnableAggregationStrategy(FedAvg):
         self.saved_global_parameters: Parameters | None = None
         self.stage1_data_cache: dict[str, dict[str, Any]] = {}
         self.selected_clients_cache: list[fl.server.client_proxy.ClientProxy] = []
+        self.last_phase_a_clients: list[fl.server.client_proxy.ClientProxy] = []
         self.utilities_cache: dict[str, float] = {}
         self.selection_records: list[dict[str, Any]] = []
         self.client_order: list[str] = []
@@ -299,11 +300,20 @@ class FMRLLearnableAggregationStrategy(FedAvg):
                 num_clients=self.min_fit_clients,
                 min_num_clients=self.min_fit_clients,
             )
+            self.last_phase_a_clients = list(clients)
             self.saved_global_parameters = parameters
             fit_ins = FitIns(parameters, {"server_round": server_round, "phase": "train"})
             logger.info("FMRL-LA round=%d phase=A sampled=%d", server_round, len(clients))
             return [(client, fit_ins) for client in clients]
 
+        if not self.selected_clients_cache:
+            self.selected_clients_cache = list(self.last_phase_a_clients)
+            self.utilities_cache = {client.cid: 1.0 for client in self.selected_clients_cache}
+            logger.warning(
+                "FMRL-LA round=%d phase=B had no selected clients; "
+                "requesting uploads from the previous Phase A sample to avoid a stuck round.",
+                server_round,
+            )
         fit_ins = FitIns(parameters, {"server_round": server_round, "phase": "upload"})
         logger.info(
             "FMRL-LA round=%d phase=B selected=%d",
@@ -341,6 +351,7 @@ class FMRLLearnableAggregationStrategy(FedAvg):
 
         if failures:
             logger.warning("FMRL-LA phase A failures: %d", len(failures))
+            self._log_failures("FMRL-LA phase A", failures)
 
         for client, fit_res in sorted(results, key=lambda item: item[0].cid):
             try:
@@ -367,8 +378,17 @@ class FMRLLearnableAggregationStrategy(FedAvg):
             self.client_order.append(client.cid)
 
         selected = self._select_records(server_round)
-        self.selected_clients_cache = [record["client"] for record in selected]
-        self.utilities_cache = {record["cid"]: record["utility"] for record in selected}
+        if not selected and self.last_phase_a_clients:
+            logger.warning(
+                "FMRL-LA phase A produced no usable metadata; falling back to all %d "
+                "sampled clients for Phase B with uniform utility.",
+                len(self.last_phase_a_clients),
+            )
+            self.selected_clients_cache = list(self.last_phase_a_clients)
+            self.utilities_cache = {client.cid: 1.0 for client in self.selected_clients_cache}
+        else:
+            self.selected_clients_cache = [record["client"] for record in selected]
+            self.utilities_cache = {record["cid"]: record["utility"] for record in selected}
 
         self._log_selection_table(server_round)
         self._write_monitor_event(
@@ -388,6 +408,7 @@ class FMRLLearnableAggregationStrategy(FedAvg):
     def _phase_b_aggregate(self, server_round: int, results, failures):
         if failures:
             logger.warning("FMRL-LA phase B failures: %d", len(failures))
+            self._log_failures("FMRL-LA phase B", failures)
         if not results or self.saved_global_parameters is None:
             return self.saved_global_parameters, {"fmrlla_selected_clients": 0.0}
 
@@ -695,6 +716,24 @@ class FMRLLearnableAggregationStrategy(FedAvg):
                 handle.write(json.dumps(event, sort_keys=True, default=str) + "\n")
         except Exception as exc:
             logger.warning("Failed to write FMRL-LA monitor event: %s", exc)
+
+    @staticmethod
+    def _log_failures(context: str, failures) -> None:
+        for idx, failure in enumerate(failures, start=1):
+            if isinstance(failure, BaseException):
+                logger.warning("%s failure %d: %r", context, idx, failure)
+                continue
+            if isinstance(failure, tuple) and len(failure) == 2:
+                client, result = failure
+                logger.warning(
+                    "%s failure %d | client=%s | result=%r",
+                    context,
+                    idx,
+                    getattr(client, "cid", "?"),
+                    result,
+                )
+                continue
+            logger.warning("%s failure %d: %r", context, idx, failure)
 
     @staticmethod
     def _parameter_delta_norm(weights: list[np.ndarray], base_weights: list[np.ndarray]) -> float:

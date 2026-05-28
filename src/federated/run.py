@@ -86,10 +86,18 @@ class _LegacyFlowerClientProxy(ClientProxy):
         self, ins: FitIns, timeout: float | None, group_id: int | None
     ) -> FitRes:
         _ = timeout, group_id
-        parameters, num_examples, metrics = self._client.fit(
-            parameters_to_ndarrays(ins.parameters),
-            dict(ins.config),
-        )
+        try:
+            parameters, num_examples, metrics = self._client.fit(
+                parameters_to_ndarrays(ins.parameters),
+                dict(ins.config),
+            )
+        except Exception:
+            logger.exception(
+                "Local Flower client %s fit failed | config=%s",
+                self.cid,
+                dict(ins.config),
+            )
+            raise
         return FitRes(
             status=Status(code=Code.OK, message=""),
             parameters=ndarrays_to_parameters(parameters),
