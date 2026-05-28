@@ -30,6 +30,24 @@ def build_agent(cfg: DictConfig, device: torch.device) -> Agent:
     return Agent(OpenSetQChainModelFactory(cfg.model), cfg.training, device=device)
 
 
+def _latent_export_tensor(
+    cfg: DictConfig,
+    *,
+    project_root: Path,
+    closed_features: torch.Tensor,
+    closed_labels: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, str]:
+    evaluation_mode = str(cfg.evaluation.mode).lower()
+    open_set_data_path = resolve_path(project_root, cfg.evaluation.open_set_data)
+    if evaluation_mode in {"open_set", "export_only"} and open_set_data_path.exists():
+        open_features, open_labels = load_tensor_dataset(
+            open_set_data_path,
+            map_location="cpu",
+        )
+        return open_features, open_labels, "open_set"
+    return closed_features, closed_labels, "closed_set"
+
+
 def run_evaluation(
     cfg: DictConfig,
     *,
@@ -138,16 +156,13 @@ def run_evaluation(
             tracker.log_metrics(open_metrics)
 
     if bool(cfg.evaluation.export_latent_embeddings):
-        latent_features = closed_features
-        latent_labels = closed_labels
-        open_set_data_path = resolve_path(project_root, cfg.evaluation.open_set_data)
-        if open_set_data_path.exists():
-            open_features, open_labels = load_tensor_dataset(
-                open_set_data_path,
-                map_location="cpu",
-            )
-            latent_features = torch.cat([latent_features, open_features], dim=0)
-            latent_labels = torch.cat([latent_labels, open_labels], dim=0)
+        latent_features, latent_labels, source = _latent_export_tensor(
+            cfg,
+            project_root=project_root,
+            closed_features=closed_features,
+            closed_labels=closed_labels,
+        )
+        logger.info("Exporting latent embeddings from the %s evaluation tensor.", source)
 
         export_latent_embeddings(
             prior_net=agent.prior_net,
@@ -157,6 +172,7 @@ def run_evaluation(
             output_path=resolve_path(project_root, cfg.evaluation.latent_embeddings_output),
             batch_size=int(cfg.evaluation.latent_embeddings_batch_size),
             max_points=int(cfg.evaluation.latent_embeddings_max_points),
+            source=source,
         )
 
     (output_dir / "evaluation_metrics.json").write_text(

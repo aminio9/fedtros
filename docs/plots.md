@@ -1,6 +1,6 @@
 # Plots
 
-The source of truth for the visual style is `Experimentplan/testplot.py`, but the repo now renders one high-quality image per experiment instead of a single dashboard canvas. The palette and 14 required Q1 figures are mirrored in `src/plotting/theme.py` and `src/plotting/registry.py`.
+The source of truth for the visual style is `D:/Research/code/testplot.py`, but the repo now renders one high-quality image per experiment instead of a single dashboard canvas. The palette and 14 required Q1 figures are mirrored in `src/plotting/theme.py` and `src/plotting/registry.py`.
 
 Required figures:
 
@@ -8,21 +8,24 @@ Required figures:
 2. Non-IID client data distribution.
 3. Mild non-IID convergence and variance.
 4. Hard non-IID convergence and variance.
-5. Known vs unknown EVT score distributions.
+5. Latent space reconstruction error.
 6. Openness vs AUROC.
 7. Unknown-detection ROC.
 8. Cross-dataset generalization.
 9. Before-OSR confusion matrix.
 10. After-OSR confusion matrix.
 11. Seed robustness boxplot.
-12. t-SNE/UMAP latent separation.
+12. Latent-space separation from the active evaluation tensor.
 13. Communication efficiency.
 14. Architectural ablation.
 
-Output files are rendered individually as `plots/01_<plot_id>.png` and `plots/01_<plot_id>.pdf` style artifacts, plus `plots/plot_manifest.json` for traceability.
+Output files are rendered individually as `plots/01_<plot_id>.png` artifacts, plus `plots/plot_manifest.json` for traceability.
 
 Evaluation can also write `latent_embeddings.csv` automatically when
-`evaluation.export_latent_embeddings=true`.
+`evaluation.export_latent_embeddings=true`. For the latent-space proof,
+use the label-wise `exp7` runs; each held-out-label run exports from the
+open-set evaluation tensor only, so the CSV does not duplicate closed-set
+rows.
 
 Open-set plots 9 and 10 now read from the dedicated files written by `src/evaluation/openset_eval.py`:
 

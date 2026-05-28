@@ -79,7 +79,7 @@ poetry run python scripts/plot.py run_dir=outputs/run_id
 
 This writes one image per experiment into `outputs/run_id/plots/`, plus a `plot_manifest.json` file that records the generated artifacts.
 
-Evaluation now also writes `latent_embeddings.csv` by default when `evaluation.export_latent_embeddings=true`.
+Evaluation now also writes `latent_embeddings.csv` by default when `evaluation.export_latent_embeddings=true`; open-set runs export the active evaluation tensor only, which keeps label-wise latent plots from duplicating closed-set rows.
 
 Compare runs:
 
@@ -136,6 +136,7 @@ open_set_scores.csv
 before_osr_confusion_matrix.csv
 after_osr_confusion_matrix.csv
 latent_embeddings.csv
+latent_embeddings.json
 communication_metrics.csv
 plots/
 plots/plot_manifest.json

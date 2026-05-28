@@ -2,7 +2,7 @@
 
 ## Closed-Set
 
-Closed-set evaluation loads `checkpoint.path`, `evaluation.closed_set_data`, and `evaluation.class_names`. It writes:
+Closed-set evaluation loads `checkpoint.path`, `evaluation.closed_set_data`, and `evaluation.class_names`. It assumes the full source label set is present in the closed-set tensors and no unknown labels are encoded there. It writes:
 
 - `test_metrics.json`
 - `test_classification_report.json`
@@ -37,6 +37,8 @@ Primary metric names:
 ## Latent Embeddings
 
 When `evaluation.export_latent_embeddings=true`, evaluation also writes
-`latent_embeddings.csv` to `evaluation.output_dir` with `x`, `y`, and `label`
-columns. The default projection is a deterministic 2D PCA over the prior-network
-latent vectors from the closed-set and open-set evaluation samples.
+`latent_embeddings.csv` to `evaluation.output_dir` with `x`, `y`, `label`, and
+`source` columns. The default projection is a deterministic 2D PCA over the
+prior-network latent vectors from the active evaluation tensor: `closed_set`
+uses the closed-set test data, while `open_set` uses the open-set test data
+without duplicating the closed-set rows.
