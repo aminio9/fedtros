@@ -18,7 +18,7 @@ Isolate the contribution of EVT, generator training, client selection, and feder
 
 ## Override Examples
 
-```powershell
+```bash
 python run.py experiment=ablation +method=fmrl_la seed=42
 python run.py experiment=ablation +method=fmrl_la training.generator.enabled=false seed=42
 python run.py experiment=ablation +method=fedavg open_set.evt.enabled=false seed=42
@@ -26,7 +26,7 @@ python run.py experiment=ablation +method=fedavg open_set.evt.enabled=false seed
 
 ## Execution Commands
 
-```powershell
+```bash
 python run.py experiment=ablation +method=fmrl_la seed=42
 python run.py experiment=ablation +method=fmrl_la open_set.evt.enabled=false experiment.method=No_EVT tracking.run_id=ablation_no_evt_seed42 seed=42
 python run.py experiment=ablation +method=fmrl_la training.generator.enabled=false experiment.method=No_Generator tracking.run_id=ablation_no_generator_seed42 seed=42
@@ -35,7 +35,7 @@ python run.py experiment=ablation +method=fedavg open_set.evt.enabled=false trac
 python run.py experiment=ablation +method=fedprox open_set.evt.enabled=false tracking.run_id=ablation_fedprox_no_osr_seed42 seed=42
 python run.py experiment=ablation +method=centralized_osr tracking.run_id=ablation_central_osr_seed42 seed=42
 python run.py experiment=ablation +method=centralized_no_osr tracking.run_id=ablation_central_no_osr_seed42 seed=42
-python scripts/experiments/e5_ablation.ps1
+bash scripts/experiments/e5_ablation.sh
 ```
 
 ## Expected Outputs

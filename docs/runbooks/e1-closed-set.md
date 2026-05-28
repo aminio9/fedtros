@@ -2,7 +2,7 @@
 
 ## Objective
 
-Verify that the unified model preserves known-class performance on B-NAT.
+Verify that the unified model preserves performance across the full B-NAT label set, with no unknown labels held out.
 
 ## Hydra Config Used
 
@@ -11,7 +11,8 @@ Verify that the unified model preserves known-class performance on B-NAT.
 - `+method=fmrl_la`
 - `+method=fedavg`
 - `+method=fedprox`
-- `+method=centralized_no_osr`
+- `+method=centralized_no_osr` (commented reference only in the shell script)
+- `dataset.known_labels=${dataset.source_labels}`
 
 Default run-local paths:
 
@@ -19,23 +20,25 @@ Default run-local paths:
 - `dataset.preprocessing.iid=true`
 - `tracking.run_id=e1_${experiment.method}_iid_seed${seed}`
 
+`tracking.*` is derived from the root `output.*` config values rather than a separate config group.
+
 ## Override Examples
 
-```powershell
+```bash
 python run.py experiment=exp1 +method=fmrl_la seed=42
 python run.py experiment=exp1 +method=fedavg seed=42
 python run.py experiment=exp1 +method=fedprox seed=42
-python run.py experiment=exp1 +method=centralized_no_osr seed=42
+# python run.py experiment=exp1 +method=centralized_no_osr seed=42
 ```
 
 ## Execution Commands
 
-```powershell
+```bash
 python run.py experiment=exp1 +method=fmrl_la seed=42
 python run.py experiment=exp1 +method=fedavg seed=42
 python run.py experiment=exp1 +method=fedprox seed=42
-python run.py experiment=exp1 +method=centralized_no_osr seed=42
-python scripts/experiments/e1_closed_set.ps1
+# python run.py experiment=exp1 +method=centralized_no_osr seed=42
+bash scripts/experiments/e1_closed_set.sh
 ```
 
 ## Expected Outputs

@@ -10,7 +10,7 @@ Quantify communication cost, runtime proxy, and accuracy versus client count and
 
 ## Override Examples
 
-```powershell
+```bash
 python run.py experiment=efficiency +method=fmrl_la seed=42 federated.num_clients=3
 python run.py experiment=efficiency +method=fmrl_la seed=42 federated.num_clients=10
 python run.py experiment=efficiency +method=fedavg seed=42 federated.num_clients=3
@@ -19,10 +19,10 @@ python run.py experiment=efficiency +method=fedavg seed=42 federated.num_clients
 
 ## Execution Commands
 
-```powershell
+```bash
 python run.py experiment=efficiency +method=fmrl_la seed=42 federated.num_clients=3
 python run.py experiment=efficiency +method=fedavg seed=42 federated.num_clients=3
-python scripts/experiments/e6_efficiency_scalability.ps1
+bash scripts/experiments/e6_efficiency_scalability.sh
 ```
 
 ## Expected Outputs

@@ -10,17 +10,17 @@ Check the full pipeline with a tiny client/round/episode budget.
 
 ## Override Examples
 
-```powershell
+```bash
 python run.py experiment=validation seed=42
 python run.py experiment=validation runtime=tiny seed=42
 ```
 
 ## Execution Commands
 
-```powershell
+```bash
 python run.py experiment=validation runtime=tiny seed=42
-python scripts/experiments/run_validation_tiny.ps1
-python scripts/experiments/validate_configs.ps1
+bash scripts/experiments/run_validation_tiny.sh
+bash scripts/experiments/validate_configs.sh
 ```
 
 ## Expected Outputs

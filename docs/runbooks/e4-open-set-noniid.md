@@ -10,7 +10,7 @@ Measure the full system, no-EVT control, and centralized baselines when unknown 
 
 ## Override Examples
 
-```powershell
+```bash
 python run.py experiment=exp4 +method=fmrl_la seed=42 dataset.preprocessing.alpha=0.1
 python run.py experiment=exp4 +method=fmrl_la seed=42 dataset.preprocessing.alpha=0.1 open_set.evt.enabled=false experiment.method=ClosedSet_No_EVT tracking.run_id=e4_no_evt_alpha0.1_seed42
 python run.py experiment=exp4 +method=fedavg seed=42 dataset.preprocessing.alpha=0.1
@@ -21,14 +21,14 @@ python run.py experiment=exp4 +method=centralized_no_osr seed=42 dataset.preproc
 
 ## Execution Commands
 
-```powershell
+```bash
 python run.py experiment=exp4 +method=fmrl_la seed=42 dataset.preprocessing.alpha=0.1
 python run.py experiment=exp4 +method=fmrl_la seed=42 dataset.preprocessing.alpha=0.1 open_set.evt.enabled=false experiment.method=ClosedSet_No_EVT
 python run.py experiment=exp4 +method=fedavg seed=42 dataset.preprocessing.alpha=0.1
 python run.py experiment=exp4 +method=fedprox seed=42 dataset.preprocessing.alpha=0.1
 python run.py experiment=exp4 +method=centralized_osr seed=42 dataset.preprocessing.alpha=0.1 tracking.run_id=e4_central_osr_alpha0.1_seed42
 python run.py experiment=exp4 +method=centralized_no_osr seed=42 dataset.preprocessing.alpha=0.1 tracking.run_id=e4_central_no_osr_alpha0.1_seed42
-python scripts/experiments/e4_combined_open_set_noniid.ps1
+bash scripts/experiments/e4_combined_open_set_noniid.sh
 ```
 
 ## Expected Outputs

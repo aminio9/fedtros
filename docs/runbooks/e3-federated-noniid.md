@@ -10,7 +10,7 @@ Compare FedAvg, FedProx, FMRL-LA, and the centralized pooled baseline under matc
 
 ## Override Examples
 
-```powershell
+```bash
 python run.py experiment=exp3 +method=fmrl_la seed=42 dataset.preprocessing.alpha=0.1
 python run.py experiment=exp3 +method=fedavg seed=42 dataset.preprocessing.alpha=0.1
 python run.py experiment=exp3 +method=fedprox seed=42 dataset.preprocessing.alpha=0.1
@@ -19,12 +19,12 @@ python run.py experiment=exp3 +method=centralized_no_osr seed=42 dataset.preproc
 
 ## Execution Commands
 
-```powershell
+```bash
 python run.py experiment=exp3 +method=fmrl_la seed=42 dataset.preprocessing.alpha=0.1
 python run.py experiment=exp3 +method=fedavg seed=42 dataset.preprocessing.alpha=0.1
 python run.py experiment=exp3 +method=fedprox seed=42 dataset.preprocessing.alpha=0.1
 python run.py experiment=exp3 +method=centralized_no_osr seed=42 dataset.preprocessing.alpha=0.1 tracking.run_id=e3_central_alpha0.1_seed42
-python scripts/experiments/e3_federated_noniid.ps1
+bash scripts/experiments/e3_federated_noniid.sh
 ```
 
 ## Expected Outputs
