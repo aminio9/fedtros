@@ -1,0 +1,50 @@
+# @package _global_
+experiment:
+  id: E7
+  name: exp7_labelwise_open_set
+  family: labelwise_open_set
+  method: FMRL_LA
+  pipeline: full
+  description: Label-wise open-set stress test with one held-out attack label per run.
+  objective: Demonstrate latent and decision separation under leave-one-attack-out splits.
+  primary_metrics:
+    - open_set/auroc
+    - open_set/auprc
+    - open_set/unknown_f1
+    - test/accuracy
+  dependencies:
+    - preprocessing
+    - federated_training
+    - evt_calibration
+    - open_set_evaluation
+    - latent_projection_export
+  expected_artifacts:
+    - open_set_metrics.json
+    - open_set_scores.csv
+    - open_set_roc_curve.csv
+    - open_set_pr_curve.csv
+    - latent_embeddings.csv
+federated:
+  num_clients: 10
+  num_rounds: 100
+model:
+  num_actions: 4
+dataset:
+  # Default representative holdout is MitM; the E7 script overrides this list per held-out label.
+  known_labels:
+    - Normal
+    - BP
+    - DoS
+    - FoT
+  preprocessing:
+    output_dir: ${tracking.run_dir}/processed
+    alpha: 1.0
+    iid: true
+open_set:
+  evt:
+    enabled: true
+evaluation:
+  mode: open_set
+  export_latent_embeddings: true
+tracking:
+  run_id: e7_${experiment.method}_mitm_seed${seed}
