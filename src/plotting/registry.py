@@ -38,7 +38,7 @@ REQUIRED_PLOTS: tuple[PlotSpec, ...] = (
     ),
     PlotSpec(
         "known_unknown_score_distribution",
-        "5. Known vs Unknown EVT Score Distribution",
+        "5. Latent Space Reconstruction Error",
         "open_set",
         ("open_set_scores.csv",),
     ),
@@ -80,7 +80,7 @@ REQUIRED_PLOTS: tuple[PlotSpec, ...] = (
     ),
     PlotSpec(
         "latent_space_separation",
-        "12. t-SNE/UMAP Latent Space Separation",
+        "12. Latent Space Separation (PCA)",
         "representation",
         ("latent_embeddings.csv",),
     ),

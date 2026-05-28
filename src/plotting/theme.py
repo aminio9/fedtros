@@ -20,7 +20,7 @@ CMAP_SUNSET = LinearSegmentedColormap.from_list("SunsetGradient", HEATMAP_COLORS
 
 
 def apply_theme() -> None:
-    """Apply the palette and Matplotlib style from Experimentplan/testplot.py."""
+    """Apply the palette and Matplotlib style from D:/Research/code/testplot.py."""
     sns.set_palette(CUSTOM_COLORS)
     sns.set_style(
         "whitegrid", {"grid.linestyle": "--", "axes.edgecolor": ".85", "grid.color": ".9"}

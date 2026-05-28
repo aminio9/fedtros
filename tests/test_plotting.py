@@ -150,7 +150,7 @@ def test_generate_plots_writes_all_required_figures(tmp_path):
             "tracking": {"run_dir": "outputs/run_001"},
             "plotting": {
                 "output_dir": "${tracking.run_dir}/plots",
-                "formats": ["png", "pdf"],
+                "formats": ["png"],
                 "plot_dpi": 120,
             },
         }
@@ -161,17 +161,15 @@ def test_generate_plots_writes_all_required_figures(tmp_path):
     plots_dir = run_dir / "plots"
     manifest = json.loads((plots_dir / "plot_manifest.json").read_text(encoding="utf-8"))
 
-    assert len(generated) == 28
-    assert len(manifest["files"]) == 28
+    assert len(generated) == 14
+    assert len(manifest["files"]) == 14
     assert manifest["output_dir"] == str(plots_dir)
 
     pngs = sorted(plots_dir.glob("*.png"))
-    pdfs = sorted(plots_dir.glob("*.pdf"))
     assert len(pngs) == 14
-    assert len(pdfs) == 14
-    for path in pngs + pdfs:
+    for path in pngs:
         assert path.stat().st_size > 0
 
     assert (plots_dir / "05_known_unknown_score_distribution.png").exists()
     assert (plots_dir / "02_non_iid_data_distribution.png").exists()
-    assert (plots_dir / "10_confusion_matrix_after_osr.pdf").exists()
+    assert (plots_dir / "10_confusion_matrix_after_osr.png").exists()

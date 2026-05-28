@@ -74,6 +74,26 @@ def _first_existing_column(columns: pd.Index | list[str], candidates: tuple[str,
     return None
 
 
+def _palette_from_labels(labels: list[str], overrides: dict[str, str] | None = None) -> dict[str, str]:
+    overrides = overrides or {}
+    palette: dict[str, str] = {}
+    used = set(overrides.values())
+    color_index = 0
+    for label in labels:
+        if label in palette:
+            continue
+        if label in overrides:
+            palette[label] = overrides[label]
+            continue
+        while CUSTOM_COLORS[color_index % len(CUSTOM_COLORS)] in used:
+            color_index += 1
+        color = CUSTOM_COLORS[color_index % len(CUSTOM_COLORS)]
+        palette[label] = color
+        used.add(color)
+        color_index += 1
+    return palette
+
+
 def _first_existing_in_dirs(dirs: tuple[Path, ...], names: list[str]) -> Path | None:
     for base_dir in dirs:
         path = first_existing(base_dir, names)
@@ -240,10 +260,13 @@ def _plot_score_distribution(ax: plt.Axes, run_dir: Path, spec: PlotSpec) -> Non
     if len(plot_df) > 5000:
         plot_df = plot_df.sample(n=5000, random_state=0)
     plot_df["group"] = np.where(plot_df["is_unknown"].astype(int) == 1, "Unknown", "Known")
+    palette = {"Known": CUSTOM_COLORS[2], "Unknown": CUSTOM_COLORS[3]}
     sns.histplot(
         data=plot_df,
         x="unknown_score",
         hue="group",
+        hue_order=["Known", "Unknown"],
+        palette=palette,
         bins=60,
         stat="density",
         common_norm=False,
@@ -366,7 +389,25 @@ def _plot_cross_dataset(ax: plt.Axes, run_dir: Path, spec: PlotSpec) -> None:
         "open_unknown_auroc": "Open AUROC",
     }
     plot_df["metric"] = plot_df["metric"].map(lambda value: metric_labels.get(str(value), str(value)))
-    sns.barplot(data=plot_df, x="dataset", y="metric_value", hue="metric", ax=ax)
+    metric_order = list(dict.fromkeys(plot_df["metric"].astype(str)))
+    palette = _palette_from_labels(
+        metric_order,
+        overrides={
+            "F1": CUSTOM_COLORS[2],
+            "Known F1": CUSTOM_COLORS[2],
+            "AUROC": CUSTOM_COLORS[4],
+            "Open AUROC": CUSTOM_COLORS[4],
+        },
+    )
+    sns.barplot(
+        data=plot_df,
+        x="dataset",
+        y="metric_value",
+        hue="metric",
+        hue_order=metric_order,
+        palette=palette,
+        ax=ax,
+    )
     ax.set_title(spec.title)
     ax.set_xlabel("")
     ax.set_ylabel("Score (%)")
@@ -519,7 +560,26 @@ def _plot_latent(ax: plt.Axes, run_dir: Path, spec: PlotSpec) -> None:
     if df is None or not {"x", "y", "label"}.issubset(df.columns):
         _missing(ax, spec, "latent_embeddings.csv requires x,y,label")
         return
-    sns.scatterplot(data=df, x="x", y="y", hue="label", s=18, ax=ax, alpha=0.8, edgecolor="none")
+    labels = list(dict.fromkeys(df["label"].astype(str)))
+    palette = _palette_from_labels(
+        labels,
+        overrides={
+            "Unknown": CUSTOM_COLORS[3],
+            "Normal": CUSTOM_COLORS[7],
+        },
+    )
+    sns.scatterplot(
+        data=df,
+        x="x",
+        y="y",
+        hue="label",
+        hue_order=labels,
+        palette=palette,
+        s=18,
+        ax=ax,
+        alpha=0.8,
+        edgecolor="none",
+    )
     ax.set_title(spec.title)
     ax.set_xticks([])
     ax.set_yticks([])
@@ -580,7 +640,29 @@ def _render_required_plot(
                 plot_df[metric_col] = (
                     _maybe_percent(plot_df[metric_col]) if scale_to_percent else plot_df[metric_col].astype(float)
                 )
-                sns.barplot(data=plot_df, x=config_col, y=metric_col, ax=ax, color=CUSTOM_COLORS[0])
+                config_order = list(dict.fromkeys(plot_df[config_col].astype(str)))
+                palette = _palette_from_labels(
+                    config_order,
+                    overrides={
+                        "Base Model\n(Centralized, No OSR)": CUSTOM_COLORS[5],
+                        "Base + FL\n(FedAvg)": CUSTOM_COLORS[2],
+                        "Base + OSR\n(Centralized)": CUSTOM_COLORS[4],
+                        "Proposed\n(FL + OSR)": CUSTOM_COLORS[0],
+                    },
+                )
+                sns.barplot(
+                    data=plot_df,
+                    x=config_col,
+                    y=metric_col,
+                    hue=config_col,
+                    hue_order=config_order,
+                    dodge=False,
+                    palette=palette,
+                    ax=ax,
+                )
+                legend = ax.get_legend()
+                if legend is not None:
+                    legend.remove()
                 ax.tick_params(axis="x", rotation=20)
                 ax.set_title(spec.title)
                 ax.set_xlabel("Configuration")
@@ -610,23 +692,6 @@ def render_required_plots(
         generated.extend(_save_figure(fig, output_dir, stem, formats))
         plt.close(fig)
     return generated
-
-
-def render_q1_dashboard(
-    run_dir: Path,
-    output_dir: Path,
-    formats: list[str],
-    dpi: int,
-    *,
-    preprocess_dir: Path | None = None,
-) -> list[Path]:
-    return render_required_plots(
-        run_dir,
-        output_dir,
-        formats,
-        dpi,
-        preprocess_dir=preprocess_dir,
-    )
 
 
 def render_training_plots(
