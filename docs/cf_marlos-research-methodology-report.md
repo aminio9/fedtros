@@ -69,7 +69,7 @@ The implementation combines a CVAE-style latent model, Double DQN learning, EVT-
 
 ### Scope
 
-The current repository is scoped to B-NAT and the labels `Normal`, `BP`, `DoS`, and `MitM` as known classes, with `FoT` treated as the held-out unknown attack.
+The current repository is centered on B-NAT and the labels `Normal`, `BP`, `DoS`, and `MitM` as known classes, with `FoT` treated as the held-out unknown attack. The final manuscript protocol also reserves an external validation block for B-TAT, ToN-IoT, and CIC-IDS2017 once dataset-specific label maps are finalized.
 
 [ASSUMPTION] Final paper runs use 10 clients and 100 logical federated rounds, even though the development defaults in `src/configs` are smaller for local iteration.
 
@@ -84,7 +84,7 @@ The current scope includes:
 
 Out of scope for this repository snapshot:
 
-- final external-dataset evidence for B-TAT, ToN-IoT, and CIC-IDS2017
+- fully automated dataset-specific preprocessing configs and label maps for B-TAT, ToN-IoT, and CIC-IDS2017
 - packet-level transport instrumentation
 - formal statistical reporting of the full manuscript sweep
 

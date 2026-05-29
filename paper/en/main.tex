@@ -16,6 +16,7 @@
 \usepackage{algorithm}
 \usepackage{algpseudocode}
 \usepackage{enumitem}
+\graphicspath{{figures/}{paper/en/figures/}{paper/fa/figures/}}
 \usepackage{titlesec}
 \setlength{\columnsep}{18pt}
 \setlength{\emergencystretch}{2em}
@@ -93,7 +94,7 @@ The system begins with raw B-NAT CSV traffic, which is preprocessed into tensors
 
 \begin{figure*}[t]
   \centering
-  \includegraphics[width=\textwidth]{figures/proposed_method_overview.png}
+  \includegraphics[width=\textwidth]{D:/Research/cf_marlos/paper/en/figures/proposed_method_overview.png}
   \caption{Overview of CF-MARLOS: preprocessing, non-IID client shards, local CVAE-DQN training, federated aggregation, and EVT-based open-set inference.}
   \label{fig:overview}
 \end{figure*}
@@ -254,27 +255,56 @@ After federated training, EVT is fitted on validation reconstruction errors that
 Algorithm~1 summarizes the end-to-end federated training and calibration flow. Algorithm~2 specifies the client-side CVAE-DQN update with the optional FedProx penalty. Algorithm~3 describes the utility-aware FMRL-LA aggregation rule. Algorithm~4 closes the loop by fitting EVT on validation reconstruction errors and applying the open-set decision rule at inference time.
 
 \section{Experimental Setup}
-The repository is scoped to B-NAT blockchain traffic, with the labels \texttt{Normal}, \texttt{BP}, \texttt{DoS}, and \texttt{MitM} as known classes and \texttt{FoT} as the held-out unknown attack. The final paper plan uses 10 clients and 100 logical federated rounds, although smaller development settings are retained in the repository for quick iteration.
+The evaluation protocol follows the repository contract and the experiment plan documented for the project. The primary dataset is B-NAT blockchain traffic. In the main B-NAT experiments, \texttt{Normal}, \texttt{BP}, \texttt{DoS}, and \texttt{MitM} are treated as known classes, while \texttt{FoT} is held out as the unknown attack. For the final manuscript, the primary configuration uses 10 clients and 100 logical federated rounds; smaller settings remain available in the repository for smoke tests and development runs.
 
-The main baselines are centralized training, local-only training, FedAvg, FedProx, and FMRL-LA. For non-IID experiments, client shards are generated with a Dirichlet class partition. The main training hyperparameters are controlled through Hydra and include local episodes per round, replay-buffer size, batch size, Double-DQN settings, and generator training toggles.
+All B-NAT comparisons reuse the same preprocessing contract, the same train/validation/test split, the same client partition seed, and the same evaluation seed list. Client shards are generated with Dirichlet non-IID sampling over class labels, with \(\alpha \in \{0.01, 0.5, 1.0\}\) used to control skew. The main baselines are centralized training, local-only training, FedAvg, FedProx, and FMRL-LA. Hydra controls the implementation details, including local episodes per round, replay-buffer size, batch size, Double-DQN settings, generator training, and open-set calibration toggles.
+
+The external validation block is run independently on B-TAT, ToN-IoT, and CIC-IDS2017. Each dataset uses its own finalized known/unknown mapping, its own split, and its own non-IID partition; this block is therefore a separate validation study rather than a cross-dataset transfer experiment.
+
+The reported protocol should be organized into eight experiments: closed-set validation, open-set detection, federated non-IID comparison, combined open-set plus non-IID evaluation, ablation and sensitivity, efficiency and scalability, label-wise open-set stress testing, and multi-dataset external validation. This structure follows the standard journal sequence of primary performance, robustness, diagnostics, efficiency, and external generalization.
+
+\begin{table}[t]
+\centering
+\caption{Experimental matrix used in the final evaluation}
+\begin{tabular}{p{0.14\linewidth}p{0.28\linewidth}p{0.42\linewidth}}
+\toprule
+\textbf{Exp.} & \textbf{Purpose} & \textbf{Primary output} \\
+\midrule
+E1 & Closed-set validation & Accuracy, macro F1, balanced accuracy \\
+E2 & Open-set detection & AUROC, AUPRC, FPR@95\%TPR, unknown F1 \\
+E3 & Non-IID federation & Stability, convergence, communication cost \\
+E4 & Combined stress test & Known and unknown metrics under client skew \\
+E5 & Ablation and sensitivity & Metric deltas and threshold robustness \\
+E6 & Efficiency and scalability & Runtime, bytes transmitted, rounds to converge \\
+E7 & Label-wise open-set test & Latent-space separation and per-label rejection \\
+E8 & Multi-dataset external validation & Per-dataset accuracy, open-set metrics, and robustness under dataset-specific shifts \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \section{Evaluation Metrics}
-Closed-set evaluation uses accuracy, macro F1, balanced accuracy, and per-class confusion matrices. Open-set evaluation uses AUROC, AUPRC, FPR@95\%TPR, unknown F1, unknown detection rate, and known accuracy after rejection. Federated evaluation uses convergence speed, selected-client fraction, stability across rounds, communication cost, and round-level utility. Efficiency is reported through runtime and cumulative transmitted model bytes.
+Closed-set evaluation should report accuracy, macro precision, macro recall, macro F1, weighted F1, balanced accuracy, and per-class confusion matrices. These metrics quantify whether the model preserves ordinary known-class discrimination before any open-set rejection is applied.
 
-\section{Planned Results and Discussion}
-The final manuscript should report three comparisons: closed-set performance, open-set rejection, and federated robustness under non-IID data. In particular, the results section should compare FedAvg, FedProx, and FMRL-LA under matched client partitions and identical training budgets. The paper should also include communication-cost curves and round-wise stability plots so that the gain from utility-aware aggregation can be interpreted against its overhead.
+Open-set evaluation should report AUROC, AUPRC, FPR@95\%TPR, TPR@5\%FPR, unknown F1, unknown rejection rate, and known accuracy after rejection. This combination is necessary because threshold-free and threshold-dependent metrics answer different questions: separability versus operational decision quality.
+
+Federated evaluation should report final accuracy, final-10-round mean accuracy, convergence speed, client-wise variance, selected-client fraction, and communication cost. Efficiency should be reported through runtime, cumulative transmitted bytes, and accuracy per megabyte.
+
+\section{Experimental Results and Discussion}
+The results section should be organized around the eight experiments rather than around implementation details. E1 should verify that the core model preserves closed-set accuracy. E2 should isolate the value of EVT calibration for rejecting unknown attacks. E3 should compare FedAvg, FedProx, and FMRL-LA under increasing client skew. E4 should combine both non-IID federation and open-set rejection to test system-level robustness. E5 should isolate the contribution of EVT, the generator, and utility-aware aggregation. E6 should quantify the cost of the two-phase federated mechanism. E7 should show whether open-set separation is consistent across held-out labels. E8 should validate the method independently on B-TAT, ToN-IoT, and CIC-IDS2017 under separate dataset-specific known/unknown mappings and non-IID splits, without using B-NAT in that block.
+
+The discussion should explicitly interpret trade-offs. For example, if FMRL-LA improves stability but increases coordination overhead, that trade-off should be shown with communication curves and round-wise accuracy plots. If EVT improves unknown rejection but slightly reduces known-class accuracy near the threshold, the calibration curve should make that effect visible.
 
 \section{Ablation Study}
-The core ablations are: removing EVT, removing the generator, replacing FMRL-LA with FedAvg, replacing FMRL-LA with FedProx, and sweeping the EVT tail size and utility threshold. These ablations isolate the contribution of open-set calibration, reconstruction learning, and client selection.
+The core ablations should remove EVT rejection, remove generator training, replace FMRL-LA with FedAvg, replace FMRL-LA with FedProx, and disable client selection by aggregating all uploaded models. Sensitivity analysis should sweep the EVT tail fraction, utility threshold, Dirichlet alpha, and random seeds. These results isolate the value of each module and show whether the method is robust to calibration choices.
 
 \section{Limitations and Threats to Validity}
-The main limitations are calibration sensitivity, the cost of two-phase federated coordination, and the current focus on B-NAT rather than multiple external datasets. EVT quality depends on validation splits, and FMRL-LA requires additional server-side state. These limitations should be stated explicitly in the final paper.
+The main limitations are calibration sensitivity, the cost of two-phase federated coordination, and dataset-specific label mapping for the external benchmarks. EVT quality depends on validation splits, and FMRL-LA requires additional server-side state and monitoring. These limitations should be acknowledged explicitly so the paper does not overstate generality.
 
 \section{Reproducibility}
-The repository provides Hydra-driven configuration, seed control, checkpointing, local artifact export, and run-level plots. These features make the pipeline reproducible across preprocessing, training, evaluation, and figure generation. The manuscript should refer to the stored outputs for exact benchmark replication.
+The repository provides Hydra-driven configuration, seed control, checkpointing, local artifact export, and run-level plots. These features make the pipeline reproducible across preprocessing, training, evaluation, and figure generation. The final manuscript should reference the stored outputs and fixed evaluation contract so that the reported results can be reproduced from the same split and seed list.
 
 \section{Conclusion}
-CF-MARLOS combines local CVAE-DQN learning, federated aggregation, generator-based reconstruction, and EVT open-set calibration into a single intrusion-detection framework. FedAvg and FedProx provide standard baselines, while FMRL-LA adds utility-aware client selection for heterogeneous data. The resulting pipeline is suitable for known-class classification, unknown attack rejection, and federated learning under non-IID client data.
+CF-MARLOS combines local CVAE-DQN learning, federated aggregation, generator-based reconstruction, and EVT open-set calibration into a single intrusion-detection framework. FedAvg and FedProx provide standard baselines, while FMRL-LA adds utility-aware client selection for heterogeneous data. The resulting pipeline is designed to preserve known-class performance, reject unknown attacks, and remain stable under non-IID client partitions. The final experimental section should demonstrate these claims with matched budgets and controlled comparisons.
 
 \begin{thebibliography}{99}
 \bibitem{mcmahan2017}

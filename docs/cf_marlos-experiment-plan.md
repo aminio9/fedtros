@@ -1,6 +1,6 @@
 # cf_marlos Experimental Plan for Closed-Set, Open-Set, and Non-IID Federated Intrusion Detection
 
-This plan defines the final evaluation protocol for the unified intrusion-detection system implemented in the `cf_marlos` repository. The system combines CVAE-style latent modeling, Double DQN training, EVT-based open-set rejection, and horizontal federated learning with FedAvg, FedProx, and FMRL-LA. All experiments use the BNaT/B-NAT traffic dataset, frozen preprocessing, and seed-controlled client partitions. Closed-set experiments use the full source label set with no unknown labels held out; open-set experiments keep `FoT` as the held-out unknown attack.
+This plan defines the final evaluation protocol for the unified intrusion-detection system implemented in the `cf_marlos` repository. The system combines CVAE-style latent modeling, Double DQN training, EVT-based open-set rejection, and horizontal federated learning with FedAvg, FedProx, and FMRL-LA. B-NAT is the primary dataset for all core experiments, with frozen preprocessing and seed-controlled client partitions. Closed-set B-NAT experiments use the full source label set with no unknown labels held out; B-NAT open-set experiments keep `FoT` as the held-out unknown attack. A separate multi-dataset open-set non-IID validation block uses the external datasets B-TAT, ToN-IoT, and CIC-IDS2017 only; B-NAT is not repeated in that external-validation experiment.
 
 ## 1. Scope and Research Questions
 
@@ -10,6 +10,7 @@ The goal is to show that the full pipeline:
 2. Rejects unknown attacks reliably with open-set detection.
 3. Improves federated training under non-IID client data.
 4. Remains stable when open-set detection and federated non-IID training are combined.
+5. Remains effective when independently applied to external datasets with different class distributions, attack categories, traffic characteristics, and dataset-specific shifts.
 
 These questions map directly to the implemented system:
 
@@ -92,12 +93,14 @@ Each federated baseline should be labeled by the exact local objective used in t
 | Independent | Federation strategy   | Local training, FedAvg, FedProx, FMRL-LA                      |
 | Independent | Data heterogeneity    | IID closed-set over all labels, Dirichlet non-IID with alpha values 0.01, 0.5, and 1.0  |
 | Independent | Unknown composition   | Leave-one-attack-out or multi-unknown holdout                 |
+| Independent | Dataset benchmark     | B-NAT for core experiments; B-TAT, ToN-IoT, and CIC-IDS2017 for external validation only |
 | Independent | Random seed           | Fixed seed list, reused across all methods                    |
 | Dependent   | Closed-set quality    | Accuracy, macro F1, balanced accuracy, per-class scores       |
 | Dependent   | Open-set quality      | AUROC, AUPRC, FPR@95%TPR, unknown F1, rejection rate          |
 | Dependent   | Federated quality     | Final accuracy, convergence speed, stability, client variance |
 | Dependent   | Efficiency            | Training time, communication cost, rounds to convergence      |
 | Controlled  | Dataset version       | Frozen registry entry and checksum                            |
+| Controlled  | Dataset-specific label map | Known/unknown mapping fixed before each dataset run       |
 | Controlled  | Preprocessing         | Same scaler, encoder, label map, and feature schema           |
 | Controlled  | Split protocol        | Same train/validation/test split across all runs              |
 | Controlled  | Threshold calibration | Validation only; never on the test set                        |
@@ -108,9 +111,20 @@ The main rule is simple: every method in a comparison must see the same data spl
 
 ## 4. Data Preparation and Label Contract
 
-### 4.1 Dataset handling
+### 4.1 Dataset roles
 
-The raw CSV file is transformed into tensor datasets through the following steps:
+1. **B-NAT**
+   Primary experimental dataset. The classes `Normal`, `DoS`, `FoT`, `MitM`, and `BP` are explicitly referenced in the source plan and plotting logic. B-NAT is used for the main IID, non-IID, open-set, scalability, ablation, and robustness experiments.
+2. **B-TAT**
+   External benchmark dataset with eight total classes in the source plan. The known/unknown class mapping must be finalized before execution. This dataset is used only in the multi-dataset open-set non-IID validation experiment.
+3. **ToN-IoT**
+   External benchmark dataset with nine total classes in the source plan. The known/unknown class mapping must be finalized before execution. This dataset is used to evaluate the proposed model on heterogeneous IoT-device traffic under open-set and non-IID conditions.
+4. **CIC-IDS2017**
+   External benchmark dataset with fourteen total classes in the source plan. The known/unknown class mapping must be finalized before execution. This dataset is used as an industry-standard benchmark to further validate model generalization under open-set and non-IID settings.
+
+### 4.2 Dataset handling
+
+Each raw dataset is transformed into tensor datasets through the following steps:
 
 1. Detect numeric and categorical columns.
 2. For closed-set experiments, map all source labels to contiguous integer classes.
@@ -120,7 +134,7 @@ The raw CSV file is transformed into tensor datasets through the following steps
 6. Build an open-set test tensor by combining known test samples with held-out unknown samples when the open-set protocol is active.
 7. Partition the known training data into client shards with Dirichlet sampling.
 
-### 4.2 Stored artifacts
+### 4.3 Stored artifacts
 
 The preprocessing stage should produce:
 
@@ -134,7 +148,7 @@ The preprocessing stage should produce:
 
 The shared tensors are used for global evaluation and figure generation. The client tensors are used for local and federated training.
 
-### 4.3 Non-IID partitioning
+### 4.4 Non-IID partitioning
 
 Client partitions are sampled with a Dirichlet distribution over class labels:
 
@@ -153,6 +167,7 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 | E5  | Ablation and sensitivity     | Which module contributes most to the gains?                                     | Base model, no EVT, no generator, FedAvg, FedProx, FMRL-LA                                                         | Metric deltas, threshold sensitivity, seed stability                 |
 | E6  | Efficiency and scalability   | How does performance change with more clients and more rounds?                  | FedAvg vs FMRL-LA                                                                                                  | Runtime, bytes transmitted, rounds to convergence, accuracy per cost |
 | E7  | Label-wise open-set stress test | Can the detector separate each held-out label from the remaining labels?      | IID open-set run, FedAvg open-set run, per-label latent export                                                  | AUROC, AUPRC, unknown F1, latent-space separation                    |
+| E8  | Multi-dataset open-set non-IID validation | Does the method remain effective when trained and evaluated separately on external benchmarks under open-set and non-IID conditions? | Per-dataset FMRL-LA, FedAvg, FedProx, and local-only runs on B-TAT, ToN-IoT, and CIC-IDS2017 | Per-dataset closed/open metrics, robustness, and consistency across datasets |
 
 ## 6. Detailed Experimental Protocols
 
@@ -335,6 +350,35 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 - Unknown rejection should remain stable as the held-out label changes.
 - The latent-space proof for this experiment should be the canonical figure source for the paper.
 
+### 6.8 E8: Multi-Dataset Open-Set Non-IID Validation
+
+**Purpose:** evaluate whether the proposed model remains effective when independently applied to external datasets under realistic open-set and non-IID conditions.
+
+**Setup**
+
+- Use B-TAT, ToN-IoT, and CIC-IDS2017 only. Do not repeat B-NAT in this experiment block.
+- Train, tune, and evaluate the model separately on each external dataset. This is not a cross-dataset transfer experiment.
+- Finalize the known/unknown class mapping for each dataset before execution and keep that mapping fixed for all methods compared on that dataset.
+- For each dataset, build its own train, validation, closed-set test, open-set test, and Dirichlet client partitions.
+- Reuse the same evaluation logic as the main B-NAT open-set non-IID protocol: validation-only EVT calibration, matched budgets across methods, and per-dataset non-IID client splits.
+
+**Metrics**
+
+- per-dataset accuracy
+- macro F1
+- balanced accuracy
+- AUROC
+- AUPRC
+- FPR@95%TPR
+- unknown F1
+- per-dataset convergence stability
+- communication cost
+
+**Expected outcome**
+
+- The method should remain competitive on each external dataset despite differences in traffic characteristics and label structure.
+- Performance differences across B-TAT, ToN-IoT, and CIC-IDS2017 should be interpreted as dataset-specific difficulty, not as evidence of transfer failure, because each dataset is trained and evaluated independently.
+
 ## 7. Detailed Training and Evaluation Workflow
 
 ```mermaid
@@ -362,6 +406,7 @@ flowchart TD
 5. Run every strategy with the same seed list.
 6. Save checkpoints, metrics, logs, and generated figures for every run.
 7. Do not aggregate results until all runs for a comparison block are complete.
+8. For E8, repeat the full train/tune/evaluate cycle independently per external dataset; do not mix datasets and do not treat the block as cross-dataset transfer.
 
 ## 8. Metric Families and Statistical Analysis
 
@@ -401,6 +446,7 @@ The final report should contain:
 - E5: ablation bars and sensitivity sweeps
 - E6: runtime and communication-efficiency plots
 - E7: Label-wise latent-space separation and open-set proof plots
+- E8: per-dataset summary bars, open-set metric tables, and convergence plots for B-TAT, ToN-IoT, and CIC-IDS2017
 
 ## 10. Final Execution Checklist
 
@@ -415,6 +461,7 @@ The final report should contain:
 - [ ] Ablation runs completed
 - [ ] Efficiency and scalability runs completed
 - [ ] Label-wise open-set stress-test runs completed
+- [ ] External validation runs completed separately for B-TAT, ToN-IoT, and CIC-IDS2017
 - [ ] Tables filled from logged metrics
 - [ ] Figures regenerated from saved outputs
 - [ ] Statistical tests reported
@@ -422,10 +469,11 @@ The final report should contain:
 
 ## 11. Summary of Expected Results
 
-The final system should show four consistent results:
+The final system should show six consistent results:
 
 1. Closed-set metrics remain strong after open-set capability is added.
 2. EVT rejection separates unknown attacks from known traffic with strong threshold-independent performance.
 3. FMRL-LA is more robust than FedAvg and FedProx under non-IID client partitions.
 4. The combined system remains usable when both open-set detection and federated heterogeneity are active at the same time.
 5. The label-wise open-set stress test cleanly separates each held-out label from the known set in the latent-space proof.
+6. The external validation block shows that the method remains effective when trained and evaluated separately on B-TAT, ToN-IoT, and CIC-IDS2017 under open-set and non-IID conditions.
