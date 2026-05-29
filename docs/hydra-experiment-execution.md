@@ -48,9 +48,10 @@ Single run:
 ```bash
 python run.py experiment=exp1
 python run.py experiment=exp2 dataset=bnat model=transformer
-python run.py experiment=ablation runtime=gpu
+python run.py experiment=exp5 +method=fmrl_la dataset.name=B-TAT
+python run.py experiment=exp6 runtime=gpu
 python run.py experiment=validation runtime=tiny
-python scripts/experiments/e8_multi_dataset_open_set_noniid.sh
+bash scripts/experiments/e5_multi_dataset_open_set_noniid.sh
 ```
 
 Hydra multirun:
@@ -95,9 +96,10 @@ tracking.run_id=my_run_name
 | E2 Open-set | preprocessing -> federated training -> EVT calibration -> open-set evaluation |
 | E3 Federated non-IID | preprocessing -> federated training -> closed-set evaluation |
 | E4 Combined | preprocessing -> federated training -> EVT calibration -> open-set evaluation |
-| E5 Ablation | preprocessing -> selected training variant -> evaluation |
-| E6 Efficiency | preprocessing -> federated training -> communication export -> evaluation |
-| E7 Label-wise open-set | preprocessing -> open-set training with one held-out label per run -> EVT calibration -> open-set evaluation -> latent export |
+| E5 Multi-dataset validation | preprocessing -> per-dataset federated training -> EVT calibration -> open-set evaluation |
+| E6 Ablation | preprocessing -> selected training variant -> evaluation |
+| E7 Efficiency | preprocessing -> federated training -> communication export -> evaluation |
+| E8 Label-wise open-set | preprocessing -> open-set training with one held-out label per run -> EVT calibration -> open-set evaluation -> latent export |
 
 ## Output Structure
 
@@ -144,7 +146,7 @@ outputs/<run_id>/
    `shared_open_set_test.pt`.
 6. EVT calibration uses validation data only.
 7. Latent export uses the open-set evaluation tensor for open-set runs, so each held-out-label run writes a clean latent CSV for plotting.
-8. The E8 shell runner repeats the full train/tune/evaluate cycle separately for B-TAT, ToN-IoT, and CIC-IDS2017 once their label maps are finalized.
+8. The E5 shell runner repeats the full train/tune/evaluate cycle separately for B-TAT, ToN-IoT, and CIC-IDS2017 once their label maps are finalized.
 9. Plots and suite exports read saved artifacts only.
 
 ## Reproducibility

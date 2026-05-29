@@ -74,9 +74,11 @@ Paragraph 2 should report open-set results and discuss the score distribution, r
 
 Paragraph 3 should report non-IID federated results across Dirichlet alpha values.
 
-Paragraph 4 should discuss communication and scalability, especially whether FMRL-LA's two-phase overhead is justified by utility per round.
+Paragraph 4 should report external validation on B-TAT, ToN-IoT, and CIC-IDS2017, emphasizing that each dataset is trained and evaluated independently.
 
-Paragraph 5 should interpret failure cases using confusion matrices, per-client variance, and score distributions.
+Paragraph 5 should discuss communication and scalability, especially whether FMRL-LA's two-phase overhead is justified by utility per round.
+
+Paragraph 6 should interpret failure cases using confusion matrices, per-client variance, and score distributions.
 
 Needed material: main comparison table, ROC/PR curves, convergence curves, communication-cost plot, score-distribution plot, and confusion matrices.
 

@@ -14,4 +14,4 @@ checkpoint=$1
 run_id=${2:-resumed_fmrl_seed42}
 
 poetry run python run.py "experiment=exp3" "+method=fmrl_la" "federated.resume_from=$checkpoint" "tracking.run_id=$run_id"
-# poetry run python run.py "experiment=ablation" "+method=centralized_osr" "training.resume_from=$checkpoint" "tracking.run_id=${run_id}_central"
+# poetry run python run.py "experiment=exp6" "+method=centralized_osr" "training.resume_from=$checkpoint" "tracking.run_id=${run_id}_central"

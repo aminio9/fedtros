@@ -66,7 +66,7 @@ def test_closed_set_federated_experiment_disables_generator_training():
 
 def test_efficiency_experiment_disables_generator_training():
     with initialize_config_dir(version_base=None, config_dir=_config_dir()):
-        cfg = compose(config_name="config_fl", overrides=["experiment=efficiency"])
+        cfg = compose(config_name="config_fl", overrides=["experiment=exp7"])
 
     assert cfg.evaluation.mode == "closed_set"
     assert cfg.training.generator.enabled is False
@@ -98,13 +98,14 @@ def test_suite_launcher_contains_child_commands():
         cfg = compose(config_name="config_fl", overrides=["experiment=all"])
 
     assert cfg.experiment.pipeline == "suite"
-    assert len(cfg.experiment.suite_commands) == 7
+    assert len(cfg.experiment.suite_commands) == 8
     assert cfg.experiment.suite_commands[0][0] == "experiment=exp1"
+    assert cfg.experiment.suite_commands[4][0] == "experiment=exp5"
 
 
 def test_runtime_gpu_overlay_updates_device_preference():
     with initialize_config_dir(version_base=None, config_dir=_config_dir()):
-        cfg = compose(config_name="config_fl", overrides=["experiment=ablation", "runtime=gpu"])
+        cfg = compose(config_name="config_fl", overrides=["experiment=exp6", "runtime=gpu"])
 
     assert cfg.device.prefer == "gpu"
     assert cfg.device.allow_cpu_fallback is False

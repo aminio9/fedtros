@@ -261,7 +261,7 @@ All B-NAT comparisons reuse the same preprocessing contract, the same train/vali
 
 The external validation block is run independently on B-TAT, ToN-IoT, and CIC-IDS2017. Each dataset uses its own finalized known/unknown mapping, its own split, and its own non-IID partition; this block is therefore a separate validation study rather than a cross-dataset transfer experiment.
 
-The reported protocol should be organized into eight experiments: closed-set validation, open-set detection, federated non-IID comparison, combined open-set plus non-IID evaluation, ablation and sensitivity, efficiency and scalability, label-wise open-set stress testing, and multi-dataset external validation. This structure follows the standard journal sequence of primary performance, robustness, diagnostics, efficiency, and external generalization.
+The reported protocol should be organized into eight experiments: closed-set validation, open-set detection, federated non-IID comparison, combined open-set plus non-IID evaluation, multi-dataset external validation, ablation and sensitivity, efficiency and scalability, and label-wise open-set stress testing. This structure follows the standard journal sequence of primary performance, robustness, external generalization, diagnostics, and efficiency.
 
 \begin{table}[t]
 \centering
@@ -274,10 +274,10 @@ E1 & Closed-set validation & Accuracy, macro F1, balanced accuracy \\
 E2 & Open-set detection & AUROC, AUPRC, FPR@95\%TPR, unknown F1 \\
 E3 & Non-IID federation & Stability, convergence, communication cost \\
 E4 & Combined stress test & Known and unknown metrics under client skew \\
-E5 & Ablation and sensitivity & Metric deltas and threshold robustness \\
-E6 & Efficiency and scalability & Runtime, bytes transmitted, rounds to converge \\
-E7 & Label-wise open-set test & Latent-space separation and per-label rejection \\
-E8 & Multi-dataset external validation & Per-dataset accuracy, open-set metrics, and robustness under dataset-specific shifts \\
+E5 & Multi-dataset external validation & Per-dataset accuracy, open-set metrics, and robustness under dataset-specific shifts \\
+E6 & Ablation and sensitivity & Metric deltas and threshold robustness \\
+E7 & Efficiency and scalability & Runtime, bytes transmitted, rounds to converge \\
+E8 & Label-wise open-set test & Latent-space separation and per-label rejection \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -290,11 +290,11 @@ Open-set evaluation should report AUROC, AUPRC, FPR@95\%TPR, TPR@5\%FPR, unknown
 Federated evaluation should report final accuracy, final-10-round mean accuracy, convergence speed, client-wise variance, selected-client fraction, and communication cost. Efficiency should be reported through runtime, cumulative transmitted bytes, and accuracy per megabyte.
 
 \section{Experimental Results and Discussion}
-The results section should be organized around the eight experiments rather than around implementation details. E1 should verify that the core model preserves closed-set accuracy. E2 should isolate the value of EVT calibration for rejecting unknown attacks. E3 should compare FedAvg, FedProx, and FMRL-LA under increasing client skew. E4 should combine both non-IID federation and open-set rejection to test system-level robustness. E5 should isolate the contribution of EVT, the generator, and utility-aware aggregation. E6 should quantify the cost of the two-phase federated mechanism. E7 should show whether open-set separation is consistent across held-out labels. E8 should validate the method independently on B-TAT, ToN-IoT, and CIC-IDS2017 under separate dataset-specific known/unknown mappings and non-IID splits, without using B-NAT in that block.
+The results section should be organized around the eight experiments rather than around implementation details. E1 should verify that the core model preserves closed-set accuracy. E2 should isolate the value of EVT calibration for rejecting unknown attacks. E3 should compare FedAvg, FedProx, and FMRL-LA under increasing client skew. E4 should combine both non-IID federation and open-set rejection to test system-level robustness. E5 should validate the method independently on B-TAT, ToN-IoT, and CIC-IDS2017 under separate dataset-specific known/unknown mappings and non-IID splits, without using B-NAT in that block. E6 should isolate the contribution of EVT, the generator, and utility-aware aggregation. E7 should quantify the cost of the two-phase federated mechanism. E8 should show whether open-set separation is consistent across held-out labels.
 
 The discussion should explicitly interpret trade-offs. For example, if FMRL-LA improves stability but increases coordination overhead, that trade-off should be shown with communication curves and round-wise accuracy plots. If EVT improves unknown rejection but slightly reduces known-class accuracy near the threshold, the calibration curve should make that effect visible.
 
-\section{Ablation Study}
+\section{Ablation and Sensitivity}
 The core ablations should remove EVT rejection, remove generator training, replace FMRL-LA with FedAvg, replace FMRL-LA with FedProx, and disable client selection by aggregating all uploaded models. Sensitivity analysis should sweep the EVT tail fraction, utility threshold, Dirichlet alpha, and random seeds. These results isolate the value of each module and show whether the method is robust to calibration choices.
 
 \section{Limitations and Threats to Validity}

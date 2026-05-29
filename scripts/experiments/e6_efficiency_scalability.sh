@@ -1,13 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-invoke_hydra_run() {
-  poetry run python run.py "$@"
-}
-
-for rounds in 50 100 200; do
-  for clients in 3 10 20 50 100; do
-    invoke_hydra_run "experiment=efficiency" "+method=fmrl_la" "seed=42" "federated.num_clients=$clients" "federated.num_rounds=$rounds" "tracking.run_id=e6_fmrl_la_clients${clients}_rounds${rounds}_seed42"
-    invoke_hydra_run "experiment=efficiency" "+method=fedavg" "seed=42" "federated.num_clients=$clients" "federated.num_rounds=$rounds" "tracking.run_id=e6_fedavg_clients${clients}_rounds${rounds}_seed42"
-  done
-done
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+bash "$script_dir/e7_efficiency_scalability.sh"

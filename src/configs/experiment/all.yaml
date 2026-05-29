@@ -6,14 +6,15 @@ experiment:
   method: suite
   pipeline: suite
   description: Sequential suite launcher for one representative run of each experiment block.
-  objective: Run E1-E7 through Hydra-composed child commands.
+  objective: Run E1-E8 through Hydra-composed child commands.
   suite_commands:
     - ["experiment=exp1", "+method=fmrl_la", "seed=${seed}", "runtime=${runtime.name}"]
     - ["experiment=exp2", "+method=fmrl_la", "seed=${seed}", "runtime=${runtime.name}"]
     - ["experiment=exp3", "+method=fmrl_la", "seed=${seed}", "runtime=${runtime.name}"]
     - ["experiment=exp4", "+method=fmrl_la", "seed=${seed}", "runtime=${runtime.name}"]
-    - ["experiment=ablation", "+method=fmrl_la", "seed=${seed}", "runtime=${runtime.name}"]
-    - ["experiment=efficiency", "+method=fmrl_la", "seed=${seed}", "runtime=${runtime.name}"]
+    - ["experiment=exp5", "+method=fmrl_la", "seed=${seed}", "runtime=${runtime.name}"]
+    - ["experiment=exp6", "+method=fmrl_la", "seed=${seed}", "runtime=${runtime.name}"]
     - ["experiment=exp7", "+method=fmrl_la", "seed=${seed}", "runtime=${runtime.name}"]
+    - ["experiment=exp8", "+method=fmrl_la", "seed=${seed}", "runtime=${runtime.name}"]
 tracking:
   run_id: suite_all_seed${seed}

@@ -1,7 +1,7 @@
 # @package _global_
 experiment:
-  id: E6
-  name: exp6_efficiency
+  id: E7
+  name: exp7_efficiency_scalability
   family: efficiency
   method: FMRL_LA
   pipeline: full
@@ -41,4 +41,4 @@ evaluation:
   mode: closed_set
   export_latent_embeddings: false
 tracking:
-  run_id: e6_${experiment.method}_clients${federated.num_clients}_rounds${federated.num_rounds}_seed${seed}
+  run_id: e7_${experiment.method}_clients${federated.num_clients}_rounds${federated.num_rounds}_seed${seed}

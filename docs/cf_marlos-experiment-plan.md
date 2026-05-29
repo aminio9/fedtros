@@ -114,7 +114,7 @@ The main rule is simple: every method in a comparison must see the same data spl
 ### 4.1 Dataset roles
 
 1. **B-NAT**
-   Primary experimental dataset. The classes `Normal`, `DoS`, `FoT`, `MitM`, and `BP` are explicitly referenced in the source plan and plotting logic. B-NAT is used for the main IID, non-IID, open-set, scalability, ablation, and robustness experiments.
+   Primary experimental dataset. The classes `Normal`, `DoS`, `FoT`, `MitM`, and `BP` are explicitly referenced in the source plan and plotting logic. B-NAT is used for the main IID, non-IID, open-set, ablation, efficiency, and robustness experiments.
 2. **B-TAT**
    External benchmark dataset with eight total classes in the source plan. The known/unknown class mapping must be finalized before execution. This dataset is used only in the multi-dataset open-set non-IID validation experiment.
 3. **ToN-IoT**
@@ -164,10 +164,10 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 | E2  | Open-set detection           | Can unknown attacks be rejected without hurting known classes?                  | Closed-set classifier without EVT, softmax-only baseline                                                           | AUROC, AUPRC, FPR@95%TPR, unknown F1, confusion matrices             |
 | E3  | Federated non-IID comparison | Does FMRL-LA outperform standard federated methods under heterogeneous clients? | FedAvg, FedProx, local-only                                                                                         | Final accuracy, stability, convergence speed, communication cost     |
 | E4  | Combined open-set + non-IID  | Does the full system remain effective when both challenges are active?          | Closed-set classifier without EVT, softmax-only baseline, FedAvg, FedProx, local-only                               | Known-class metrics, unknown metrics, per-client robustness          |
-| E5  | Ablation and sensitivity     | Which module contributes most to the gains?                                     | Base model, no EVT, no generator, FedAvg, FedProx, FMRL-LA                                                         | Metric deltas, threshold sensitivity, seed stability                 |
-| E6  | Efficiency and scalability   | How does performance change with more clients and more rounds?                  | FedAvg vs FMRL-LA                                                                                                  | Runtime, bytes transmitted, rounds to convergence, accuracy per cost |
-| E7  | Label-wise open-set stress test | Can the detector separate each held-out label from the remaining labels?      | IID open-set run, FedAvg open-set run, per-label latent export                                                  | AUROC, AUPRC, unknown F1, latent-space separation                    |
-| E8  | Multi-dataset open-set non-IID validation | Does the method remain effective when trained and evaluated separately on external benchmarks under open-set and non-IID conditions? | Per-dataset FMRL-LA, FedAvg, FedProx, and local-only runs on B-TAT, ToN-IoT, and CIC-IDS2017 | Per-dataset closed/open metrics, robustness, and consistency across datasets |
+| E5  | Multi-dataset open-set non-IID validation | Does the method remain effective when trained and evaluated separately on external benchmarks under open-set and non-IID conditions? | Per-dataset FMRL-LA, FedAvg, FedProx, and local-only runs on B-TAT, ToN-IoT, and CIC-IDS2017 | Per-dataset closed/open metrics, robustness, and consistency across datasets |
+| E6  | Ablation and sensitivity     | Which module contributes most to the gains?                                     | Base model, no EVT, no generator, FedAvg, FedProx, FMRL-LA                                                         | Metric deltas, threshold sensitivity, seed stability                 |
+| E7  | Efficiency and scalability   | How does performance change with more clients and more rounds?                  | FedAvg vs FMRL-LA                                                                                                  | Runtime, bytes transmitted, rounds to convergence, accuracy per cost |
+| E8  | Label-wise open-set stress test | Can the detector separate each held-out label from the remaining labels?      | IID open-set run, FedAvg open-set run, per-label latent export                                                  | AUROC, AUPRC, unknown F1, latent-space separation                    |
 
 ## 6. Detailed Experimental Protocols
 
@@ -277,80 +277,7 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 - The detector should still reject unknowns under client skew.
 - Performance should degrade gracefully relative to the IID open-set case.
 
-### 6.5 E5: Ablation and Sensitivity
-
-**Purpose:** isolate the contribution of each major module.
-
-**Ablations**
-
-- remove EVT rejection
-- remove generator training
-- replace the latent CVAE-style branch with a direct classifier
-- replace FMRL-LA with FedAvg
-- replace FMRL-LA with FedProx
-- disable client selection and aggregate all uploaded models
-
-**Sensitivity checks**
-
-- Dirichlet alpha sweep over 0.01, 0.5, and 1.0
-- EVT threshold sweep
-- random-seed sweep
-- client-count sweep
-
-**Expected outcome**
-
-- Each removed component should cause a measurable drop in the metric it is designed to improve.
-- The full model should be the most balanced configuration across closed-set accuracy, open-set rejection, and federated stability.
-
-### 6.6 E6: Efficiency and Scalability
-
-**Purpose:** quantify the cost of the method as the number of clients and rounds changes.
-
-**Setup**
-
-- vary the number of clients
-- vary the communication-round budget
-- compare FedAvg and FMRL-LA under the same training settings
-
-**Metrics**
-
-- wall-clock time
-- bytes transmitted
-- rounds to convergence
-- accuracy per round
-- accuracy per megabyte
-
-**Expected outcome**
-
-- FMRL-LA may add coordination overhead, but the selected-client update path should improve utility per round under non-IID data.
-
-### 6.7 E7: Label-Wise Open-Set Stress Test
-
-**Purpose:** demonstrate open-set separation when one source label is held out at a time and the latent tensor is saved per run.
-
-**Setup**
-
-- Hold out one source label per run.
-- Keep the remaining labels in the known set for that run.
-- Run the IID open-set configuration and the FedAvg open-set configuration for each held-out label.
-- Export latent embeddings from the active open-set evaluation tensor only, without duplicating closed-set rows.
-
-**Metrics**
-
-- AUROC
-- AUPRC
-- FPR@95%TPR
-- unknown F1
-- known accuracy after rejection
-- latent-space class separation
-
-**Expected outcome**
-
-- Known samples should form a tighter cluster than the unknown samples in latent space.
-- Unknown rejection should remain stable as the held-out label changes.
-- The latent-space proof for this experiment should be the canonical figure source for the paper.
-
-### 6.8 E8: Multi-Dataset Open-Set Non-IID Validation
+### 6.5 E5: Multi-Dataset Open-Set Non-IID Validation
 
 **Purpose:** evaluate whether the proposed model remains effective when independently applied to external datasets under realistic open-set and non-IID conditions.
 
@@ -379,6 +306,79 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 - The method should remain competitive on each external dataset despite differences in traffic characteristics and label structure.
 - Performance differences across B-TAT, ToN-IoT, and CIC-IDS2017 should be interpreted as dataset-specific difficulty, not as evidence of transfer failure, because each dataset is trained and evaluated independently.
 
+### 6.6 E6: Ablation and Sensitivity
+
+**Purpose:** isolate the contribution of each major module.
+
+**Ablations**
+
+- remove EVT rejection
+- remove generator training
+- replace the latent CVAE-style branch with a direct classifier
+- replace FMRL-LA with FedAvg
+- replace FMRL-LA with FedProx
+- disable client selection and aggregate all uploaded models
+
+**Sensitivity checks**
+
+- Dirichlet alpha sweep over 0.01, 0.5, and 1.0
+- EVT threshold sweep
+- random-seed sweep
+- client-count sweep
+
+**Expected outcome**
+
+- Each removed component should cause a measurable drop in the metric it is designed to improve.
+- The full model should be the most balanced configuration across closed-set accuracy, open-set rejection, and federated stability.
+
+### 6.7 E7: Efficiency and Scalability
+
+**Purpose:** quantify the cost of the method as the number of clients and rounds changes.
+
+**Setup**
+
+- vary the number of clients
+- vary the communication-round budget
+- compare FedAvg and FMRL-LA under the same training settings
+
+**Metrics**
+
+- wall-clock time
+- bytes transmitted
+- rounds to convergence
+- accuracy per round
+- accuracy per megabyte
+
+**Expected outcome**
+
+- FMRL-LA may add coordination overhead, but the selected-client update path should improve utility per round under non-IID data.
+
+### 6.8 E8: Label-Wise Open-Set Stress Test
+
+**Purpose:** demonstrate open-set separation when one source label is held out at a time and the latent tensor is saved per run.
+
+**Setup**
+
+- Hold out one source label per run.
+- Keep the remaining labels in the known set for that run.
+- Run the IID open-set configuration and the FedAvg open-set configuration for each held-out label.
+- Export latent embeddings from the active open-set evaluation tensor only, without duplicating closed-set rows.
+
+**Metrics**
+
+- AUROC
+- AUPRC
+- FPR@95%TPR
+- unknown F1
+- known accuracy after rejection
+- latent-space class separation
+
+**Expected outcome**
+
+- Known samples should form a tighter cluster than the unknown samples in latent space.
+- Unknown rejection should remain stable as the held-out label changes.
+- The latent-space proof for this experiment should be the canonical figure source for the paper.
+
 ## 7. Detailed Training and Evaluation Workflow
 
 ```mermaid
@@ -406,7 +406,7 @@ flowchart TD
 5. Run every strategy with the same seed list.
 6. Save checkpoints, metrics, logs, and generated figures for every run.
 7. Do not aggregate results until all runs for a comparison block are complete.
-8. For E8, repeat the full train/tune/evaluate cycle independently per external dataset; do not mix datasets and do not treat the block as cross-dataset transfer.
+8. For E5, repeat the full train/tune/evaluate cycle independently per external dataset; do not mix datasets and do not treat the block as cross-dataset transfer.
 
 ## 8. Metric Families and Statistical Analysis
 
@@ -443,10 +443,10 @@ The final report should contain:
 - E2: confusion matrices, ROC curve, and open-set metric summary
 - E3: client distribution, reward evolution, and federated convergence plots
 - E4: combined robustness and per-client detection plots
-- E5: ablation bars and sensitivity sweeps
-- E6: runtime and communication-efficiency plots
-- E7: Label-wise latent-space separation and open-set proof plots
-- E8: per-dataset summary bars, open-set metric tables, and convergence plots for B-TAT, ToN-IoT, and CIC-IDS2017
+- E5: per-dataset summary bars, open-set metric tables, and convergence plots for B-TAT, ToN-IoT, and CIC-IDS2017
+- E6: ablation bars and sensitivity sweeps
+- E7: runtime and communication-efficiency plots
+- E8: Label-wise latent-space separation and open-set proof plots
 
 ## 10. Final Execution Checklist
 
@@ -458,10 +458,10 @@ The final report should contain:
 - [ ] Open-set runs completed with validation-only calibration
 - [ ] Federated non-IID runs completed across alpha values
 - [ ] Combined open-set + non-IID runs completed
+- [ ] External validation runs completed separately for B-TAT, ToN-IoT, and CIC-IDS2017
 - [ ] Ablation runs completed
 - [ ] Efficiency and scalability runs completed
 - [ ] Label-wise open-set stress-test runs completed
-- [ ] External validation runs completed separately for B-TAT, ToN-IoT, and CIC-IDS2017
 - [ ] Tables filled from logged metrics
 - [ ] Figures regenerated from saved outputs
 - [ ] Statistical tests reported
@@ -469,11 +469,13 @@ The final report should contain:
 
 ## 11. Summary of Expected Results
 
-The final system should show six consistent results:
+The final system should show eight consistent results:
 
 1. Closed-set metrics remain strong after open-set capability is added.
 2. EVT rejection separates unknown attacks from known traffic with strong threshold-independent performance.
 3. FMRL-LA is more robust than FedAvg and FedProx under non-IID client partitions.
 4. The combined system remains usable when both open-set detection and federated heterogeneity are active at the same time.
-5. The label-wise open-set stress test cleanly separates each held-out label from the known set in the latent-space proof.
-6. The external validation block shows that the method remains effective when trained and evaluated separately on B-TAT, ToN-IoT, and CIC-IDS2017 under open-set and non-IID conditions.
+5. The external validation block shows that the method remains effective when trained and evaluated separately on B-TAT, ToN-IoT, and CIC-IDS2017 under open-set and non-IID conditions.
+6. Ablation and sensitivity results isolate the value of EVT, generator training, client selection, and utility-aware aggregation.
+7. Efficiency results quantify the coordination cost of FMRL-LA relative to the accuracy and robustness it preserves.
+8. The label-wise open-set stress test cleanly separates each held-out label from the known set in the latent-space proof.

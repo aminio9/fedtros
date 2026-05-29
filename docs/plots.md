@@ -23,9 +23,11 @@ Output files are rendered individually as `plots/01_<plot_id>.png` artifacts, pl
 
 Evaluation can also write `latent_embeddings.csv` automatically when
 `evaluation.export_latent_embeddings=true`. For the latent-space proof,
-use the label-wise `exp7` runs; each held-out-label run exports from the
+use the label-wise `exp8` runs; each held-out-label run exports from the
 open-set evaluation tensor only, so the CSV does not duplicate closed-set
 rows.
+
+Cross-dataset generalization plots should use the E5 external-validation runs on B-TAT, ToN-IoT, and CIC-IDS2017.
 
 Open-set plots 9 and 10 now read from the dedicated files written by `src/evaluation/openset_eval.py`:
 

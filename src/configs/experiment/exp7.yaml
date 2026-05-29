@@ -1,50 +1,44 @@
 # @package _global_
 experiment:
   id: E7
-  name: exp7_labelwise_open_set
-  family: labelwise_open_set
+  name: exp7_efficiency_scalability
+  family: efficiency
   method: FMRL_LA
   pipeline: full
-  description: Label-wise open-set stress test with one held-out attack label per run.
-  objective: Demonstrate latent and decision separation under leave-one-attack-out splits.
+  description: Efficiency and scalability over client count and round budget.
+  objective: Measure runtime, communication cost, and accuracy per cost.
   primary_metrics:
-    - open_set/auroc
-    - open_set/auprc
-    - open_set/unknown_f1
     - test/accuracy
+    - communication/cumulative_mb
+    - federated/rounds
   dependencies:
     - preprocessing
     - federated_training
-    - evt_calibration
-    - open_set_evaluation
-    - latent_projection_export
+    - closed_set_evaluation
+    - suite_artifact_export
   expected_artifacts:
-    - open_set_metrics.json
-    - open_set_scores.csv
-    - open_set_roc_curve.csv
-    - open_set_pr_curve.csv
-    - latent_embeddings.csv
+    - communication_metrics.csv
+    - federated_history.csv
+    - evaluation_metrics.json
 federated:
   num_clients: 10
   num_rounds: 100
 model:
-  num_actions: 4
+  num_actions: 5
 dataset:
-  # Default representative holdout is MitM; the E7 script overrides this list per held-out label.
-  known_labels:
-    - Normal
-    - BP
-    - DoS
-    - FoT
+  known_labels: ${dataset.source_labels}
   preprocessing:
     output_dir: ${tracking.run_dir}/processed
-    alpha: 1.0
-    iid: true
+    alpha: 0.1
+    iid: false
 open_set:
   evt:
-    enabled: true
+    enabled: false
+training:
+  generator:
+    enabled: false
 evaluation:
-  mode: open_set
-  export_latent_embeddings: true
+  mode: closed_set
+  export_latent_embeddings: false
 tracking:
-  run_id: e7_${experiment.method}_mitm_seed${seed}
+  run_id: e7_${experiment.method}_clients${federated.num_clients}_rounds${federated.num_rounds}_seed${seed}

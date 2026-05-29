@@ -38,23 +38,24 @@ def test_bnat_csv_contains_expected_source_labels():
     }
 
 
-def test_exp7_config_is_labelwise_open_set():
+def test_exp5_config_is_external_validation_ready():
     with initialize_config_dir(version_base=None, config_dir=_config_dir()):
-        cfg = compose(config_name="config_fl", overrides=["experiment=exp7"])
+        cfg = compose(config_name="config_fl", overrides=["experiment=exp5"])
 
-    assert cfg.experiment.name == "exp7_labelwise_open_set"
-    assert cfg.model.num_actions == 4
-    assert cfg.dataset.known_labels == ["Normal", "BP", "DoS", "FoT"]
+    assert cfg.experiment.id == "E5"
+    assert cfg.experiment.name == "exp5_multi_dataset_external_validation"
+    assert cfg.federated.num_clients == 10
+    assert cfg.federated.num_rounds == 100
+    assert cfg.open_set.evt.enabled is True
     assert cfg.evaluation.export_latent_embeddings is True
 
 
-def test_exp8_config_is_external_validation_ready():
+def test_exp8_config_is_labelwise_open_set():
     with initialize_config_dir(version_base=None, config_dir=_config_dir()):
         cfg = compose(config_name="config_fl", overrides=["experiment=exp8"])
 
     assert cfg.experiment.id == "E8"
-    assert cfg.experiment.name == "exp8_multi_dataset_external_validation"
-    assert cfg.federated.num_clients == 10
-    assert cfg.federated.num_rounds == 100
-    assert cfg.open_set.evt.enabled is True
+    assert cfg.experiment.name == "exp8_labelwise_open_set"
+    assert cfg.model.num_actions == 4
+    assert cfg.dataset.known_labels == ["Normal", "BP", "DoS", "FoT"]
     assert cfg.evaluation.export_latent_embeddings is True

@@ -2,7 +2,7 @@
 
 ## Objective
 
-Launch one representative run for each experiment block from a single Hydra config.
+Launch one representative run for each experiment block from a single Hydra config in the canonical Q1-journal order: E1 closed-set, E2 open-set, E3 federated non-IID, E4 combined open-set plus non-IID, E5 multi-dataset external validation, E6 ablation, E7 efficiency, and E8 label-wise open-set.
 
 ## Hydra Config Used
 
