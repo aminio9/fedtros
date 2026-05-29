@@ -193,7 +193,7 @@ def _validate_experiment_contract(cfg: DictConfig) -> None:
     }
     if pipeline not in valid_pipelines:
         raise ValueError(f"Unknown experiment.pipeline={pipeline!r}.")
-    if experiment_id in {"E1", "E2", "E3", "E4", "E5", "E6"}:
+    if experiment_id in {"E1", "E2", "E3", "E4", "E5", "E6", "E8"}:
         rounds = int(OmegaConf.select(cfg, "federated.num_rounds"))
         if experiment_id != "E6" and rounds != 100:
             raise ValueError(

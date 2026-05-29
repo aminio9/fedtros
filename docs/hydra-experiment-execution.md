@@ -25,7 +25,7 @@ src/configs/config.yaml
   runtime: runtime/cpu.yaml | runtime/gpu.yaml | runtime/directml.yaml | runtime/tiny.yaml
   output: output/local.yaml | output/tiny.yaml
   sweep: sweep/none.yaml | sweep/seeds.yaml | sweep/alpha.yaml | sweep/clients.yaml
-  experiment: experiment/baseline.yaml | experiment/validation.yaml | experiment/exp1.yaml ... experiment/exp7.yaml | experiment/all.yaml
+  experiment: experiment/baseline.yaml | experiment/validation.yaml | experiment/exp1.yaml ... experiment/exp8.yaml | experiment/all.yaml
   optional overlays: method/*, evaluation/*, CLI overrides
 ```
 
@@ -50,6 +50,7 @@ python run.py experiment=exp1
 python run.py experiment=exp2 dataset=bnat model=transformer
 python run.py experiment=ablation runtime=gpu
 python run.py experiment=validation runtime=tiny
+python scripts/experiments/e8_multi_dataset_open_set_noniid.sh
 ```
 
 Hydra multirun:
@@ -134,7 +135,7 @@ outputs/<run_id>/
 
 ## Data Flow
 
-1. Raw B-NAT CSV is loaded from `dataset.preprocessing.raw_file`.
+1. Raw dataset CSV is loaded from `dataset.preprocessing.raw_file`.
 2. Known/unknown labels are split using `dataset.preprocessing.known_labels`.
 3. Preprocessing writes tensor datasets and manifests into
    `dataset.preprocessing.output_dir`.
@@ -143,7 +144,8 @@ outputs/<run_id>/
    `shared_open_set_test.pt`.
 6. EVT calibration uses validation data only.
 7. Latent export uses the open-set evaluation tensor for open-set runs, so each held-out-label run writes a clean latent CSV for plotting.
-8. Plots and suite exports read saved artifacts only.
+8. The E8 shell runner repeats the full train/tune/evaluate cycle separately for B-TAT, ToN-IoT, and CIC-IDS2017 once their label maps are finalized.
+9. Plots and suite exports read saved artifacts only.
 
 ## Reproducibility
 

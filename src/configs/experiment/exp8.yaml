@@ -1,0 +1,43 @@
+# @package _global_
+experiment:
+  id: E8
+  name: exp8_multi_dataset_external_validation
+  family: external_validation
+  method: FMRL_LA
+  pipeline: full
+  description: Multi-dataset open-set non-IID validation on external benchmarks.
+  objective: Validate the model independently on B-TAT, ToN-IoT, and CIC-IDS2017.
+  primary_metrics:
+    - test/accuracy
+    - test/macro_f1
+    - open_set/auroc
+    - open_set/unknown_f1
+  dependencies:
+    - preprocessing
+    - federated_training
+    - evt_calibration
+    - open_set_evaluation
+  expected_artifacts:
+    - evaluation_metrics.json
+    - open_set_metrics.json
+    - open_set_scores.csv
+    - open_set_roc_curve.csv
+    - open_set_pr_curve.csv
+    - communication_metrics.csv
+    - latent_embeddings.csv
+federated:
+  num_clients: 10
+  num_rounds: 100
+dataset:
+  preprocessing:
+    output_dir: ${tracking.run_dir}/processed
+    alpha: 0.1
+    iid: false
+open_set:
+  evt:
+    enabled: true
+evaluation:
+  mode: open_set
+  export_latent_embeddings: true
+tracking:
+  run_id: e8_${dataset.name}_${experiment.method}_seed${seed}

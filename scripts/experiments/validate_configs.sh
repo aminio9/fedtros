@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-experiments=("baseline" "exp1" "exp2" "exp3" "exp4" "exp7" "ablation" "efficiency" "validation" "all")
+experiments=("baseline" "exp1" "exp2" "exp3" "exp4" "exp7" "exp8" "ablation" "efficiency" "validation" "all")
 for experiment in "${experiments[@]}"; do
   poetry run python run.py "experiment=$experiment" --cfg job --resolve >/dev/null
 done
