@@ -5,7 +5,7 @@ invoke_hydra_run() {
   poetry run python run.py "$@"
 }
 
-for alpha in "0.01" "0.5" "1.0"; do
+for alpha in "0.1" "0.5" "1.0" "10.0"; do
   invoke_hydra_run "experiment=exp3" "+method=fmrl_la" "seed=42" "dataset.preprocessing.alpha=$alpha"
   invoke_hydra_run "experiment=exp3" "+method=fedavg" "seed=42" "dataset.preprocessing.alpha=$alpha"
   invoke_hydra_run "experiment=exp3" "+method=fedprox" "seed=42" "dataset.preprocessing.alpha=$alpha"

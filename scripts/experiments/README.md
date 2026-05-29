@@ -7,7 +7,7 @@ Run from the repository root with Bash.
 - `e1_closed_set.sh` through `e7_labelwise_open_set.sh`: experiment command files.
 - `run_full_suite.sh`: sequential batch runner for E1-E7.
 - `multirun_main_methods.sh`: Hydra multirun over FedAvg, FedProx, and FMRL-LA for E3.
-- `e3_federated_noniid.sh` and `e4_combined_open_set_noniid.sh`: sweep Dirichlet alpha values `0.01`, `0.5`, and `1.0`.
+- `e3_federated_noniid.sh` and `e4_combined_open_set_noniid.sh`: sweep Dirichlet alpha values `0.1`, `0.5`, `1.0`, and `10.0`.
 - `multirun_alpha_seed_sensitivity.sh`: Hydra multirun over seeds and alpha values for E4.
 - `e5_ablation.sh`: full ablation matrix, including no-EVT, no-generator, no-selection, FedAvg, and FedProx variants.
 - `e6_efficiency_scalability.sh`: client-count and round-budget sweep for FedAvg and FMRL-LA.
