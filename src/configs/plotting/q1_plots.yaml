@@ -1,6 +1,6 @@
 name: q1_plots
 enabled: true
-source_theme_file: D:/Research/code/testplot.py
+source_theme_file: src/plotting/theme.py
 output_dir: ${tracking.run_dir}/plots
 formats:
   - png

@@ -1,6 +1,6 @@
 import hashlib
+import _bootstrap  # noqa: F401
 from pathlib import Path
-
 import hydra
 from hydra.utils import get_original_cwd
 from omegaconf import DictConfig

@@ -1,3 +1,4 @@
+import _bootstrap  # noqa: F401
 import hydra
 from omegaconf import DictConfig
 

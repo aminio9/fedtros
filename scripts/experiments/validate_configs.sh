@@ -10,23 +10,23 @@ poetry run python run.py "experiment=validation" "runtime=tiny" --cfg job --reso
 poetry run python run.py "experiment=smoke" "runtime=tiny" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp1" "+method=fedprox" --cfg job --resolve >/dev/null
 # poetry run python run.py "experiment=exp1" "+method=centralized_no_osr" --cfg job --resolve >/dev/null
-poetry run python run.py "experiment=exp2" "+method=fmrl_la" "open_set.evt.enabled=false" "experiment.method=ClosedSet_No_EVT" --cfg job --resolve >/dev/null
+poetry run python run.py "experiment=exp2" "+method=fmrl_ava" "open_set.evt.enabled=false" "experiment.method=ClosedSet_No_EVT" --cfg job --resolve >/dev/null
 # poetry run python run.py "experiment=exp2" "+method=centralized_osr" --cfg job --resolve >/dev/null
 # poetry run python run.py "experiment=exp2" "+method=centralized_no_osr" --cfg job --resolve >/dev/null
-poetry run python run.py "experiment=exp5" "+method=fmrl_la" "dataset.name=B-TAT" --cfg job --resolve >/dev/null
-poetry run python run.py "experiment=exp6" "+method=fmrl_la" "open_set.evt.enabled=false" "experiment.method=No_EVT" --cfg job --resolve >/dev/null
-poetry run python run.py "experiment=exp6" "+method=fmrl_la" "training.generator.enabled=false" "experiment.method=No_Generator" --cfg job --resolve >/dev/null
-poetry run python run.py "experiment=exp6" "+method=fmrl_la" "federated.strategy.utility_threshold=-1.0" "experiment.method=No_Selection" --cfg job --resolve >/dev/null
+poetry run python run.py "experiment=exp5" "+method=fmrl_ava" "dataset.name=B-TAT" --cfg job --resolve >/dev/null
+poetry run python run.py "experiment=exp6" "+method=fmrl_ava" "open_set.evt.enabled=false" "experiment.method=No_EVT" --cfg job --resolve >/dev/null
+poetry run python run.py "experiment=exp6" "+method=fmrl_ava" "training.generator.enabled=false" "experiment.method=No_Generator" --cfg job --resolve >/dev/null
+poetry run python run.py "experiment=exp6" "+method=fmrl_ava" "federated.strategy.utility_threshold=-1.0" "experiment.method=No_Selection" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp7" "federated.num_clients=20" "federated.num_rounds=50" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp7" "federated.num_clients=20" "federated.num_rounds=100" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp3" "+method=fedavg" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp3" "+method=fedprox" --cfg job --resolve >/dev/null
 # poetry run python run.py "experiment=exp3" "+method=centralized_no_osr" --cfg job --resolve >/dev/null
-poetry run python run.py "experiment=exp4" "+method=fmrl_la" "open_set.evt.enabled=false" "experiment.method=ClosedSet_No_EVT" --cfg job --resolve >/dev/null
+poetry run python run.py "experiment=exp4" "+method=fmrl_ava" "open_set.evt.enabled=false" "experiment.method=ClosedSet_No_EVT" --cfg job --resolve >/dev/null
 # poetry run python run.py "experiment=exp4" "+method=centralized_osr" --cfg job --resolve >/dev/null
 # poetry run python run.py "experiment=exp4" "+method=centralized_no_osr" --cfg job --resolve >/dev/null
-poetry run python run.py "experiment=exp8" "+method=fmrl_la" "dataset.known_labels=[Normal,BP,DoS,FoT]" --cfg job --resolve >/dev/null
-poetry run python run.py "experiment=exp8" "+method=fmrl_la" "dataset.known_labels=[Normal,BP,DoS,MitM]" --cfg job --resolve >/dev/null
+poetry run python run.py "experiment=exp8" "+method=fmrl_ava" "dataset.known_labels=[Normal,BP,DoS,FoT]" --cfg job --resolve >/dev/null
+poetry run python run.py "experiment=exp8" "+method=fmrl_ava" "dataset.known_labels=[Normal,BP,DoS,MitM]" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp8" "+method=fedavg" "dataset.known_labels=[Normal,BP,DoS,FoT]" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp8" "+method=fedavg" "dataset.known_labels=[Normal,BP,DoS,MitM]" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp6" "runtime=gpu" --cfg job --resolve >/dev/null

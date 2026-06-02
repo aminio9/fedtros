@@ -100,7 +100,7 @@ The system begins with raw B-NAT CSV traffic, which is preprocessed into tensors
 
 \begin{figure*}[t]
   \centering
-  \includegraphics[width=\textwidth]{D:/Research/cf_marlos/paper/en/figures/proposed_method_overview.png}
+  \includegraphics[width=\textwidth]{proposed_method_overview.png}
   \caption{Overview of CF-MARLOS-AVA: preprocessing, non-IID client shards, local CVAE-DQN training, federated aggregation, and EVT-based open-set inference.}
   \label{fig:overview}
 \end{figure*}
@@ -108,7 +108,7 @@ The system begins with raw B-NAT CSV traffic, which is preprocessed into tensors
 \begin{algorithm}[t]
 \caption{Federated CVAE-DQN Training and Open-Set Calibration}
 \begin{algorithmic}[1]
-\Require Client datasets $\{D_i\}_{i=1}^N$, validation set $D_{\mathrm{val}}$, rounds $K$, local configuration $H$, strategy $S \in \{\mathrm{FedAvg}, \mathrm{FedProx}, \mathrm{FMRL\text{-}LA}\}$
+\Require Client datasets $\{D_i\}_{i=1}^N$, validation set $D_{\mathrm{val}}$, rounds $K$, local configuration $H$, strategy $S \in \{\mathrm{FedAvg}, \mathrm{FedProx}, \mathrm{FMRL\text{-}AVA}\}$
 \Ensure Final model $\theta^\ast$, EVT models $M_{\mathrm{evt}}$, rejection threshold $\delta$
 \State Initialize $\theta^0 = \{\theta_p^0,\theta_r^0,\theta_Q^0,\theta_G^0\}$
 \For{$k = 1$ to $K$}
@@ -117,7 +117,7 @@ The system begins with raw B-NAT CSV traffic, which is preprocessed into tensors
     \State $\mu_i \gets \mu$ if $S=\mathrm{FedProx}$ else $0$
     \State $(\theta_i^k, m_i^k) \gets \textsc{ClientLocalUpdate}(D_i,\theta^{k-1},H,\mu_i)$
   \EndFor
-  \If{$S=\mathrm{FMRL\text{-}LA}$}
+  \If{$S=\mathrm{FMRL\text{-}AVA}$}
     \State $\theta^k \gets \textsc{FMRLAVAUpdate}(\theta^{k-1},\{(\theta_i^k,m_i^k)\})$
   \Else
     \State $\theta^k \gets \frac{\sum_{i\in C_k} n_i \theta_i^k}{\sum_{i\in C_k} n_i}$
@@ -269,7 +269,7 @@ Algorithm~1 summarizes the end-to-end federated training and calibration flow. A
 \section{Experimental Setup}
 The evaluation protocol follows the repository contract and the experiment plan documented for the project. The primary dataset is B-NAT blockchain traffic. In the main B-NAT experiments, \texttt{Normal}, \texttt{BP}, \texttt{DoS}, and \texttt{MitM} are treated as known classes, while \texttt{FoT} is held out as the unknown attack. For the final manuscript, the primary configuration uses 10 clients and 100 logical federated rounds; smaller settings remain available in the repository for smoke tests and development runs.
 
-All B-NAT comparisons reuse the same preprocessing contract, the same train/validation/test split, the same client partition seed, and the same evaluation seed list. Client shards are generated with Dirichlet non-IID sampling over class labels, with \(\alpha \in \{0.01, 0.5, 1.0\}\) used to control skew. The main baselines are centralized training, local-only training, FedAvg, FedProx, and FMRL-AVA. Hydra controls the implementation details, including local episodes per round, replay-buffer size, batch size, Double-DQN settings, generator training, and open-set calibration toggles.
+All B-NAT comparisons reuse the same preprocessing contract, the same train/validation/test split, the same client partition seed, and the same evaluation seed list. Client shards are generated with Dirichlet non-IID sampling over class labels, with \(\alpha \in \{0.1, 0.5, 1.0, 10.0\}\) used to control skew. The main baselines are centralized training, local-only training, FedAvg, FedProx, and FMRL-AVA. Hydra controls the implementation details, including local episodes per round, replay-buffer size, batch size, Double-DQN settings, generator training, and open-set calibration toggles.
 
 The external validation block is run independently on B-TAT, ToN-IoT, and CIC-IDS2017. Each dataset uses its own finalized known/unknown mapping, its own split, and its own non-IID partition; this block is therefore a separate validation study rather than a cross-dataset transfer experiment.
 

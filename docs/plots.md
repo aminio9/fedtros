@@ -1,6 +1,6 @@
 # Plots
 
-The source of truth for the visual style is `D:/Research/code/testplot.py`, but the repo now renders one high-quality image per experiment instead of a single dashboard canvas. The palette and 14 required Q1 figures are mirrored in `src/plotting/theme.py` and `src/plotting/registry.py`.
+The source of truth for the visual style is `src/plotting/theme.py`, and the repo now renders one high-quality image per experiment instead of a single dashboard canvas. The palette and 14 required Q1 figures are mirrored in `src/plotting/theme.py` and `src/plotting/registry.py`.
 
 Required figures:
 

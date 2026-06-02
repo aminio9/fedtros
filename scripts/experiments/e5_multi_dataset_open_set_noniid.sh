@@ -20,7 +20,7 @@ run_dataset() {
 
   invoke_hydra_run \
     "experiment=exp5" \
-    "+method=fmrl_la" \
+    "+method=fmrl_ava" \
     "seed=42" \
     "dataset.name=$dataset_name" \
     "dataset.raw_path=$raw_file" \
@@ -29,7 +29,7 @@ run_dataset() {
     "dataset.preprocessing.raw_file=$raw_file" \
     "model.num_actions=$num_actions" \
     "dataset.preprocessing.output_dir=outputs/e5_${run_slug}/processed" \
-    "tracking.run_id=e5_${run_slug}_fmrl_la_seed42"
+    "tracking.run_id=e5_${run_slug}_fmrl_ava_seed42"
 
   invoke_hydra_run \
     "experiment=exp5" \

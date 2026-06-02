@@ -93,7 +93,7 @@ Each federated baseline should be labeled by the exact local objective used in t
 | ----------- | --------------------- | ------------------------------------------------------------- |
 | Independent | Inference mode        | Closed-set only, open-set enabled                             |
 | Independent | Federation strategy   | Local training, FedAvg, FedProx, FMRL-AVA                      |
-| Independent | Data heterogeneity    | IID closed-set over all labels, Dirichlet non-IID with alpha values 0.01, 0.5, and 1.0  |
+| Independent | Data heterogeneity    | IID closed-set over all labels, Dirichlet non-IID with alpha values 0.1, 0.5, 1.0, and 10.0  |
 | Independent | Unknown composition   | Leave-one-attack-out or multi-unknown holdout                 |
 | Independent | Dataset benchmark     | B-NAT for core experiments; B-TAT, ToN-IoT, and CIC-IDS2017 for external validation only |
 | Independent | Random seed           | Fixed seed list, reused across all methods                    |
@@ -231,7 +231,7 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 
 **Setup**
 
-- Generate client shards with multiple Dirichlet alpha values: 0.01, 0.5, and 1.0 over the full label set.
+- Generate client shards with multiple Dirichlet alpha values: 0.1, 0.5, 1.0, and 10.0 over the full label set.
 - Run the same training budget for all strategies.
 - Compare FedAvg, FedProx, local-only training, and FMRL-AVA. Centralized pooled commands are retained in the scripts as commented reference baselines only.
 - Use the same client sampling fraction, seed list, and local epoch count for every run.
@@ -323,7 +323,7 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 
 **Sensitivity checks**
 
-- Dirichlet alpha sweep over 0.01, 0.5, and 1.0
+- Dirichlet alpha sweep over 0.1, 0.5, 1.0, and 10.0
 - EVT threshold sweep
 - random-seed sweep
 - client-count sweep

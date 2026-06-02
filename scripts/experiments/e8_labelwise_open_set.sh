@@ -14,10 +14,10 @@ for idx in "${!label_names[@]}"; do
 
   invoke_hydra_run \
     "experiment=exp8" \
-    "+method=fmrl_la" \
+    "+method=fmrl_ava" \
     "seed=42" \
     "dataset.known_labels=[$known_labels]" \
-    "tracking.run_id=e8_${unknown_label,,}_fmrl_la_seed42"
+    "tracking.run_id=e8_${unknown_label,,}_fmrl_ava_seed42"
 
   invoke_hydra_run \
     "experiment=exp8" \
