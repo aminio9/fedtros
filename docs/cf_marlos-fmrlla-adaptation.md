@@ -24,6 +24,10 @@ Q_total = CentralizedAggregator([utility_i], global_client_state)
 theta_next = theta_global + aggregation_lr * sum_i normalized(utility_i) * delta_i
 ```
 
+Before Phase B selection, utilities below the configured threshold are clipped to
+zero. In normal rounds, zero utility means the client does not upload cached
+weights in Phase B.
+
 The mixer target is a configurable composite utility:
 
 ```text

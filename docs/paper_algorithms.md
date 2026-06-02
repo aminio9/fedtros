@@ -148,12 +148,13 @@ Phase A: utility estimation and client selection
             and local step count
 4:      Estimate client utility u_i = C_i(h_i, x_i) using the client critic
 5:      Clip or temperature-scale u_i for numerical stability
-6:  end for
-7:  Select clients A_k = {i : u_i >= lambda}
-8:  if |A_k| < q_min then
-9:      Add highest-utility clients until |A_k| = q_min
-10: end if
-11: Limit |A_k| so that |A_k| <= ceil(rho_max |C_k|)
+6:      Set u_i = 0 if it falls below the selection threshold lambda
+7:  end for
+8:  Select clients A_k = {i : u_i > 0}
+9:  if |A_k| < q_min then
+10:     Add highest-utility clients until |A_k| = q_min
+11: end if
+12: Limit |A_k| so that |A_k| <= ceil(rho_max |C_k|)
 
 Phase B: utility-weighted model update
 12: for each selected client i in A_k do

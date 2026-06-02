@@ -23,6 +23,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from src.agents.agent import Agent
 from src.checkpointing.checkpoints import load_agent_checkpoint
+from src.federated.selection_utils import gate_utility, select_utility_records
 from src.models.models import OpenSetQChainModelFactory
 logger = logging.getLogger("Server")
 
@@ -364,7 +365,7 @@ class FMRLLearnableAggregationStrategy(FedAvg):
             critic.eval()
             with torch.no_grad():
                 utility = critic(parsed["h"], parsed["scalars"]).item()
-            utility = float(np.clip(utility / self.utility_temperature, 0.0, self.max_utility))
+            utility = self._gate_utility(utility)
 
             record = {
                 "client": client,
@@ -559,31 +560,21 @@ class FMRLLearnableAggregationStrategy(FedAvg):
         }
 
     def _select_records(self, server_round: int) -> list[dict[str, Any]]:
-        if not self.selection_records:
-            return []
-        warmup = self._is_warmup(server_round)
-        sorted_records = sorted(
-            self.selection_records, key=lambda item: item["utility"], reverse=True
+        return select_utility_records(
+            self.selection_records,
+            server_round=server_round,
+            min_selected_clients=self.min_selected_clients,
+            max_selected_fraction=self.max_selected_fraction,
+            warmup_rounds=self.warmup_rounds,
         )
 
-        if warmup:
-            selected = sorted_records
-        else:
-            selected = [r for r in sorted_records if r["utility"] >= self.utility_threshold]
-            min_selected = min(max(self.min_selected_clients, 1), len(sorted_records))
-            if len(selected) < min_selected:
-                selected = sorted_records[:min_selected]
-
-            max_selected = max(
-                min_selected,
-                int(np.ceil(len(sorted_records) * np.clip(self.max_selected_fraction, 0.0, 1.0))),
-            )
-            selected = selected[:max_selected]
-
-        selected_ids = {record["cid"] for record in selected}
-        for record in self.selection_records:
-            record["selected"] = record["cid"] in selected_ids
-        return selected
+    def _gate_utility(self, utility: float) -> float:
+        return gate_utility(
+            utility,
+            utility_temperature=self.utility_temperature,
+            max_utility=self.max_utility,
+            utility_threshold=self.utility_threshold,
+        )
 
     def _train_server_models(self, system_utility: float) -> dict[str, float]:
         if not self.stage1_data_cache:
