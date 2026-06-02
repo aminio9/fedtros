@@ -11,15 +11,15 @@ Measure open-set separation with one held-out attack label per run, then save th
 ## Override Examples
 
 ```bash
-python run.py experiment=exp8 +method=fmrl_la seed=42 dataset.known_labels='[Normal,BP,DoS,FoT]' tracking.run_id=e8_mitm_fmrl_la_seed42
-python run.py experiment=exp8 +method=fmrl_la seed=42 dataset.known_labels='[Normal,BP,DoS,MitM]' tracking.run_id=e8_fot_fmrl_la_seed42
+python run.py experiment=exp8 +method=fmrl_ava seed=42 dataset.known_labels='[Normal,BP,DoS,FoT]' tracking.run_id=e8_mitm_fmrl_ava_seed42
+python run.py experiment=exp8 +method=fmrl_ava seed=42 dataset.known_labels='[Normal,BP,DoS,MitM]' tracking.run_id=e8_fot_fmrl_ava_seed42
 ```
 
 ## Execution Commands
 
 ```bash
-python run.py experiment=exp8 +method=fmrl_la seed=42 dataset.known_labels='[Normal,BP,DoS,FoT]'
-python run.py experiment=exp8 +method=fmrl_la seed=42 dataset.known_labels='[Normal,BP,DoS,MitM]'
+python run.py experiment=exp8 +method=fmrl_ava seed=42 dataset.known_labels='[Normal,BP,DoS,FoT]'
+python run.py experiment=exp8 +method=fmrl_ava seed=42 dataset.known_labels='[Normal,BP,DoS,MitM]'
 python run.py experiment=exp8 +method=fedavg seed=42 dataset.known_labels='[Normal,BP,DoS,FoT]'
 python run.py experiment=exp8 +method=fedavg seed=42 dataset.known_labels='[Normal,BP,DoS,MitM]'
 bash scripts/experiments/e8_labelwise_open_set.sh

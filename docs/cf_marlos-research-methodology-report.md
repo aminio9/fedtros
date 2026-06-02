@@ -2,7 +2,7 @@
 
 This document consolidates the current research method, system design, algorithms, implementation details, and validation status for the `cf_marlos` repository snapshot under `D:\Research\cf_marlos`.
 
-[ASSUMPTION] This report is the canonical narrative for the current code base and supersedes the more fragmented supporting notes in `docs/evaluation.md`, `docs/federated-learning.md`, `docs/cf_marlos-fmrlla-adaptation.md`, `docs/cf_marlos-experiment-plan.md`, `docs/reproducibility.md`, `docs/checkpoints.md`, `docs/logging.md`, `docs/plots.md`, `docs/hydra-experiment-execution.md`, and the `docs/runbooks/` files.
+[ASSUMPTION] This report is the canonical narrative for the current code base and supersedes the more fragmented supporting notes in `docs/evaluation.md`, `docs/federated-learning.md`, `docs/cf_marlos-fmrl-ava-adaptation.md`, `docs/cf_marlos-experiment-plan.md`, `docs/reproducibility.md`, `docs/checkpoints.md`, `docs/logging.md`, `docs/plots.md`, `docs/hydra-experiment-execution.md`, and the `docs/runbooks/` files.
 
 [TODO] Final manuscript claims still require full benchmark runs, cross-seed aggregation, and the external dataset pipeline described in the runbook.
 
@@ -35,7 +35,8 @@ Supporting documentation reviewed:
 - `README.md`
 - `docs/evaluation.md`
 - `docs/federated-learning.md`
-- `docs/cf_marlos-fmrlla-adaptation.md`
+- `docs/cf_marlos-fmrl-ava-adaptation.md`
+- `docs/fmrl-ava-source-mapping-fa.md`
 - `docs/cf_marlos-experiment-plan.md`
 - `docs/reproducibility.md`
 - `docs/checkpoints.md`
@@ -58,7 +59,7 @@ The project addresses intrusion detection for B-NAT blockchain traffic under two
 2. The detector must reject unknown or unseen attacks without collapsing known-class behavior.
 3. The learning pipeline must remain usable under horizontal federated training with non-IID client partitions.
 
-The implementation combines a CVAE-style latent model, Double DQN learning, EVT-based open-set rejection, and federated optimization through FedAvg, FedProx, and FMRL-LA.
+The implementation combines a CVAE-style latent model, Double DQN learning, EVT-based open-set rejection, and federated optimization through FedAvg, FedProx, and FMRL-AVA.
 
 ### Research Objectives
 
@@ -79,7 +80,7 @@ The current scope includes:
 - known-class closed-set training
 - EVT-calibrated open-set rejection
 - Flower-based horizontal federated learning
-- FedAvg, FedProx, and FMRL-LA
+- FedAvg, FedProx, and FMRL-AVA
 - artifact generation for plots, tables, and run tracking
 
 Out of scope for this repository snapshot:
@@ -132,7 +133,7 @@ flowchart LR
 | RL core | `src/rl/environment.py`, `src/rl/replay_buffer.py`, `src/rl/local_training.py`, `src/agents/policy.py`, `src/agents/agent.py` | Define the intrusion MDP, replay, epsilon-greedy policy, and local training logic |
 | Models | `src/models/models.py` | Build prior, recognition, Q, target-Q, and generator networks |
 | Open-set | `src/openset/evt.py`, `src/evaluation/openset_eval.py` | Fit EVT tails, calibrate thresholds, evaluate unknown rejection |
-| Federated | `src/federated/client.py`, `src/federated/server.py`, `src/federated/server_models.py`, `src/federated/run.py` | Run FedAvg, FedProx, and FMRL-LA in Flower |
+| Federated | `src/federated/client.py`, `src/federated/server.py`, `src/federated/server_models.py`, `src/federated/run.py` | Run FedAvg, FedProx, and FMRL-AVA in Flower |
 | Evaluation | `src/evaluation/closed_set.py`, `src/evaluation/run.py`, `src/evaluation/compare.py` | Compute closed-set, open-set, and run-comparison outputs |
 | Artifacts | `src/artifacts/communication.py`, `src/artifacts/suite.py`, `src/artifacts/embeddings.py` | Export communication cost, suite CSVs, and latent projections |
 | Support | `src/checkpointing/checkpoints.py`, `src/tracking/local.py`, `src/utils/utils.py`, `src/utils/config.py` | Checkpoints, logging, reproducibility, device and config validation |
@@ -166,7 +167,7 @@ tests/
 |---|---|---|---|
 | `run_preprocessing` | Raw CSV, known labels, partition config | Tensor datasets, scaler/encoder, metadata, manifests | Fits transforms on train split only |
 | `run_local_training_round` | Agent, environment, replay buffer, policy, scheduler | Training metrics, interaction counts | Uses proximal penalty when FedProx is active |
-| `FlowerClient.fit` | Federated parameters and phase config | Updated parameters or cached audit payload | Implements standard and two-phase FMRL-LA behavior |
+| `FlowerClient.fit` | Federated parameters and phase config | Updated parameters or cached audit payload | Implements standard and two-phase FMRL-AVA behavior |
 | `fit_evt_models` | Calibration tensors and encoder-decoder stack | Per-class EVT models | Uses correctly classified known samples only |
 | `evaluate_open_set` | Open-set test tensor and EVT metadata | Unknown scores, confusion matrices, open-set metrics | Missing EVT tails are treated as unknown |
 | `build_suite_artifacts` | Run directories | Suite CSVs and manifest | Used for plot and manuscript aggregation |
@@ -189,17 +190,17 @@ The repository supports two execution modes:
 | Generator trained only on correctly classified known samples | Prevents label contamination in the reconstruction model | Reduces the effective generator training set |
 | Validation-based EVT calibration | Avoids test leakage | Requires a dedicated validation split |
 | Flower-based federation | Matches the current code base and keeps local simulation reproducible | Adds runtime dependency on Flower |
-| FMRL-LA surrogate utilities | Adapts the paper's Dec-POMDP idea to this intrusion dataset | The utility is a proxy, not a real team reward |
+| FMRL-AVA vector-aligned utilities | Combines FMRL-LA's two-phase critics/mixer with FedAWA's client-vector aggregation idea | More server bookkeeping: selected-client deltas, cosine alignment, critics, mixer, and validation/support monitoring |
 
 ### Scalability Considerations
 
 The design scales primarily along three axes:
 
 1. Client count. The preprocessing and FL configs must agree on `num_clients`.
-2. Round count. FMRL-LA uses two Flower rounds per logical round, so its physical communication cost is higher.
+2. Round count. FMRL-AVA uses two Flower rounds per logical round, so its physical communication cost is higher.
 3. Model size. The full checkpoint includes prior, recognition, main Q, target Q, and generator weights.
 
-Communication cost is summarized by `src/artifacts/communication.py`, which estimates transfer volume from checkpoint parameter bytes and FMRL-LA selection records.
+Communication cost is summarized by `src/artifacts/communication.py`, which estimates transfer volume from checkpoint parameter bytes and FMRL-AVA selection records.
 
 ---
 
@@ -233,9 +234,15 @@ FedProx local objective:
 
 `F_i^prox(w) = F_i(w) + (mu / 2) * ||w - w_k||^2`
 
-FMRL-LA weighted aggregation:
+FMRL-AVA vector-aligned weighted aggregation:
 
-`w_{k+1} = w_k + eta * sum_i u_i (w_i - w_k) / sum_i u_i`
+`b_i = n_i u_i`
+
+`d_ref = sum_i b_i (w_i - w_k) / sum_i b_i`
+
+`m_i = clip(exp(kappa * cos(w_i - w_k, d_ref)), m_min, m_max)`
+
+`w_{k+1} = w_k + eta * sum_i b_i m_i (w_i - w_k) / sum_i b_i m_i`
 
 Open-set score:
 
@@ -328,7 +335,7 @@ The implementation is validated by a mixture of unit tests and artifact checks:
 - `tests/test_agent_fedprox.py` verifies that FedProx produces a nonzero proximal penalty after local drift.
 - `tests/test_openset.py` verifies EVT tail behavior, missing-tail rejection, and config-driven open-set ids.
 - `tests/test_config.py` verifies config wiring, including `known_train.pt` and `validation.pt`.
-- `tests/test_fmrlla_strategy.py` verifies that FMRL-LA uses two Flower rounds per logical round.
+- `tests/test_fmrl_ava_strategy.py` verifies that FMRL-AVA uses two Flower rounds per logical round.
 
 The repository also includes smoke tests and plotting tests for end-to-end artifact generation.
 
@@ -580,15 +587,15 @@ return theta
 
 ---
 
-### 4.8 FMRL-LA Two-Phase Selection and Aggregation
+### 4.8 FMRL-AVA Two-Phase Selection and Aggregation
 
 **Purpose:** Adapt federated MARL-style learnable aggregation to non-IID intrusion data.
 
-**Inputs:** client hidden summaries, local reward statistics, accuracy/F1, TD stability, novelty, class entropy, label coverage, generator quality, and local step counts.
+**Inputs:** client hidden summaries, local reward statistics, local F1/accuracy, TD stability, novelty, class entropy, label coverage, generator quality, local step counts, and validation metrics when evaluation is available.
 
 **Outputs:** selected clients, utility scores, weighted global parameters, monitoring records.
 
-**Procedure:** use Phase A to collect audit metadata from all sampled clients, score them with `AsyncCritic`, select a subset by utility threshold and minimum-selection rules, then use Phase B to aggregate only the selected client weights with learned utility weights. The server also trains a QMIX-style `CentralizedAggregator` against a composite system utility target.
+**Procedure:** use Phase A to collect audit metadata from all sampled clients, combine deterministic audit scores with bounded `AsyncCritic` residuals, center utilities around the round mean, select a subset by utility threshold and minimum-selection rules, then use Phase B to aggregate only the selected client weights with sample-aware utility weights multiplied by a bounded update-vector alignment factor. The server trains a QMIX-style `CentralizedAggregator` against a validation-aware monitoring target with a small support-reward fallback. Validation metrics that are not produced by the current evaluation mode are omitted from the reward denominator, so closed-set runs are not artificially penalized for missing open-set metrics.
 
 **Pseudocode:**
 
@@ -598,14 +605,25 @@ Input: global parameters, sampled clients
 Phase A:
     broadcast parameters
     each client trains locally and returns audit metrics
-    utility_i <- AsyncCritic_i(hidden_i, scalar_i)
+    audit_i <- deterministic_score(scalar_i)
+    critic_i <- bounded_AsyncCritic_i(hidden_i, scalar_i)
+    utility_i <- centered((1 - beta) * audit_i + beta * critic_i)
     selected <- filter by threshold, warmup, and min/max selection rules
 Phase B:
     broadcast parameters to selected clients
     selected clients upload cached weights
-    delta <- sum_i utility_i * (w_i - w_global)
-    w_next <- w_global + aggregation_lr * delta / sum_i utility_i
-    train CentralizedAggregator on composite system utility
+    base_weight_i <- n_i * utility_i
+    delta_ref <- sum_i (base_weight_i * (w_i - w_global)) / sum_i base_weight_i
+    align_i <- clip(exp(kappa * cosine(w_i - w_global, delta_ref)))
+    final_weight_i <- base_weight_i * align_i
+    delta <- sum_i (final_weight_i * (w_i - w_global))
+    w_next <- w_global + aggregation_lr * delta / sum_i final_weight_i
+    support_reward <- local F1, balanced accuracy, TD stability,
+                      coverage, generator quality, and communication
+    validation_reward <- EMA(validation F1, balanced accuracy,
+                             open-set AUROC, unknown F1, rejection quality)
+    mixer_target <- blend(validation_reward, support_reward)
+    train CentralizedAggregator on mixer_target
 return updated global parameters
 ```
 
@@ -673,8 +691,8 @@ data/raw/
 | `BlockchainIntrusionEnv` | `src/rl/environment.py` | Sample-pool MDP for RL training |
 | `OpenSetQChainModelFactory` | `src/models/models.py` | Creates the value network and generator |
 | `EVTModel` | `src/openset/evt.py` | Fits and evaluates GPD tails |
-| `FlowerClient` | `src/federated/client.py` | Client-side FL logic, including standard and FMRL-LA phases |
-| `FMRLLearnableAggregationStrategy` | `src/federated/server.py` | Server-side FMRL-LA orchestration |
+| `FlowerClient` | `src/federated/client.py` | Client-side FL logic, including standard and FMRL-AVA phases |
+| `FMRLAdaptiveVectorAlignedAggregationStrategy` | `src/federated/server.py` | Server-side FMRL-AVA orchestration |
 | `AsyncCritic`, `CentralizedAggregator` | `src/federated/server_models.py` | Utility estimation and monotonic mixing |
 | `LocalRunTracker` | `src/tracking/local.py` | Local logging, metadata, and metric export |
 | `build_suite_artifacts` | `src/artifacts/suite.py` | Aggregates suite-level CSVs for the plotting and reporting pipeline |
@@ -793,7 +811,7 @@ Implemented baselines:
 - local or centralized training
 - FedAvg
 - FedProx
-- FMRL-LA
+- FMRL-AVA
 - closed-set only classifier
 - closed-set plus EVT rejection
 
@@ -802,7 +820,7 @@ Implemented baselines:
 ### Observations
 
 1. The open-set calibration path is deterministic once the validation split and seed are fixed.
-2. FMRL-LA is structurally more expensive than FedAvg/FedProx because it performs two Flower phases per logical round.
+2. FMRL-AVA is structurally more expensive than FedAvg/FedProx because it performs two Flower phases per logical round.
 3. The current communication pipeline records round metrics and estimated bytes, which is enough for comparative plots but not a packet-level transport audit.
 4. The current implementation already covers the major correction points identified in the code review cycle.
 
@@ -819,14 +837,14 @@ Implemented baselines:
 |---|---|---|
 | Closed-set preservation | Closed-set metrics exported separately; validation pipeline and central baseline are implemented | Partially validated, full comparative run pending |
 | Open-set robustness | EVT rejection, ROC/PR curves, unknown labels, and demo metrics are implemented | Validated at pipeline level |
-| Non-IID federated improvement | FedAvg, FedProx, and FMRL-LA are implemented and unit tested | Algorithmically validated, final benchmark pending |
+| Non-IID federated improvement | FedAvg, FedProx, and FMRL-AVA are implemented and unit tested | Algorithmically validated, final benchmark pending |
 | Unified effectiveness | End-to-end preprocessing, training, calibration, evaluation, and plotting all execute through shared config | Pipeline validated, final results pending |
 
 ---
 
 ## 7. Future Work
 
-- [TODO] Run the full 10-client, 100-round benchmark sweep for FMRL-LA, FedAvg, and FedProx across the manuscript seed set.
+- [TODO] Run the full 10-client, 100-round benchmark sweep for FMRL-AVA, FedAvg, and FedProx across the manuscript seed set.
 - [TODO] Produce final significance tests, confidence intervals, and effect sizes for the comparative tables.
 - [TODO] Add dataset-specific preprocessing configs and label maps for B-TAT, ToN-IoT, and CIC-IDS2017.
 - [TODO] Replace the communication-byte estimate with measured transport volume.

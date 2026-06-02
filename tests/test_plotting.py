@@ -34,7 +34,7 @@ def _write_fixture_tables(run_dir: Path, preprocess_dir: Path | None = None) -> 
     ).to_csv((preprocess_dir or run_dir) / "client_class_distribution.csv", index=False)
 
     comparison = []
-    for method, base in {"FMRL_LA": 0.94, "FedProx": 0.90, "FedAvg": 0.88}.items():
+    for method, base in {"FMRL_AVA": 0.94, "FedProx": 0.90, "FedAvg": 0.88}.items():
         for round_idx in range(1, 6):
             comparison.append(
                 {
@@ -61,7 +61,7 @@ def _write_fixture_tables(run_dir: Path, preprocess_dir: Path | None = None) -> 
         {
             "fpr": np.linspace(0, 1, 6),
             "tpr": np.array([0.0, 0.45, 0.68, 0.82, 0.93, 1.0]),
-            "method": ["FMRL_LA"] * 6,
+            "method": ["FMRL_AVA"] * 6,
         }
     ).to_csv(run_dir / "open_set_roc_curve.csv", index=False)
 
@@ -120,7 +120,7 @@ def _write_fixture_tables(run_dir: Path, preprocess_dir: Path | None = None) -> 
 
     pd.DataFrame(
         {
-            "method": ["FMRL_LA"] * 5 + ["FedAvg"] * 5,
+            "method": ["FMRL_AVA"] * 5 + ["FedAvg"] * 5,
             "cumulative_mb": [1.2, 2.4, 3.6, 4.8, 6.0, 2.5, 5.0, 7.5, 10.0, 12.5],
             "accuracy": [0.89, 0.91, 0.925, 0.932, 0.94, 0.86, 0.875, 0.885, 0.89, 0.895],
         }

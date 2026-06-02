@@ -8,7 +8,7 @@ Verify that the unified model preserves performance across the full B-NAT label 
 
 `experiment=exp1` with optional method overlays:
 
-- `+method=fmrl_la`
+- `+method=fmrl_ava`
 - `+method=fedavg`
 - `+method=fedprox`
 - `+method=centralized_no_osr` (commented reference only in the shell script)
@@ -25,7 +25,7 @@ Default run-local paths:
 ## Override Examples
 
 ```bash
-python run.py experiment=exp1 +method=fmrl_la seed=42
+python run.py experiment=exp1 +method=fmrl_ava seed=42
 python run.py experiment=exp1 +method=fedavg seed=42
 python run.py experiment=exp1 +method=fedprox seed=42
 # python run.py experiment=exp1 +method=centralized_no_osr seed=42
@@ -34,7 +34,7 @@ python run.py experiment=exp1 +method=fedprox seed=42
 ## Execution Commands
 
 ```bash
-python run.py experiment=exp1 +method=fmrl_la seed=42
+python run.py experiment=exp1 +method=fmrl_ava seed=42
 python run.py experiment=exp1 +method=fedavg seed=42
 python run.py experiment=exp1 +method=fedprox seed=42
 # python run.py experiment=exp1 +method=centralized_no_osr seed=42

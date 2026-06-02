@@ -1,6 +1,6 @@
 # cf_marlos Experimental Plan for Closed-Set, Open-Set, and Non-IID Federated Intrusion Detection
 
-This plan defines the final evaluation protocol for the unified intrusion-detection system implemented in the `cf_marlos` repository. The system combines CVAE-style latent modeling, Double DQN training, EVT-based open-set rejection, and horizontal federated learning with FedAvg, FedProx, and FMRL-LA. B-NAT is the primary dataset for all core experiments, with frozen preprocessing and seed-controlled client partitions. Closed-set B-NAT experiments use the full source label set with no unknown labels held out; B-NAT open-set experiments keep `FoT` as the held-out unknown attack. A separate multi-dataset open-set non-IID validation block uses the external datasets B-TAT, ToN-IoT, and CIC-IDS2017 only; B-NAT is not repeated in that external-validation experiment.
+This plan defines the final evaluation protocol for the unified intrusion-detection system implemented in the `cf_marlos` repository. The system combines CVAE-style latent modeling, Double DQN training, EVT-based open-set rejection, and horizontal federated learning with FedAvg, FedProx, and FMRL-AVA. B-NAT is the primary dataset for all core experiments, with frozen preprocessing and seed-controlled client partitions. Closed-set B-NAT experiments use the full source label set with no unknown labels held out; B-NAT open-set experiments keep `FoT` as the held-out unknown attack. A separate multi-dataset open-set non-IID validation block uses the external datasets B-TAT, ToN-IoT, and CIC-IDS2017 only; B-NAT is not repeated in that external-validation experiment.
 
 ## 1. Scope and Research Questions
 
@@ -19,7 +19,7 @@ These questions map directly to the implemented system:
 - `MainQNetwork` estimates action values for known classes.
 - `GenerationNetwork` reconstructs traffic features from latent and action inputs.
 - `EVTModel` converts reconstruction error into an unknown-attack score.
-- `AsyncCritic` and `CentralizedAggregator` support FMRL-LA client scoring and aggregation.
+- `AsyncCritic` and `CentralizedAggregator` support FMRL-AVA client scoring and aggregation.
 
 ## 2. System Under Test
 
@@ -72,16 +72,18 @@ The supported strategies are:
 
 - `FedAvg`
 - `FedProx`
-- `FMRL-LA` (`FMRL_LA` in some source files)
+- `FMRL-AVA` (`FMRL_AVA` in some source files)
 
 Only the trainable parameter blocks are federated. The target Q-network is synchronized locally after aggregation and is not directly shared as a separate federated object.
 
-FMRL-LA is run as a two-phase round:
+FMRL-AVA is run as a two-phase round:
 
 1. Phase A: all sampled clients train locally and upload audit metadata.
-2. The server scores client utility from latent summaries, reward statistics, accuracy, F1, TD stability, novelty, class entropy, label coverage, generator quality, and local interaction count.
-3. A QMIX-style monotonic mixer, conditioned on the padded global client-state vector, turns those signals into aggregation weights.
-4. Phase B: selected clients upload cached weights, and the server applies the weighted update.
+2. The server builds a deterministic audit score from latent summaries, reward statistics, local F1/accuracy, TD stability, novelty, class entropy, label coverage, generator quality, and local interaction count.
+3. A bounded asynchronous critic residual is blended with the audit score and centered within the round, yielding utility values close to 1 in IID-like rounds.
+4. Phase B: selected clients upload cached weights, and the server applies a vector-aligned weighted update with final aggregation weight `n_i * u_i * m_i`.
+5. The alignment multiplier `m_i` is computed from the cosine similarity between the client's parameter delta and the round reference delta, so non-IID updates that conflict with the global direction receive less weight.
+6. A QMIX-style monotonic mixer is trained after aggregation with a validation-aware team reward for monitoring and critic/mixer training; it does not directly set the aggregation weight.
 
 Each federated baseline should be labeled by the exact local objective used in the run. If the proximal penalty is not active, report that configuration separately instead of treating it as a fully regularized FedProx result.
 
@@ -90,7 +92,7 @@ Each federated baseline should be labeled by the exact local objective used in t
 | Type        | Variable              | Settings                                                      |
 | ----------- | --------------------- | ------------------------------------------------------------- |
 | Independent | Inference mode        | Closed-set only, open-set enabled                             |
-| Independent | Federation strategy   | Local training, FedAvg, FedProx, FMRL-LA                      |
+| Independent | Federation strategy   | Local training, FedAvg, FedProx, FMRL-AVA                      |
 | Independent | Data heterogeneity    | IID closed-set over all labels, Dirichlet non-IID with alpha values 0.01, 0.5, and 1.0  |
 | Independent | Unknown composition   | Leave-one-attack-out or multi-unknown holdout                 |
 | Independent | Dataset benchmark     | B-NAT for core experiments; B-TAT, ToN-IoT, and CIC-IDS2017 for external validation only |
@@ -162,11 +164,11 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 | --- | ---------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
 | E1  | Closed-set validation        | Does the full model preserve performance when all labels are treated as closed-set classes? | Centralized training, local-only, FedAvg, FedProx                                                                  | Accuracy, macro F1, balanced accuracy, convergence                   |
 | E2  | Open-set detection           | Can unknown attacks be rejected without hurting known classes?                  | Closed-set classifier without EVT, softmax-only baseline                                                           | AUROC, AUPRC, FPR@95%TPR, unknown F1, confusion matrices             |
-| E3  | Federated non-IID comparison | Does FMRL-LA outperform standard federated methods under heterogeneous clients? | FedAvg, FedProx, local-only                                                                                         | Final accuracy, stability, convergence speed, communication cost     |
+| E3  | Federated non-IID comparison | Does FMRL-AVA outperform standard federated methods under heterogeneous clients? | FedAvg, FedProx, local-only                                                                                         | Final accuracy, stability, convergence speed, communication cost     |
 | E4  | Combined open-set + non-IID  | Does the full system remain effective when both challenges are active?          | Closed-set classifier without EVT, softmax-only baseline, FedAvg, FedProx, local-only                               | Known-class metrics, unknown metrics, per-client robustness          |
-| E5  | Multi-dataset open-set non-IID validation | Does the method remain effective when trained and evaluated separately on external benchmarks under open-set and non-IID conditions? | Per-dataset FMRL-LA, FedAvg, FedProx, and local-only runs on B-TAT, ToN-IoT, and CIC-IDS2017 | Per-dataset closed/open metrics, robustness, and consistency across datasets |
-| E6  | Ablation and sensitivity     | Which module contributes most to the gains?                                     | Base model, no EVT, no generator, FedAvg, FedProx, FMRL-LA                                                         | Metric deltas, threshold sensitivity, seed stability                 |
-| E7  | Efficiency and scalability   | How does performance change with more clients and more rounds?                  | FedAvg vs FMRL-LA                                                                                                  | Runtime, bytes transmitted, rounds to convergence, accuracy per cost |
+| E5  | Multi-dataset open-set non-IID validation | Does the method remain effective when trained and evaluated separately on external benchmarks under open-set and non-IID conditions? | Per-dataset FMRL-AVA, FedAvg, FedProx, and local-only runs on B-TAT, ToN-IoT, and CIC-IDS2017 | Per-dataset closed/open metrics, robustness, and consistency across datasets |
+| E6  | Ablation and sensitivity     | Which module contributes most to the gains?                                     | Base model, no EVT, no generator, FedAvg, FedProx, FMRL-AVA                                                         | Metric deltas, threshold sensitivity, seed stability                 |
+| E7  | Efficiency and scalability   | How does performance change with more clients and more rounds?                  | FedAvg vs FMRL-AVA                                                                                                  | Runtime, bytes transmitted, rounds to convergence, accuracy per cost |
 | E8  | Label-wise open-set stress test | Can the detector separate each held-out label from the remaining labels?      | IID open-set run, FedAvg open-set run, per-label latent export                                                  | AUROC, AUPRC, unknown F1, latent-space separation                    |
 
 ## 6. Detailed Experimental Protocols
@@ -179,7 +181,7 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 
 - Train on the full B-NAT label set.
 - Evaluate on the closed-set test tensor.
-- Compare local-only training, FedAvg, FedProx, and FMRL-LA under the same split. Centralized pooled commands are retained in the scripts as commented reference baselines only.
+- Compare local-only training, FedAvg, FedProx, and FMRL-AVA under the same split. Centralized pooled commands are retained in the scripts as commented reference baselines only.
 - Report both global averages and per-class results.
 
 **Metrics**
@@ -225,13 +227,13 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 
 ### 6.3 E3: Federated Non-IID Comparison
 
-**Purpose:** test whether FMRL-LA improves training stability and final performance under client heterogeneity.
+**Purpose:** test whether FMRL-AVA improves training stability and final performance under client heterogeneity.
 
 **Setup**
 
 - Generate client shards with multiple Dirichlet alpha values: 0.01, 0.5, and 1.0 over the full label set.
 - Run the same training budget for all strategies.
-- Compare FedAvg, FedProx, local-only training, and FMRL-LA. Centralized pooled commands are retained in the scripts as commented reference baselines only.
+- Compare FedAvg, FedProx, local-only training, and FMRL-AVA. Centralized pooled commands are retained in the scripts as commented reference baselines only.
 - Use the same client sampling fraction, seed list, and local epoch count for every run.
 
 **Metrics**
@@ -248,7 +250,7 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 
 **Expected outcome**
 
-- FMRL-LA should be more stable than FedAvg and FedProx when alpha is small.
+- FMRL-AVA should be more stable than FedAvg and FedProx when alpha is small.
 - The performance gap should widen as the data become more skewed.
 
 ### 6.4 E4: Open-Set Detection Under Non-IID Conditions
@@ -315,8 +317,8 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 - remove EVT rejection
 - remove generator training
 - replace the latent CVAE-style branch with a direct classifier
-- replace FMRL-LA with FedAvg
-- replace FMRL-LA with FedProx
+- replace FMRL-AVA with FedAvg
+- replace FMRL-AVA with FedProx
 - disable client selection and aggregate all uploaded models
 
 **Sensitivity checks**
@@ -339,7 +341,7 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 
 - vary the number of clients
 - vary the communication-round budget
-- compare FedAvg and FMRL-LA under the same training settings
+- compare FedAvg and FMRL-AVA under the same training settings
 
 **Metrics**
 
@@ -351,7 +353,7 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 
 **Expected outcome**
 
-- FMRL-LA may add coordination overhead, but the selected-client update path should improve utility per round under non-IID data.
+- FMRL-AVA may add coordination overhead, but the selected-client update path should improve utility per round under non-IID data.
 
 ### 6.8 E8: Label-Wise Open-Set Stress Test
 
@@ -390,7 +392,7 @@ flowchart TD
     E --> F[Local CVAE-Double DQN training]
     F --> G[Generator training on correctly classified known samples]
     F --> H[Audit metrics and client summaries]
-    H --> I[FMRL-LA critic and utility scoring]
+    H --> I[FMRL-AVA critic and utility scoring]
     I --> J[Client selection and weighted aggregation]
     J --> F
     C --> K[Closed-set evaluation]
@@ -473,9 +475,9 @@ The final system should show eight consistent results:
 
 1. Closed-set metrics remain strong after open-set capability is added.
 2. EVT rejection separates unknown attacks from known traffic with strong threshold-independent performance.
-3. FMRL-LA is more robust than FedAvg and FedProx under non-IID client partitions.
+3. FMRL-AVA is more robust than FedAvg and FedProx under non-IID client partitions.
 4. The combined system remains usable when both open-set detection and federated heterogeneity are active at the same time.
 5. The external validation block shows that the method remains effective when trained and evaluated separately on B-TAT, ToN-IoT, and CIC-IDS2017 under open-set and non-IID conditions.
 6. Ablation and sensitivity results isolate the value of EVT, generator training, client selection, and utility-aware aggregation.
-7. Efficiency results quantify the coordination cost of FMRL-LA relative to the accuracy and robustness it preserves.
+7. Efficiency results quantify the coordination cost of FMRL-AVA relative to the accuracy and robustness it preserves.
 8. The label-wise open-set stress test cleanly separates each held-out label from the known set in the latent-space proof.

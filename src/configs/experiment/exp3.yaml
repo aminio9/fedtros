@@ -3,10 +3,10 @@ experiment:
   id: E3
   name: exp3_federated_noniid
   family: federated_noniid
-  method: FMRL_LA
+  method: FMRL_AVA
   pipeline: full
   description: Non-IID federated comparison over all B-NAT labels.
-  objective: Compare FMRL-LA, FedAvg, and FedProx under matched partitions with no unknown holdout.
+  objective: Compare FMRL-AVA, FedAvg, and FedProx under matched partitions with no unknown holdout.
   primary_metrics:
     - test/accuracy
     - test/macro_f1

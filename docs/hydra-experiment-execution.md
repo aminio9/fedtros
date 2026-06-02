@@ -48,7 +48,7 @@ Single run:
 ```bash
 python run.py experiment=exp1
 python run.py experiment=exp2 dataset=bnat model=transformer
-python run.py experiment=exp5 +method=fmrl_la dataset.name=B-TAT
+python run.py experiment=exp5 +method=fmrl_ava dataset.name=B-TAT
 python run.py experiment=exp6 runtime=gpu
 python run.py experiment=validation runtime=tiny
 bash scripts/experiments/e5_multi_dataset_open_set_noniid.sh
@@ -58,8 +58,8 @@ Hydra multirun:
 
 ```bash
 python run.py --multirun experiment=all
-python run.py --multirun experiment=exp3 +method=fmrl_la,fedavg,fedprox
-python run.py --multirun experiment=exp4 +method=fmrl_la seed=42,43,44
+python run.py --multirun experiment=exp3 +method=fmrl_ava,fedavg,fedprox
+python run.py --multirun experiment=exp4 +method=fmrl_ava seed=42,43,44
 ```
 
 Direct scripts still work and use the same config tree:
@@ -130,6 +130,7 @@ outputs/<run_id>/
   latent_embeddings.json
   communication_metrics.csv
   federated_history.csv
+  fmrl_ava_monitoring.jsonl
   plots/
   evt/
   processed/
@@ -145,9 +146,10 @@ outputs/<run_id>/
 5. Evaluation loads `validation.pt`, `shared_closed_set_test.pt`, and
    `shared_open_set_test.pt`.
 6. EVT calibration uses validation data only.
-7. Latent export uses the open-set evaluation tensor for open-set runs, so each held-out-label run writes a clean latent CSV for plotting.
-8. The E5 shell runner repeats the full train/tune/evaluate cycle separately for B-TAT, ToN-IoT, and CIC-IDS2017 once their label maps are finalized.
-9. Plots and suite exports read saved artifacts only.
+7. FMRL-AVA uses selected-client parameter deltas to build vector-aligned aggregation weights. Validation metrics, when present, train and monitor the server-side critic/mixer; if they are unavailable, the mixer target falls back to the support reward from client diagnostics.
+8. Latent export uses the open-set evaluation tensor for open-set runs, so each held-out-label run writes a clean latent CSV for plotting.
+9. The E5 shell runner repeats the full train/tune/evaluate cycle separately for B-TAT, ToN-IoT, and CIC-IDS2017 once their label maps are finalized.
+10. Plots and suite exports read saved artifacts only.
 
 ## Reproducibility
 

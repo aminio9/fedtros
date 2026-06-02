@@ -3,7 +3,7 @@ experiment:
   id: E4
   name: exp4_open_set_noniid
   family: combined_open_set_noniid
-  method: FMRL_LA
+  method: FMRL_AVA
   pipeline: full
   description: Combined open-set detection and non-IID federated training.
   objective: Validate unknown rejection under heterogeneous client data.

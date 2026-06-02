@@ -1,6 +1,6 @@
-# Paper Algorithms for the Methodology Section
+<!-- # Paper Algorithms for the Methodology Section -->
 
-This draft contains the algorithm blocks that are most appropriate for the paper. The standard FedAvg and FedProx rules are included inside the main training algorithm and discussion, but they are not shown as a separate algorithm because they are baseline aggregation methods.
+<!-- This draft contains the algorithm blocks that are most appropriate for the paper. The standard FedAvg and FedProx rules are included inside the main training algorithm and discussion, but they are not shown as a separate algorithm because they are baseline aggregation methods.
 
 ## Notation
 
@@ -10,10 +10,10 @@ This draft contains the algorithm blocks that are most appropriate for the paper
 - `D_val`: validation/calibration dataset.
 - `theta = {theta_p, theta_r, theta_Q, theta_G}`: federated parameters of the prior network, recognition network, main Q-network, and generator.
 - `theta_Q^-`: local target Q-network parameters.
-- `mu`: FedProx proximal coefficient. `mu = 0` for FedAvg and FMRL-LA in the current implementation.
-- `S`: aggregation strategy, where `S in {FedAvg, FedProx, FMRL-LA}`.
+- `mu`: FedProx proximal coefficient. `mu = 0` for FedAvg and FMRL-AVA in the current implementation.
+- `S`: aggregation strategy, where `S in {FedAvg, FedProx, FMRL-AVA}`.
 - `M_evt`: class-conditional EVT models.
-- `delta`: calibrated global open-set rejection threshold.
+- `delta`: calibrated global open-set rejection threshold. -->
 
 ## Algorithm 1: Federated CVAE-DQN Training and Open-Set Calibration
 
@@ -23,7 +23,7 @@ Input:
     Validation set D_val
     Federated rounds K
     Local training configuration H
-    Aggregation strategy S in {FedAvg, FedProx, FMRL-LA}
+    Aggregation strategy S in {FedAvg, FedProx, FMRL-AVA}
 
 Output:
     Final global model theta*
@@ -38,8 +38,8 @@ Output:
 6:          Set mu_i = mu if S = FedProx, otherwise mu_i = 0
 7:          theta_i^k, m_i^k <- ClientLocalUpdate(D_i, theta^{k-1}, H, mu_i)
 8:      end for
-9:      if S = FMRL-LA then
-10:         theta^k <- FMRLLAUpdate(theta^{k-1}, {theta_i^k, m_i^k}_{i in C_k})
+9:      if S = FMRL-AVA then
+10:         theta^k <- FMRLAVAUpdate(theta^{k-1}, {theta_i^k, m_i^k}_{i in C_k})
 11:     else
 12:         theta^k <- sum_{i in C_k} n_i theta_i^k / sum_{i in C_k} n_i
 13:     end if
@@ -51,7 +51,7 @@ Output:
 
 ### Analysis
 
-This algorithm should be the first algorithm in the paper because it connects all major stages of the proposed method. It shows that federated learning is used for trainable neural parameters, while EVT is applied after training as a calibration stage. FedAvg and FedProx are handled as baseline strategies through the weighted average in line 12; the difference is that FedProx activates the local proximal coefficient in line 6. FMRL-LA replaces the standard average with a utility-aware update in lines 9-10. This framing makes the comparison fair because all strategies use the same client partitions, local model, validation set, and open-set calibration procedure.
+This algorithm should be the first algorithm in the paper because it connects all major stages of the proposed method. It shows that federated learning is used for trainable neural parameters, while EVT is applied after training as a calibration stage. FedAvg and FedProx are handled as baseline strategies through the weighted average in line 12; the difference is that FedProx activates the local proximal coefficient in line 6. FMRL-AVA replaces the standard average with a utility-aware update in lines 9-10. This framing makes the comparison fair because all strategies use the same client partitions, local model, validation set, and open-set calibration procedure. -->
 
 ## Algorithm 2: Client-Side CVAE-DQN Local Update with Optional FedProx
 
@@ -123,9 +123,11 @@ Output:
 
 ### Analysis
 
-This algorithm is the most important client-side method because it explains why the local update is more than a standard supervised classifier update. The prior network is trained by matching the recognition posterior, while the recognition and main Q-network are trained with a Double-DQN TD objective. The target Q-network is deliberately local: it stabilizes the TD target but is not federated as a separate parameter block. The generator is trained only on correctly classified known samples, which reduces reconstruction contamination and supports the EVT open-set detector. The FedProx terms are optional and appear only when `mu_i > 0`, so the same algorithm covers FedAvg, FedProx, and the client update used inside FMRL-LA.
+This algorithm is the most important client-side method because it explains why the local update is more than a standard supervised classifier update. The prior network is trained by matching the recognition posterior, while the recognition and main Q-network are trained with a Double-DQN TD objective. The target Q-network is deliberately local: it stabilizes the TD target but is not federated as a separate parameter block. The generator is trained only on correctly classified known samples, which reduces reconstruction contamination and supports the EVT open-set detector. The FedProx terms are optional and appear only when `mu_i > 0`, so the same algorithm covers FedAvg, FedProx, and the client update used inside FMRL-AVA. -->
 
-## Algorithm 3: FMRL-LA Utility-Aware Client Selection and Aggregation
+## Algorithm 3: FMRL-AVA Adaptive Vector-Aligned Client Selection and Aggregation
+
+FMRL-AVA is the new method name for the combined design. Phase A follows FMRL-LA's two-phase communication, asynchronous critics, and utility-aware selection. Phase B follows FedAWA's client-vector principle by using local update directions to adapt aggregation weights. The code-specific mapping and deviations from the two source papers are documented in `docs/fmrl-ava-source-mapping-fa.md`.
 
 ```text
 Input:
@@ -135,6 +137,10 @@ Input:
     Maximum selected fraction rho_max
     Utility threshold lambda
     Aggregation step size eta
+    Vector-alignment strength kappa
+    Alignment multiplier bounds [m_min, m_max]
+    Validation reward blend lambda_val
+    Validation metrics, when available
 
 Output:
     Updated global parameters theta^k
@@ -159,23 +165,41 @@ Phase A: utility estimation and client selection
 14: end if
 15: Limit |A_k| so that |A_k| <= ceil(rho_max |C_k|)
 
-Phase B: utility-weighted model update
+Phase B: vector-aligned utility-weighted model update
 16: for each selected client i in A_k do
 17:     Compute local parameter delta Delta_i = theta_i^k - theta^{k-1}
 18: end for
-19: Compute sample-aware utility-weighted update:
+19: Compute the FedAvg-preserving base weight b_i = n_i u_i
+20: Compute the reference update direction:
+        Delta_bar = sum_{i in A_k} (b_i Delta_i) / sum_{i in A_k} b_i
+21: for each selected client i in A_k do
+22:     Compute update alignment s_i = cosine(Delta_i, Delta_bar)
+23:     Compute bounded alignment multiplier:
+            m_i = clip(exp(kappa s_i), m_min, m_max)
+24:     Set final aggregation weight a_i = b_i m_i
+25: end for
+26: Compute vector-aligned update:
         theta^k = theta^{k-1}
-                  + eta * sum_{i in A_k} n_i u_i Delta_i / sum_{i in A_k} n_i u_i
-20: Compute round-level system utility from reward, F1, accuracy,
-    TD stability, novelty, and communication efficiency
-21: Update the server-side critics and centralized mixer using system utility
-22: Save theta^k and FMRL-LA monitoring records
-23: return theta^k
+                  + eta * sum_{i in A_k} (a_i Delta_i)
+                          / sum_{i in A_k} a_i
+27: Compute support reward from local F1, balanced accuracy,
+    TD stability, data coverage, generator quality, and communication
+28: If validation metrics are available, compute validation-aware team reward
+    from validation macro F1, balanced accuracy, open-set AUROC,
+    unknown F1, and rejection quality; omit metrics that are not produced
+    by the current evaluation mode, then smooth the reward with EMA
+29: Set mixer target = support_reward if validation reward is unavailable,
+    otherwise lambda_val * validation_reward + (1 - lambda_val) * support_reward
+30: Update the server-side critics and centralized mixer using the mixer target
+31: Save theta^k and FMRL-AVA monitoring records
+32: return theta^k
 ```
 
-### Analysis
+<!-- ### Analysis
 
-This is the algorithm that most clearly distinguishes the proposed cooperative federated approach from standard FL. FedAvg assumes every participating client contributes only through sample count, while FMRL-LA keeps that sample-count prior but modulates it with a bounded utility factor. This is important under non-IID partitions, where some clients may have missing classes, unstable TD updates, or poor generator quality. The main benefit is robustness: high-quality and informative updates can receive more influence, while low-utility updates can be ignored or down-weighted. The main safeguard is that if all clients look similar, the centered utility stays near 1, so the behavior collapses back to FedAvg-like aggregation. The tradeoff is overhead. FMRL-LA requires audit metadata, server-side critics, a mixer, and a two-phase round structure, so it should be evaluated with both accuracy and communication cost.
+This is the algorithm that most clearly distinguishes the proposed cooperative federated approach from standard FL. FedAvg assumes every participating client contributes only through sample count, while FMRL-AVA keeps that sample-count prior, modulates it with a bounded utility factor, and then applies a FedAWA-style update-vector alignment multiplier. This is important under non-IID partitions, where some clients may have missing classes, unstable TD updates, poor generator quality, or update directions that conflict with the global training direction. The main safeguard is that if all clients look similar, the centered utility stays near 1 and the alignment multipliers are nearly common, so the normalized update collapses back to FedAvg-like aggregation.
+
+The validation-aware team reward is no longer the direct source of aggregation weights. It trains and monitors the server-side critic/mixer, while Phase B weights are derived from sample count, utility, and update-vector agreement. This is more defensible for non-IID federated learning because it uses the actual parameter movement produced by each client rather than relying only on hand-designed reward terms. The tradeoff is overhead. FMRL-AVA requires audit metadata, server-side critics, a mixer, vector-alignment bookkeeping, and a two-phase round structure, so it should be evaluated with both accuracy and communication cost.
 
 ## Algorithm 4: EVT Calibration and Open-Set Inference
 
@@ -224,7 +248,7 @@ Inference:
 27: return M_evt, delta, y_hat
 ```
 
-### Analysis
+<!-- ### Analysis
 
 This algorithm should appear because it explains how the method moves from closed-set classification to open-set intrusion detection. EVT is not federated as a trainable model; it is fitted after global training using validation reconstruction errors. Only correctly classified known samples are used for tail fitting, which makes the reconstruction-error distribution class-consistent and reduces calibration noise. The benefit is a thresholded unknown-rejection mechanism that is more principled than softmax confidence. The main limitation is calibration sensitivity: tail size, validation quality, and the target known false-positive rate can change the unknown/known tradeoff. For this reason, the paper should report threshold-independent metrics such as AUROC/AUPRC and threshold-dependent metrics such as unknown F1 and known accuracy after rejection.
 
@@ -232,6 +256,6 @@ This algorithm should appear because it explains how the method moves from close
 
 - Use Algorithm 1 at the start of the methodology to summarize the full training and calibration pipeline.
 - Use Algorithm 2 in the local learning subsection because it defines the CVAE-DQN update, generator training, and FedProx term.
-- Use Algorithm 3 in the federated optimization subsection because FMRL-LA is the custom cooperative aggregation method.
+- Use Algorithm 3 in the federated optimization subsection because FMRL-AVA is the custom cooperative aggregation method.
 - Use Algorithm 4 in the open-set detection subsection.
-- Describe FedAvg and FedProx in text with their equations rather than giving them a separate algorithm block.
+- Describe FedAvg and FedProx in text with their equations rather than giving them a separate algorithm block. -->

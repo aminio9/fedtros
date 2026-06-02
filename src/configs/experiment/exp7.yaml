@@ -3,7 +3,7 @@ experiment:
   id: E7
   name: exp7_efficiency_scalability
   family: efficiency
-  method: FMRL_LA
+  method: FMRL_AVA
   pipeline: full
   description: Efficiency and scalability over client count and round budget.
   objective: Measure runtime, communication cost, and accuracy per cost.

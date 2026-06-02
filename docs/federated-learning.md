@@ -19,6 +19,8 @@ Strategies:
 
 - `fedavg`: standard federated averaging.
 - `fedprox`: FedAvg with proximal regularization through `federated.server.proximal_mu`.
-- `fmrl_la`: two-phase learnable aggregation using asynchronous critics and a centralized mixer.
+- `fmrl_ava`: two-phase learnable aggregation using audit metadata, bounded asynchronous critic residuals, sample-aware utility weighting, and FedAWA-style update-vector alignment.
 
-FMRL_LA writes monitoring records to `federated.strategy.monitor_path`.
+FMRL-AVA writes selection, vector-aligned aggregation, validation-team-reward, and support-reward monitoring records to `federated.strategy.monitor_path`.
+
+FMRL-AVA is the new method name for the combined implementation. Phase A follows the FMRL-LA paper's two-phase communication, asynchronous critics, and centralized utility aggregation; Phase B follows FedAWA's client-vector/update-direction idea. The implementation-specific mapping is documented in `docs/fmrl-ava-source-mapping-fa.md`.

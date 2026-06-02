@@ -11,16 +11,16 @@ Measure EVT-based unknown rejection on B-NAT with `FoT` as the held-out attack.
 ## Override Examples
 
 ```bash
-python run.py experiment=exp2 +method=fmrl_la seed=42
-python run.py experiment=exp2 +method=fmrl_la open_set.evt.enabled=false seed=42
+python run.py experiment=exp2 +method=fmrl_ava seed=42
+python run.py experiment=exp2 +method=fmrl_ava open_set.evt.enabled=false seed=42
 python run.py experiment=exp2 +method=centralized_osr seed=42
 ```
 
 ## Execution Commands
 
 ```bash
-python run.py experiment=exp2 +method=fmrl_la seed=42
-python run.py experiment=exp2 +method=fmrl_la open_set.evt.enabled=false experiment.method=ClosedSet_No_EVT tracking.run_id=e2_no_evt_seed42 seed=42
+python run.py experiment=exp2 +method=fmrl_ava seed=42
+python run.py experiment=exp2 +method=fmrl_ava open_set.evt.enabled=false experiment.method=ClosedSet_No_EVT tracking.run_id=e2_no_evt_seed42 seed=42
 python run.py experiment=exp2 +method=centralized_osr tracking.run_id=e2_central_osr_seed42 seed=42
 python run.py experiment=exp2 +method=centralized_no_osr tracking.run_id=e2_central_no_osr_seed42 seed=42
 bash scripts/experiments/e2_open_set.sh

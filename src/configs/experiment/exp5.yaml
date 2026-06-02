@@ -3,7 +3,7 @@ experiment:
   id: E5
   name: exp5_multi_dataset_external_validation
   family: external_validation
-  method: FMRL_LA
+  method: FMRL_AVA
   pipeline: full
   description: Multi-dataset open-set non-IID validation on external benchmarks.
   objective: Validate the model independently on B-TAT, ToN-IoT, and CIC-IDS2017.

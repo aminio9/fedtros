@@ -3,7 +3,7 @@ experiment:
   id: E6
   name: exp6_ablation
   family: ablation
-  method: FMRL_LA
+  method: FMRL_AVA
   pipeline: full
   description: Module ablation and sensitivity checks.
   objective: Isolate EVT, generator, client selection, federation strategy, and heterogeneity effects.

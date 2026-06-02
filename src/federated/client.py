@@ -14,7 +14,7 @@ import torch
 import torch.nn.functional as F
 from flwr.common import Parameters, parameters_to_ndarrays
 from omegaconf import DictConfig
-from sklearn.metrics import classification_report, confusion_matrix, f1_score
+from sklearn.metrics import balanced_accuracy_score, classification_report, confusion_matrix, f1_score
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.agents.agent import Agent
@@ -665,9 +665,17 @@ class FlowerClient(fl.client.NumPyClient):
         num_examples = int(y_true.size)
         accuracy = float((y_true == y_pred).mean()) if num_examples else 0.0
         f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
+        balanced_accuracy = (
+            float(balanced_accuracy_score(y_true, y_pred)) if num_examples else 0.0
+        )
 
         if num_examples == 0:
-            return loss, 0, {"accuracy": accuracy, "f1_macro": 0.0, "num_examples": 0}
+            return loss, 0, {
+                "accuracy": accuracy,
+                "balanced_accuracy": balanced_accuracy,
+                "f1_macro": 0.0,
+                "num_examples": 0,
+            }
 
         labels = list(range(len(self.eval_class_names)))
         report = classification_report(
@@ -688,6 +696,7 @@ class FlowerClient(fl.client.NumPyClient):
             num_examples,
             {
                 "accuracy": accuracy,
+                "balanced_accuracy": balanced_accuracy,
                 "f1_macro": f1,
                 "num_examples": num_examples,
             },

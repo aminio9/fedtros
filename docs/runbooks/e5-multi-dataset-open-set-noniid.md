@@ -11,17 +11,17 @@ Validate the model independently on B-TAT, ToN-IoT, and CIC-IDS2017 under open-s
 ## Override Examples
 
 ```bash
-python run.py experiment=exp5 +method=fmrl_la dataset.name=B-TAT seed=42
-python run.py experiment=exp5 +method=fmrl_la dataset.name=ToN-IoT seed=42
+python run.py experiment=exp5 +method=fmrl_ava dataset.name=B-TAT seed=42
+python run.py experiment=exp5 +method=fmrl_ava dataset.name=ToN-IoT seed=42
 python run.py experiment=exp5 +method=fedavg dataset.name=CIC-IDS2017 seed=42
 ```
 
 ## Execution Commands
 
 ```bash
-python run.py experiment=exp5 +method=fmrl_la dataset.name=B-TAT seed=42
-python run.py experiment=exp5 +method=fmrl_la dataset.name=ToN-IoT seed=42
-python run.py experiment=exp5 +method=fmrl_la dataset.name=CIC-IDS2017 seed=42
+python run.py experiment=exp5 +method=fmrl_ava dataset.name=B-TAT seed=42
+python run.py experiment=exp5 +method=fmrl_ava dataset.name=ToN-IoT seed=42
+python run.py experiment=exp5 +method=fmrl_ava dataset.name=CIC-IDS2017 seed=42
 bash scripts/experiments/e5_multi_dataset_open_set_noniid.sh
 ```
 

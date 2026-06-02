@@ -22,6 +22,7 @@ Every figure and metric should be traceable to:
 - `resolved_config.yaml`
 - `metrics.jsonl` / `metrics.csv`
 - `federated_history.csv` for round-level Flower metrics when federated simulation is used
+- `fmrl_ava_monitoring.jsonl` for FMRL-AVA utilities, selected-client fraction, vector-alignment multipliers, final aggregation weights, support reward, and validation team reward
 - `open_set_metrics.json` for EVT calibration metadata and the calibrated threshold used by plot 5
 - checkpoint files
 - evaluation JSON/CSV outputs

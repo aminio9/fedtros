@@ -3,7 +3,7 @@ experiment:
   id: E8
   name: exp8_labelwise_open_set
   family: labelwise_open_set
-  method: FMRL_LA
+  method: FMRL_AVA
   pipeline: full
   description: Label-wise open-set stress test with one held-out attack label per run.
   objective: Demonstrate latent and decision separation under leave-one-attack-out splits.

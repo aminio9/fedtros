@@ -1,5 +1,5 @@
-# cf_marlos
-Cooperative Federated Multi-Agent Reinforcement Learning with Learnable Aggregation for Open-Set Blockchain Intrusion Detection
+# CF-MARLOS-AVA
+Adaptive Vector-Aligned Federated Multi-Agent Reinforcement Learning for Open-Set Blockchain Intrusion Detection
 
 This repository implements the `cf_marlos` research pipeline for cooperative federated multi-agent reinforcement learning, Double Q-learning, EVT open-set recognition, and Flower-based federated training on B-NAT blockchain traffic.
 
@@ -48,9 +48,11 @@ poetry run python scripts/train.py experiment=baseline seed=42 training.epochs=1
 Unified Hydra runner:
 
 ```bash
-poetry run python run.py experiment=exp1 +method=fmrl_la seed=42
+poetry run python run.py experiment=exp1 +method=fmrl_ava seed=42
 poetry run python run.py experiment=all
 ```
+
+Proposed aggregation method: `FMRL-AVA` (`Federated Multi-Agent Reinforcement Learning with Adaptive Vector-Aligned Aggregation`); Hydra alias: `+method=fmrl_ava`.
 
 Federated simulation:
 

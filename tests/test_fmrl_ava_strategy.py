@@ -1,10 +1,12 @@
 import torch
 
 from src.federated.selection_utils import (
+    alignment_multiplier,
     centered_utility,
     combine_utility_score,
     critic_utility_score,
     select_utility_records,
+    validation_team_reward,
 )
 from src.federated.server_models import AsyncCritic, CentralizedAggregator
 
@@ -24,7 +26,7 @@ def test_centralized_aggregator_outputs_system_utility():
     assert q_total.shape == (1, 1)
 
 
-def test_fmrlla_utility_is_fedavg_neutral_for_iid_like_scores():
+def test_fmrl_ava_utility_is_fedavg_neutral_for_iid_like_scores():
     utilities = [
         centered_utility(
             score=0.55,
@@ -40,7 +42,7 @@ def test_fmrlla_utility_is_fedavg_neutral_for_iid_like_scores():
     assert utilities == [1.0, 1.0, 1.0]
 
 
-def test_fmrlla_downweights_or_drops_relative_low_quality_clients():
+def test_fmrl_ava_downweights_or_drops_relative_low_quality_clients():
     low = centered_utility(
         score=0.05,
         round_mean_score=0.50,
@@ -62,7 +64,7 @@ def test_fmrlla_downweights_or_drops_relative_low_quality_clients():
     assert high > 1.0
 
 
-def test_fmrlla_combines_audit_score_with_bounded_critic_residual():
+def test_fmrl_ava_combines_audit_score_with_bounded_critic_residual():
     critic_score = critic_utility_score(1.0, utility_temperature=1.0)
     combined = combine_utility_score(
         audit_score=0.8,
@@ -74,7 +76,7 @@ def test_fmrlla_combines_audit_score_with_bounded_critic_residual():
     assert 0.5 < combined < 0.8
 
 
-def test_fmrlla_selects_only_nonzero_utility_clients():
+def test_fmrl_ava_selects_only_nonzero_utility_clients():
     selection_records = [
         {"cid": "1", "utility": 0.25, "selected": False},
         {"cid": "2", "utility": 0.00, "selected": False},
@@ -97,3 +99,62 @@ def test_fmrlla_selects_only_nonzero_utility_clients():
         True,
         False,
     ]
+
+
+def test_alignment_multiplier_rewards_update_agreement():
+    aligned = alignment_multiplier(
+        1.0,
+        alignment_strength=0.5,
+        min_multiplier=0.5,
+        max_multiplier=2.0,
+    )
+    neutral = alignment_multiplier(
+        0.0,
+        alignment_strength=0.5,
+        min_multiplier=0.5,
+        max_multiplier=2.0,
+    )
+    opposed = alignment_multiplier(
+        -1.0,
+        alignment_strength=0.5,
+        min_multiplier=0.5,
+        max_multiplier=2.0,
+    )
+
+    assert opposed < neutral < aligned
+
+
+def test_validation_team_reward_is_open_set_aware():
+    strong_open_set = validation_team_reward(
+        {
+            "f1_macro": 0.90,
+            "balanced_accuracy": 0.85,
+            "openset_auroc": 0.92,
+            "openset_unknown_f1": 0.80,
+            "openset_unknown_recall": 0.75,
+            "openset_fpr95": 0.10,
+        }
+    )
+    weak_open_set = validation_team_reward(
+        {
+            "f1_macro": 0.90,
+            "balanced_accuracy": 0.85,
+            "openset_auroc": 0.20,
+            "openset_unknown_f1": 0.10,
+            "openset_unknown_recall": 0.05,
+            "openset_fpr95": 0.95,
+        }
+    )
+
+    assert 0.0 <= weak_open_set < strong_open_set <= 1.0
+
+
+def test_validation_team_reward_does_not_penalize_missing_open_set_metrics():
+    reward = validation_team_reward(
+        {
+            "f1_macro": 0.90,
+            "balanced_accuracy": 0.80,
+        }
+    )
+
+    assert abs(reward - 0.86) < 1e-9

@@ -5,17 +5,24 @@ import torch.nn.functional as F
 
 class AsyncCritic(nn.Module):
     """
-    Per-client utility estimator for FMRL-LA.
+    Per-client utility estimator for FMRL-AVA Phase A.
+
+    This keeps the asynchronous-critic role from the FMRL-LA paper, but the
+    input features are CF-MARLOS-AVA audit diagnostics rather than the original
+    MARL environment state.
 
     The paper defines one asynchronous critic per agent:
         w_i^k = C_i(h_i^k, r_i^k, history_r_i^k)
 
     This project has richer local diagnostics than the paper's driving hidden
     state, so the critic consumes the latent state plus scalar diagnostics derived
-    from reward, local accuracy/F1, TD stability, novelty, and data coverage.
-    The output is a residual utility signal. The server combines it with a
-    deterministic audit score, then centers the result around the current round
-    mean so that IID-like rounds stay close to FedAvg behavior.
+    from local evaluation, TD stability, novelty, and data coverage. The output
+    is a residual utility signal. The server combines it with a deterministic
+    audit score, then centers the result around the current round mean so that
+    IID-like rounds stay close to FedAvg behavior. The aggregation stage keeps
+    the FedAvg sample-count prior and adds a bounded update-vector alignment
+    multiplier. The centralized mixer remains a server-side training and
+    monitoring component rather than the direct source of aggregation weights.
     """
 
     def __init__(self, hidden_dim: int, latent_dim: int, scalar_dim: int):

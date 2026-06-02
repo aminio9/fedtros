@@ -59,7 +59,7 @@ def _load_resolved_config(run_dir: Path) -> Any:
 
 
 def _load_monitoring_records(run_dir: Path) -> list[dict[str, Any]]:
-    path = run_dir / "fmrlla_monitoring.jsonl"
+    path = run_dir / "fmrl_ava_monitoring.jsonl"
     if not path.exists():
         return []
     records: list[dict[str, Any]] = []
@@ -122,7 +122,7 @@ def _communication_bytes_per_round(
     model_parameter_bytes: int,
     monitoring_records: list[dict[str, Any]],
 ) -> dict[int, int]:
-    if method.lower() != "fmrl_la":
+    if method.lower() != "fmrl_ava":
         return {}
 
     selected_by_logical_round: dict[int, int] = {}
@@ -200,7 +200,7 @@ def build_communication_metrics(
 
     frame = history_frame.copy()
     if "logical_round" not in frame.columns and "round" in frame.columns:
-        if method.lower() == "fmrl_la":
+        if method.lower() == "fmrl_ava":
             frame["logical_round"] = ((frame["round"].astype(int) + 1) // 2).astype(int)
         else:
             frame["logical_round"] = frame["round"].astype(int)

@@ -3,7 +3,7 @@ experiment:
   id: E2
   name: exp2_open_set
   family: open_set
-  method: FMRL_LA
+  method: FMRL_AVA
   pipeline: full
   description: EVT-based open-set detection with FoT held out as unknown.
   objective: Reject unknown attacks while preserving known-class predictions.

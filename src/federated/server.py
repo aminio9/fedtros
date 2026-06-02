@@ -24,10 +24,12 @@ from omegaconf import DictConfig, OmegaConf
 from src.agents.agent import Agent
 from src.checkpointing.checkpoints import load_agent_checkpoint
 from src.federated.selection_utils import (
+    alignment_multiplier,
     centered_utility,
     combine_utility_score,
     critic_utility_score,
     select_utility_records,
+    validation_team_reward,
 )
 from src.models.models import OpenSetQChainModelFactory
 logger = logging.getLogger("Server")
@@ -230,14 +232,23 @@ class SaveModelFedProx(FedProx):
         return aggregated_parameters, aggregated_metrics
 
 
-class FMRLLearnableAggregationStrategy(FedAvg):
+class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
     """
-    FMRL-LA implementation adapted from the paper to this CVAE-DQN dataset.
+    FMRL-AVA for CF-MARLOS-AVA.
 
-    Stage A: clients train locally and upload hidden/reward/profile metadata.
-    Stage B: selected clients upload model weights. The server applies learned
-    utilities to local parameter deltas, which approximate the local gradients in
-    Eq. (5) of the paper.
+    Stage A follows the FMRL-LA paper's two-phase communication idea:
+    clients train locally and upload hidden/reward/profile metadata so the
+    server-side critic/mixer can estimate utility and select clients.
+
+    Stage B follows the FedAWA paper's client-vector idea: selected clients
+    upload model weights, the server forms local deltas, preserves the FedAvg
+    sample-count prior, modulates it with learned utilities, and applies a
+    bounded update-vector alignment multiplier before aggregation.
+
+    CF-MARLOS-AVA-specific changes: utility features come from CVAE-DQN intrusion
+    diagnostics, validation/support rewards train the mixer instead of directly
+    weighting aggregation, and all utility/alignment factors are bounded so
+    IID-like rounds stay close to FedAvg.
     """
 
     def __init__(self, cfg: DictConfig, *args, **kwargs):
@@ -263,6 +274,45 @@ class FMRLLearnableAggregationStrategy(FedAvg):
             OmegaConf.select(cfg, "strategy.utility_strength", default=1.0)
         )
         self.critic_blend = float(OmegaConf.select(cfg, "strategy.critic_blend", default=0.15))
+        self.alignment_strength = float(
+            OmegaConf.select(cfg, "strategy.alignment_strength", default=0.50)
+        )
+        self.min_alignment_multiplier = float(
+            OmegaConf.select(cfg, "strategy.min_alignment_multiplier", default=0.50)
+        )
+        self.max_alignment_multiplier = float(
+            OmegaConf.select(cfg, "strategy.max_alignment_multiplier", default=2.00)
+        )
+        self.validation_reward_blend = float(
+            OmegaConf.select(cfg, "strategy.validation_reward_blend", default=0.85)
+        )
+        self.validation_reward_ema_decay = float(
+            OmegaConf.select(cfg, "strategy.validation_reward_ema_decay", default=0.80)
+        )
+        self.validation_reward_weights = self._read_weight_map(
+            cfg,
+            "strategy.team_reward_weights",
+            {
+                "closed_set_f1": 0.30,
+                "balanced_accuracy": 0.20,
+                "open_set_auroc": 0.20,
+                "open_set_unknown_f1": 0.15,
+                "open_set_rejection": 0.15,
+            },
+        )
+        self.support_reward_weights = self._read_weight_map(
+            cfg,
+            "strategy.support_reward_weights",
+            {
+                "local_f1_macro": 0.35,
+                "balanced_accuracy": 0.15,
+                "td_stability": 0.20,
+                "coverage_quality": 0.15,
+                "generator_correct_frac": 0.10,
+                "communication": 0.05,
+            },
+            fallback_path="strategy.system_utility_weights",
+        )
         self.warmup_rounds = int(cfg.strategy.warmup_rounds)
 
         self.monitor_path = _resolve_path(cfg.strategy.monitor_path)
@@ -285,9 +335,14 @@ class FMRLLearnableAggregationStrategy(FedAvg):
         self.utilities_cache: dict[str, float] = {}
         self.selection_records: list[dict[str, Any]] = []
         self.client_order: list[str] = []
+        self.last_validation_metrics: dict[str, float] = {}
+        self.last_validation_team_reward: float | None = None
+        self.validation_team_reward_ema: float | None = None
+        self.last_support_reward: float = 0.0
+        self.last_team_reward_target: float = 0.0
 
         logger.info(
-            "FMRL-LA configured | max_agents=%d scalar_dim=%d threshold=%.4f aggregation_lr=%.3f",
+            "FMRL-AVA configured | max_agents=%d scalar_dim=%d threshold=%.4f aggregation_lr=%.3f",
             self.max_agents,
             self.scalar_dim,
             self.utility_threshold,
@@ -314,20 +369,20 @@ class FMRLLearnableAggregationStrategy(FedAvg):
             self.last_phase_a_clients = list(clients)
             self.saved_global_parameters = parameters
             fit_ins = FitIns(parameters, {"server_round": server_round, "phase": "train"})
-            logger.info("FMRL-LA round=%d phase=A sampled=%d", server_round, len(clients))
+            logger.info("FMRL-AVA round=%d phase=A sampled=%d", server_round, len(clients))
             return [(client, fit_ins) for client in clients]
 
         if not self.selected_clients_cache:
             self.selected_clients_cache = list(self.last_phase_a_clients)
             self.utilities_cache = {client.cid: 1.0 for client in self.selected_clients_cache}
             logger.warning(
-                "FMRL-LA round=%d phase=B had no selected clients; "
+                "FMRL-AVA round=%d phase=B had no selected clients; "
                 "requesting uploads from the previous Phase A sample to avoid a stuck round.",
                 server_round,
             )
         fit_ins = FitIns(parameters, {"server_round": server_round, "phase": "upload"})
         logger.info(
-            "FMRL-LA round=%d phase=B selected=%d",
+            "FMRL-AVA round=%d phase=B selected=%d",
             server_round,
             len(self.selected_clients_cache),
         )
@@ -345,10 +400,46 @@ class FMRLLearnableAggregationStrategy(FedAvg):
         self.is_training_phase = True
         return new_params, metrics
 
+    def aggregate_evaluate(self, server_round: int, results, failures):
+        loss, metrics = super().aggregate_evaluate(server_round, results, failures)
+        if metrics:
+            validation_reward = validation_team_reward(metrics, weights=self.validation_reward_weights)
+            if self.validation_team_reward_ema is None:
+                self.validation_team_reward_ema = validation_reward
+            else:
+                decay = float(np.clip(self.validation_reward_ema_decay, 0.0, 1.0))
+                self.validation_team_reward_ema = (
+                    decay * self.validation_team_reward_ema
+                    + (1.0 - decay) * validation_reward
+                )
+            self.last_validation_metrics = {
+                key: float(value)
+                for key, value in metrics.items()
+                if isinstance(value, (int, float, np.floating))
+            }
+            self.last_validation_team_reward = float(validation_reward)
+            logger.info(
+                "FMRL-AVA validation reward | round=%d reward=%.4f ema=%.4f",
+                server_round,
+                validation_reward,
+                self.validation_team_reward_ema,
+            )
+            self._write_monitor_event(
+                {
+                    "event": "validation_reward",
+                    "server_round": server_round,
+                    "logical_round": self._logical_round(server_round),
+                    "validation_reward": float(validation_reward),
+                    "validation_reward_ema": float(self.validation_team_reward_ema),
+                    "validation_metrics": self.last_validation_metrics,
+                }
+            )
+        return loss, metrics
+
     def configure_evaluate(self, server_round: int, parameters: Parameters, client_manager):
         if not self.is_training_phase:
             logger.info(
-                "FMRL-LA round=%d skipping evaluation after metadata-only phase.",
+                "FMRL-AVA round=%d skipping evaluation after metadata-only phase.",
                 server_round,
             )
             return []
@@ -361,8 +452,8 @@ class FMRLLearnableAggregationStrategy(FedAvg):
         self.client_order = []
 
         if failures:
-            logger.warning("FMRL-LA phase A failures: %d", len(failures))
-            self._log_failures("FMRL-LA phase A", failures)
+            logger.warning("FMRL-AVA phase A failures: %d", len(failures))
+            self._log_failures("FMRL-AVA phase A", failures)
 
         for client, fit_res in sorted(results, key=lambda item: item[0].cid):
             try:
@@ -406,7 +497,7 @@ class FMRLLearnableAggregationStrategy(FedAvg):
         positive_selected = [record for record in selected if float(record.get("utility", 0.0)) > 0.0]
         if (not selected or len(positive_selected) < self.min_selected_clients) and self.last_phase_a_clients:
             logger.warning(
-                "FMRL-LA phase A produced insufficient positive utilities; falling back to "
+                "FMRL-AVA phase A produced insufficient positive utilities; falling back to "
                 "uniform utility for the sampled client set (%d clients).",
                 len(self.last_phase_a_clients),
             )
@@ -437,15 +528,18 @@ class FMRLLearnableAggregationStrategy(FedAvg):
 
     def _phase_b_aggregate(self, server_round: int, results, failures):
         if failures:
-            logger.warning("FMRL-LA phase B failures: %d", len(failures))
-            self._log_failures("FMRL-LA phase B", failures)
+            logger.warning("FMRL-AVA phase B failures: %d", len(failures))
+            self._log_failures("FMRL-AVA phase B", failures)
         if not results or self.saved_global_parameters is None:
-            return self.saved_global_parameters, {"fmrlla_selected_clients": 0.0}
+            return self.saved_global_parameters, {"fmrl_ava_selected_clients": 0.0}
 
         base_weights = parameters_to_ndarrays(self.saved_global_parameters)
         upload_records = []
+        pending_uploads: list[dict[str, Any]] = []
+        total_base_aggregation_weight = 0.0
         total_aggregation_weight = 0.0
         weighted_deltas = [np.zeros_like(layer) for layer in base_weights]
+        reference_delta = [np.zeros_like(layer) for layer in base_weights]
 
         for client, fit_res in sorted(results, key=lambda item: item[0].cid):
             client_weights = parameters_to_ndarrays(fit_res.parameters)
@@ -458,30 +552,73 @@ class FMRLLearnableAggregationStrategy(FedAvg):
                 utility = 1.0
             utility = max(utility, EPS)
             num_examples = max(float(fit_res.num_examples), 1.0)
-            aggregation_weight = num_examples * utility
-
-            for idx, (client_layer, base_layer) in enumerate(
-                zip(client_weights, base_weights, strict=True)
-            ):
-                weighted_deltas[idx] += (client_layer - base_layer) * aggregation_weight
+            base_aggregation_weight = num_examples * utility
+            deltas = [
+                client_layer - base_layer
+                for client_layer, base_layer in zip(client_weights, base_weights, strict=True)
+            ]
+            for idx, delta in enumerate(deltas):
+                reference_delta[idx] += delta * base_aggregation_weight
 
             delta_norm = self._parameter_delta_norm(client_weights, base_weights)
-            upload_records.append(
+            pending_uploads.append(
                 {
                     "cid": client.cid,
                     "utility": utility,
-                    "aggregation_weight": aggregation_weight,
+                    "base_aggregation_weight": base_aggregation_weight,
                     "delta_norm": delta_norm,
                     "num_examples": num_examples,
                     "recent_reward": float(fit_res.metrics.get("recent_reward", 0.0)),
                     "local_f1_macro": float(fit_res.metrics.get("local_f1_macro", 0.0)),
+                    "local_balanced_accuracy": float(
+                        fit_res.metrics.get(
+                            "local_balanced_accuracy",
+                            fit_res.metrics.get("balanced_accuracy", 0.0),
+                        )
+                    ),
                     "policy_accuracy": float(fit_res.metrics.get("policy_accuracy", 0.0)),
+                    "td_error": float(fit_res.metrics.get("td_error", 0.0)),
+                    "td_stability": float(
+                        fit_res.metrics.get(
+                            "td_stability",
+                            1.0 / (1.0 + max(float(fit_res.metrics.get("td_error", 0.0)), 0.0)),
+                        )
+                    ),
+                    "coverage_quality": float(
+                        fit_res.metrics.get(
+                            "coverage_quality",
+                            0.5
+                            * float(fit_res.metrics.get("class_entropy", 0.0))
+                            + 0.5 * float(fit_res.metrics.get("label_coverage", 0.0)),
+                        )
+                    ),
+                    "generator_correct_frac": float(
+                        fit_res.metrics.get("generator_correct_frac", 0.0)
+                    ),
+                    "_deltas": deltas,
                 }
             )
+            total_base_aggregation_weight += base_aggregation_weight
+
+        if not pending_uploads or total_base_aggregation_weight <= EPS:
+            return self.saved_global_parameters, {"fmrl_ava_selected_clients": 0.0}
+
+        reference_delta = [delta / total_base_aggregation_weight for delta in reference_delta]
+        for record in pending_uploads:
+            deltas = record.pop("_deltas")
+            alignment_cosine = self._delta_cosine(deltas, reference_delta)
+            alignment_multiplier = self._alignment_multiplier(alignment_cosine)
+            aggregation_weight = float(record["base_aggregation_weight"]) * alignment_multiplier
+            for idx, delta in enumerate(deltas):
+                weighted_deltas[idx] += delta * aggregation_weight
+            record["alignment_cosine"] = alignment_cosine
+            record["alignment_multiplier"] = alignment_multiplier
+            record["aggregation_weight"] = aggregation_weight
+            upload_records.append(record)
             total_aggregation_weight += aggregation_weight
 
-        if not upload_records or total_aggregation_weight <= EPS:
-            return self.saved_global_parameters, {"fmrlla_selected_clients": 0.0}
+        if total_aggregation_weight <= EPS:
+            return self.saved_global_parameters, {"fmrl_ava_selected_clients": 0.0}
 
         new_weights = [
             base_layer + self.aggregation_lr * (delta / total_aggregation_weight)
@@ -498,6 +635,10 @@ class FMRLLearnableAggregationStrategy(FedAvg):
                 "logical_round": self._logical_round(server_round),
                 "selected_fraction": selected_fraction,
                 "system_utility": system_utility,
+                "validation_team_reward": float(self.validation_team_reward_ema or 0.0),
+                "validation_team_reward_raw": float(self.last_validation_team_reward or 0.0),
+                "support_reward": float(self.last_support_reward),
+                "total_base_aggregation_weight": total_base_aggregation_weight,
                 "total_utility": total_aggregation_weight,
                 "total_aggregation_weight": total_aggregation_weight,
                 "uploads": upload_records,
@@ -505,20 +646,24 @@ class FMRLLearnableAggregationStrategy(FedAvg):
             }
         )
         logger.info(
-            "FMRL-LA aggregation | round=%d selected=%d/%d system_utility=%.4f total_weight=%.4f",
+            "FMRL-AVA aggregation | round=%d selected=%d/%d system_utility=%.4f validation=%.4f support=%.4f base_weight=%.4f aligned_weight=%.4f",
             server_round,
             len(upload_records),
             max(len(self.selection_records), 1),
             system_utility,
+            float(self.validation_team_reward_ema or 0.0),
+            float(self.last_support_reward),
+            total_base_aggregation_weight,
             total_aggregation_weight,
         )
 
         metrics = {
-            "fmrlla_selected_clients": float(len(upload_records)),
-            "fmrlla_selected_fraction": float(selected_fraction),
-            "fmrlla_system_utility": float(system_utility),
-            "fmrlla_total_utility": float(total_aggregation_weight),
-            "fmrlla_total_aggregation_weight": float(total_aggregation_weight),
+            "fmrl_ava_selected_clients": float(len(upload_records)),
+            "fmrl_ava_selected_fraction": float(selected_fraction),
+            "fmrl_ava_system_utility": float(system_utility),
+            "fmrl_ava_total_utility": float(total_aggregation_weight),
+            "fmrl_ava_total_base_aggregation_weight": float(total_base_aggregation_weight),
+            "fmrl_ava_total_aggregation_weight": float(total_aggregation_weight),
             **train_metrics,
         }
         return ndarrays_to_parameters(new_weights), metrics
@@ -657,8 +802,11 @@ class FMRLLearnableAggregationStrategy(FedAvg):
         self.optimizer.step()
 
         return {
-            "fmrlla_mixer_loss": float(loss.item()),
-            "fmrlla_predicted_system_utility": float(prediction.detach().item()),
+            "fmrl_ava_mixer_loss": float(loss.item()),
+            "fmrl_ava_predicted_system_utility": float(prediction.detach().item()),
+            "fmrl_ava_team_reward_target": float(system_utility),
+            "fmrl_ava_validation_reward": float(self.validation_team_reward_ema or 0.0),
+            "fmrl_ava_support_reward": float(self.last_support_reward),
         }
 
     def _current_utility_tensor(self) -> tuple[torch.Tensor, torch.Tensor]:
@@ -685,57 +833,55 @@ class FMRLLearnableAggregationStrategy(FedAvg):
             global_state = F.pad(global_state, (0, target_dim - global_state.shape[1]))
         return utility_tensor, global_state[:, :target_dim]
 
-    def _compute_system_utility(
+    def _compute_support_reward(
         self, upload_records: list[dict[str, float]], selected_fraction: float
     ) -> float:
-        weights = np.asarray([record.get("num_examples", 1.0) for record in upload_records], dtype=float)
+        if not upload_records:
+            self.last_support_reward = 0.0
+            return 0.0
+
+        weights = np.asarray(
+            [record.get("num_examples", 1.0) for record in upload_records], dtype=float
+        )
         weights = np.maximum(weights, EPS)
 
         def avg(key: str) -> float:
             values = np.asarray([record.get(key, 0.0) for record in upload_records], dtype=float)
             return float(np.average(values, weights=weights))
 
-        reward_norm = float(
-            np.clip(
-                0.5
-                + 0.5
-                * (avg("recent_reward") / max(float(self.cfg.training.steps_per_episode), 1.0)),
-                0.0,
-                1.0,
-            )
-        )
-        f1 = float(np.clip(avg("local_f1_macro"), 0.0, 1.0))
-        acc = float(np.clip(avg("policy_accuracy"), 0.0, 1.0))
-        td_values = [
-            self.stage1_data_cache.get(record["cid"], {}).get("metrics", {}).get("td_error", 0.0)
-            for record in upload_records
-        ]
-        td_stability = float(1.0 / (1.0 + max(float(np.average(td_values, weights=weights)), 0.0)))
-        novelty_values = [
-            self.stage1_data_cache.get(record["cid"], {}).get("metrics", {}).get("kl_div", 0.0)
-            for record in upload_records
-        ]
-        novelty = float(np.tanh(max(float(np.average(novelty_values, weights=weights)), 0.0)))
-        communication_efficiency = float(1.0 - np.clip(selected_fraction, 0.0, 1.0))
-
         components = {
-            "reward": reward_norm,
-            "f1": f1,
-            "accuracy": acc,
-            "td_stability": td_stability,
-            "novelty": novelty,
-            "communication": communication_efficiency,
+            "local_f1_macro": float(np.clip(avg("local_f1_macro"), 0.0, 1.0)),
+            "balanced_accuracy": float(np.clip(avg("local_balanced_accuracy"), 0.0, 1.0)),
+            "td_stability": float(np.clip(avg("td_stability"), 0.0, 1.0)),
+            "coverage_quality": float(np.clip(avg("coverage_quality"), 0.0, 1.0)),
+            "generator_correct_frac": float(np.clip(avg("generator_correct_frac"), 0.0, 1.0)),
+            "communication": float(1.0 - np.clip(selected_fraction, 0.0, 1.0)),
         }
-        weights = {
-            "reward": float(self.cfg.strategy.system_utility_weights.reward),
-            "f1": float(self.cfg.strategy.system_utility_weights.f1),
-            "accuracy": float(self.cfg.strategy.system_utility_weights.accuracy),
-            "td_stability": float(self.cfg.strategy.system_utility_weights.td_stability),
-            "novelty": float(self.cfg.strategy.system_utility_weights.novelty),
-            "communication": float(self.cfg.strategy.system_utility_weights.communication),
-        }
-        denom = sum(max(v, 0.0) for v in weights.values()) or 1.0
-        return float(sum(max(weights[k], 0.0) * components[k] for k in components) / denom)
+        denom = sum(
+            max(float(self.support_reward_weights.get(name, 0.0)), 0.0) for name in components
+        ) or 1.0
+        support_reward = sum(
+            max(float(self.support_reward_weights.get(name, 0.0)), 0.0) * components[name]
+            for name in components
+        ) / denom
+        self.last_support_reward = float(np.clip(support_reward, 0.0, 1.0))
+        return self.last_support_reward
+
+    def _compute_system_utility(
+        self, upload_records: list[dict[str, float]], selected_fraction: float
+    ) -> float:
+        support_reward = self._compute_support_reward(upload_records, selected_fraction)
+        validation_reward = self.validation_team_reward_ema
+        if validation_reward is None:
+            self.last_team_reward_target = support_reward
+            return support_reward
+
+        blend = float(np.clip(self.validation_reward_blend, 0.0, 1.0))
+        system_utility = float(
+            np.clip((blend * validation_reward) + ((1.0 - blend) * support_reward), 0.0, 1.0)
+        )
+        self.last_team_reward_target = system_utility
+        return system_utility
 
     def _log_selection_table(self, server_round: int) -> None:
         logger.info("-" * 112)
@@ -765,7 +911,7 @@ class FMRLLearnableAggregationStrategy(FedAvg):
                 record["kl_div"],
                 record["class_entropy"],
             )
-        logger.info("FMRL-LA selection round=%d", server_round)
+        logger.info("FMRL-AVA selection round=%d", server_round)
         logger.info("-" * 112)
 
     def _write_monitor_event(self, event: dict[str, Any]) -> None:
@@ -773,7 +919,7 @@ class FMRLLearnableAggregationStrategy(FedAvg):
             with open(self.monitor_path, "a", encoding="utf-8") as handle:
                 handle.write(json.dumps(event, sort_keys=True, default=str) + "\n")
         except Exception as exc:
-            logger.warning("Failed to write FMRL-LA monitor event: %s", exc)
+            logger.warning("Failed to write FMRL-AVA monitor event: %s", exc)
 
     @staticmethod
     def _log_failures(context: str, failures) -> None:
@@ -808,6 +954,46 @@ class FMRLLearnableAggregationStrategy(FedAvg):
             return float(value)
         except (TypeError, ValueError):
             return float(default)
+
+    @staticmethod
+    def _read_weight_map(
+        cfg: DictConfig,
+        path: str,
+        defaults: dict[str, float],
+        *,
+        fallback_path: str | None = None,
+    ) -> dict[str, float]:
+        resolved: dict[str, float] = {}
+        for key, default in defaults.items():
+            value = OmegaConf.select(cfg, f"{path}.{key}", default=None)
+            if value is None and fallback_path is not None:
+                value = OmegaConf.select(cfg, f"{fallback_path}.{key}", default=None)
+            resolved[key] = float(default if value is None else value)
+        return resolved
+
+    def _alignment_multiplier(self, cosine: float) -> float:
+        return alignment_multiplier(
+            cosine,
+            alignment_strength=self.alignment_strength,
+            min_multiplier=self.min_alignment_multiplier,
+            max_multiplier=self.max_alignment_multiplier,
+        )
+
+    @staticmethod
+    def _delta_cosine(delta_a: list[np.ndarray], delta_b: list[np.ndarray]) -> float:
+        dot = 0.0
+        norm_a = 0.0
+        norm_b = 0.0
+        for layer_a, layer_b in zip(delta_a, delta_b, strict=True):
+            a64 = layer_a.astype(np.float64, copy=False).reshape(-1)
+            b64 = layer_b.astype(np.float64, copy=False).reshape(-1)
+            dot += float(np.dot(a64, b64))
+            norm_a += float(np.dot(a64, a64))
+            norm_b += float(np.dot(b64, b64))
+        denom = np.sqrt(max(norm_a, 0.0)) * np.sqrt(max(norm_b, 0.0))
+        if denom <= EPS:
+            return 0.0
+        return float(np.clip(dot / denom, -1.0, 1.0))
 
     @staticmethod
     def _logical_round(server_round: int) -> int:
@@ -871,9 +1057,11 @@ def get_strategy(cfg: DictConfig) -> Strategy:
         evaluate_metrics_aggregation_fn=aggregate_evaluate_metrics,
     )
 
-    if strat_name == "fmrl_la":
-        logger.info("--- Strategy: FMRL-LA (Learnable Aggregation) with Model Saving ---")
-        return FMRLLearnableAggregationStrategy(cfg=cfg, **args)
+    if strat_name == "fmrl_ava":
+        logger.info(
+            "--- Strategy: FMRL-AVA (Adaptive Vector-Aligned Aggregation) with Model Saving ---"
+        )
+        return FMRLAdaptiveVectorAlignedAggregationStrategy(cfg=cfg, **args)
 
     if strat_name == "fedprox":
         proximal_mu = float(cfg.server.proximal_mu)
@@ -891,7 +1079,7 @@ def get_strategy(cfg: DictConfig) -> Strategy:
 
 def get_effective_num_rounds(cfg: DictConfig) -> int:
     configured_rounds = int(cfg.server.num_rounds)
-    if str(cfg.strategy.name).lower() == "fmrl_la":
+    if str(cfg.strategy.name).lower() == "fmrl_ava":
         return configured_rounds * 2
     return configured_rounds
 

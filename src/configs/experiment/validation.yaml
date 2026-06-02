@@ -3,7 +3,7 @@ experiment:
   id: VALIDATION
   name: tiny_e2e_validation
   family: validation
-  method: FMRL_LA
+  method: FMRL_AVA
   pipeline: full
   description: Tiny end-to-end validation run for preprocessing, FL, evaluation, and plots.
   objective: Verify that the full pipeline runs without using the paper-scale budget.

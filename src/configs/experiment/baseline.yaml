@@ -1,6 +1,6 @@
 name: baseline
-description: B-NAT FMRL-LA baseline with EVT open-set evaluation.
-method: FMRL_LA
+description: B-NAT FMRL-AVA baseline with EVT open-set evaluation.
+method: FMRL_AVA
 dataset: B-NAT
 partition: dirichlet
 alpha: ${dataset.preprocessing.alpha}

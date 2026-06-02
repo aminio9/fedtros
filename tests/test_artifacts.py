@@ -184,7 +184,7 @@ def test_build_communication_metrics_uses_logical_rounds(tmp_path):
         dataset="B-NAT",
         source_labels=["Normal", "BP", "DoS", "MitM", "FoT"],
         known_labels=["Normal", "BP", "DoS", "MitM"],
-        method="FMRL_LA",
+        method="FMRL_AVA",
         num_clients=2,
         seed=42,
         alpha=0.1,
@@ -197,7 +197,7 @@ def test_build_communication_metrics_uses_logical_rounds(tmp_path):
         "generation_net": {"w": torch.ones(4, 4)},
     }
     torch.save(checkpoint, run_dir / "best_model.pt")
-    (run_dir / "fmrlla_monitoring.jsonl").write_text(
+    (run_dir / "fmrl_ava_monitoring.jsonl").write_text(
         "\n".join(
             [
                 json.dumps(
@@ -254,7 +254,7 @@ def test_build_suite_artifacts_generates_suite_csvs(tmp_path):
         dataset="B-NAT",
         source_labels=["Normal", "BP", "DoS", "MitM", "FoT"],
         known_labels=["Normal", "BP", "DoS", "MitM"],
-        method="FMRL_LA",
+        method="FMRL_AVA",
         num_clients=3,
         seed=42,
         alpha=0.1,
@@ -269,7 +269,7 @@ def test_build_suite_artifacts_generates_suite_csvs(tmp_path):
         dataset="B-NAT",
         source_labels=["Normal", "BP", "DoS", "MitM", "FoT"],
         known_labels=["Normal", "BP", "DoS", "MitM"],
-        method="FMRL_LA",
+        method="FMRL_AVA",
         num_clients=10,
         seed=43,
         alpha=0.1,
@@ -283,7 +283,7 @@ def test_build_suite_artifacts_generates_suite_csvs(tmp_path):
         dataset="ToN-IoT",
         source_labels=["Normal", "BP", "DoS", "MitM", "UnknownA", "UnknownB"],
         known_labels=["Normal", "BP", "DoS", "MitM"],
-        method="FMRL_LA",
+        method="FMRL_AVA",
         num_clients=20,
         seed=44,
         alpha=0.5,
@@ -297,7 +297,7 @@ def test_build_suite_artifacts_generates_suite_csvs(tmp_path):
         dataset="B-NAT",
         source_labels=["Normal", "BP", "DoS", "MitM", "FoT"],
         known_labels=["Normal", "BP", "DoS", "MitM"],
-        method="FMRL_LA",
+        method="FMRL_AVA",
         num_clients=3,
         seed=45,
         alpha=0.1,

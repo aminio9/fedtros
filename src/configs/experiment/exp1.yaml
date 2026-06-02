@@ -3,7 +3,7 @@ experiment:
   id: E1
   name: exp1_closed_set
   family: closed_set
-  method: FMRL_LA
+  method: FMRL_AVA
   pipeline: full
   description: Closed-set validation on all B-NAT labels.
   objective: Preserve classification quality across the full B-NAT label set.
