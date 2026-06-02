@@ -23,10 +23,13 @@ strategy:
   fmrl_lr: 0.01
   utility_threshold: 0.1
   utility_temperature: 1.0
+  utility_strength: 0.75
+  critic_blend: 0.15
   aggregation_lr: 1.0
   min_selected_clients: 1
   max_selected_fraction: 1.0
-  max_utility: 10.0
+  min_utility: 0.25
+  max_utility: 2.0
   critic_hidden_dim: 64
   mixer_hidden_dim: 64
   monitor_path: ${tracking.run_dir}/fmrlla_monitoring.jsonl

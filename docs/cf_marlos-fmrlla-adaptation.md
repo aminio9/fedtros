@@ -19,14 +19,17 @@ This project adapts those requirements to a federated open-set intrusion dataset
 The server computes:
 
 ```text
-utility_i = AsyncCritic_i(hidden_i, scalar_features_i)
-Q_total = CentralizedAggregator([utility_i], global_client_state)
-theta_next = theta_global + aggregation_lr * sum_i normalized(utility_i) * delta_i
+audit_score_i = quality(hidden_i, scalar_features_i)
+critic_score_i = AsyncCritic_i(hidden_i, scalar_features_i)
+z_i = (1 - beta) * audit_score_i + beta * critic_score_i
+u_i = clip(1 + 2 * gamma * (z_i - mean(z)), min_u, max_u)
+theta_next = theta_global + aggregation_lr * sum_i (n_i * u_i) * delta_i / sum_i(n_i * u_i)
 ```
 
-Before Phase B selection, utilities below the configured threshold are clipped to
-zero. In normal rounds, zero utility means the client does not upload cached
-weights in Phase B.
+If a client is absolutely low-quality relative to the current round, the server
+clips its utility to zero so it skips Phase B upload. In IID-like rounds the
+utilities stay near 1, so the method behaves like FedAvg with sample-count
+weights.
 
 The mixer target is a configurable composite utility:
 

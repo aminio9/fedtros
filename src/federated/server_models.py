@@ -13,8 +13,9 @@ class AsyncCritic(nn.Module):
     This project has richer local diagnostics than the paper's driving hidden
     state, so the critic consumes the latent state plus scalar diagnostics derived
     from reward, local accuracy/F1, TD stability, novelty, and data coverage.
-    The output is a utility score; the server clips low utilities to zero before
-    communication selection so that zero means "do not upload" in that round.
+    The output is a residual utility signal. The server combines it with a
+    deterministic audit score, then centers the result around the current round
+    mean so that IID-like rounds stay close to FedAvg behavior.
     """
 
     def __init__(self, hidden_dim: int, latent_dim: int, scalar_dim: int):

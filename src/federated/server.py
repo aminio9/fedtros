@@ -23,7 +23,12 @@ from omegaconf import DictConfig, OmegaConf
 
 from src.agents.agent import Agent
 from src.checkpointing.checkpoints import load_agent_checkpoint
-from src.federated.selection_utils import gate_utility, select_utility_records
+from src.federated.selection_utils import (
+    centered_utility,
+    combine_utility_score,
+    critic_utility_score,
+    select_utility_records,
+)
 from src.models.models import OpenSetQChainModelFactory
 logger = logging.getLogger("Server")
 
@@ -253,6 +258,11 @@ class FMRLLearnableAggregationStrategy(FedAvg):
         self.min_selected_clients = int(cfg.strategy.min_selected_clients)
         self.max_selected_fraction = float(cfg.strategy.max_selected_fraction)
         self.max_utility = float(cfg.strategy.max_utility)
+        self.min_utility = float(OmegaConf.select(cfg, "strategy.min_utility", default=0.25))
+        self.utility_strength = float(
+            OmegaConf.select(cfg, "strategy.utility_strength", default=1.0)
+        )
+        self.critic_blend = float(OmegaConf.select(cfg, "strategy.critic_blend", default=0.15))
         self.warmup_rounds = int(cfg.strategy.warmup_rounds)
 
         self.monitor_path = _resolve_path(cfg.strategy.monitor_path)
@@ -364,13 +374,26 @@ class FMRLLearnableAggregationStrategy(FedAvg):
             critic = self._get_critic(client.cid)
             critic.eval()
             with torch.no_grad():
-                utility = critic(parsed["h"], parsed["scalars"]).item()
-            utility = self._gate_utility(utility)
+                critic_raw_utility = critic(parsed["h"], parsed["scalars"]).item()
+            critic_score = critic_utility_score(
+                critic_raw_utility,
+                utility_temperature=self.utility_temperature,
+            )
+            audit_score = float(parsed["metrics"]["audit_score"])
+            combined_score = combine_utility_score(
+                audit_score=audit_score,
+                critic_score=critic_score,
+                critic_blend=self.critic_blend,
+            )
 
             record = {
                 "client": client,
                 "cid": client.cid,
-                "utility": utility,
+                "utility": 0.0,
+                "audit_score": audit_score,
+                "critic_raw_utility": float(critic_raw_utility),
+                "critic_score": critic_score,
+                "combined_score": combined_score,
                 "selected": False,
                 **parsed["metrics"],
             }
@@ -378,15 +401,21 @@ class FMRLLearnableAggregationStrategy(FedAvg):
             self.selection_records.append(record)
             self.client_order.append(client.cid)
 
+        self._calibrate_round_utilities(server_round)
         selected = self._select_records(server_round)
-        if not selected and self.last_phase_a_clients:
+        positive_selected = [record for record in selected if float(record.get("utility", 0.0)) > 0.0]
+        if (not selected or len(positive_selected) < self.min_selected_clients) and self.last_phase_a_clients:
             logger.warning(
-                "FMRL-LA phase A produced no usable metadata; falling back to all %d "
-                "sampled clients for Phase B with uniform utility.",
+                "FMRL-LA phase A produced insufficient positive utilities; falling back to "
+                "uniform utility for the sampled client set (%d clients).",
                 len(self.last_phase_a_clients),
             )
-            self.selected_clients_cache = list(self.last_phase_a_clients)
+            fallback_clients = list(self.last_phase_a_clients) if not selected else [record["client"] for record in selected]
+            self.selected_clients_cache = fallback_clients
             self.utilities_cache = {client.cid: 1.0 for client in self.selected_clients_cache}
+            for record in self.selection_records:
+                if record["cid"] in self.utilities_cache:
+                    record["utility"] = 1.0
         else:
             self.selected_clients_cache = [record["client"] for record in selected]
             self.utilities_cache = {record["cid"]: record["utility"] for record in selected}
@@ -415,7 +444,7 @@ class FMRLLearnableAggregationStrategy(FedAvg):
 
         base_weights = parameters_to_ndarrays(self.saved_global_parameters)
         upload_records = []
-        total_utility = 0.0
+        total_aggregation_weight = 0.0
         weighted_deltas = [np.zeros_like(layer) for layer in base_weights]
 
         for client, fit_res in sorted(results, key=lambda item: item[0].cid):
@@ -428,31 +457,34 @@ class FMRLLearnableAggregationStrategy(FedAvg):
             if self._is_warmup(server_round):
                 utility = 1.0
             utility = max(utility, EPS)
+            num_examples = max(float(fit_res.num_examples), 1.0)
+            aggregation_weight = num_examples * utility
 
             for idx, (client_layer, base_layer) in enumerate(
                 zip(client_weights, base_weights, strict=True)
             ):
-                weighted_deltas[idx] += (client_layer - base_layer) * utility
+                weighted_deltas[idx] += (client_layer - base_layer) * aggregation_weight
 
             delta_norm = self._parameter_delta_norm(client_weights, base_weights)
             upload_records.append(
                 {
                     "cid": client.cid,
                     "utility": utility,
+                    "aggregation_weight": aggregation_weight,
                     "delta_norm": delta_norm,
-                    "num_examples": float(fit_res.num_examples),
+                    "num_examples": num_examples,
                     "recent_reward": float(fit_res.metrics.get("recent_reward", 0.0)),
                     "local_f1_macro": float(fit_res.metrics.get("local_f1_macro", 0.0)),
                     "policy_accuracy": float(fit_res.metrics.get("policy_accuracy", 0.0)),
                 }
             )
-            total_utility += utility
+            total_aggregation_weight += aggregation_weight
 
-        if not upload_records or total_utility <= EPS:
+        if not upload_records or total_aggregation_weight <= EPS:
             return self.saved_global_parameters, {"fmrlla_selected_clients": 0.0}
 
         new_weights = [
-            base_layer + self.aggregation_lr * (delta / total_utility)
+            base_layer + self.aggregation_lr * (delta / total_aggregation_weight)
             for base_layer, delta in zip(base_weights, weighted_deltas, strict=True)
         ]
         selected_fraction = len(upload_records) / max(len(self.selection_records), 1)
@@ -466,25 +498,27 @@ class FMRLLearnableAggregationStrategy(FedAvg):
                 "logical_round": self._logical_round(server_round),
                 "selected_fraction": selected_fraction,
                 "system_utility": system_utility,
-                "total_utility": total_utility,
+                "total_utility": total_aggregation_weight,
+                "total_aggregation_weight": total_aggregation_weight,
                 "uploads": upload_records,
                 **train_metrics,
             }
         )
         logger.info(
-            "FMRL-LA aggregation | round=%d selected=%d/%d system_utility=%.4f total_utility=%.4f",
+            "FMRL-LA aggregation | round=%d selected=%d/%d system_utility=%.4f total_weight=%.4f",
             server_round,
             len(upload_records),
             max(len(self.selection_records), 1),
             system_utility,
-            total_utility,
+            total_aggregation_weight,
         )
 
         metrics = {
             "fmrlla_selected_clients": float(len(upload_records)),
             "fmrlla_selected_fraction": float(selected_fraction),
             "fmrlla_system_utility": float(system_utility),
-            "fmrlla_total_utility": float(total_utility),
+            "fmrlla_total_utility": float(total_aggregation_weight),
+            "fmrlla_total_aggregation_weight": float(total_aggregation_weight),
             **train_metrics,
         }
         return ndarrays_to_parameters(new_weights), metrics
@@ -517,8 +551,11 @@ class FMRLLearnableAggregationStrategy(FedAvg):
         )
         kl_div = self._float_metric(metrics, "kl_div")
         total_steps = self._float_metric(metrics, "total_steps")
-        generator_frac = self._float_metric(metrics, "generator_correct_frac")
+        generator_frac = self._float_metric(metrics, "generator_correct_frac", 0.5)
 
+        coverage_quality = 0.5 * float(
+            np.clip(self._float_metric(metrics, "class_entropy"), 0.0, 1.0)
+        ) + 0.5 * float(np.clip(self._float_metric(metrics, "label_coverage"), 0.0, 1.0))
         scalar_values = {
             "reward_norm": reward_norm,
             "history_reward_norm": history_norm,
@@ -533,6 +570,15 @@ class FMRLLearnableAggregationStrategy(FedAvg):
             "generator_correct_frac": float(np.clip(generator_frac, 0.0, 1.0)),
             "steps_norm": float(np.clip(total_steps / max_round_reward, 0.0, 1.0)),
         }
+        audit_score = float(
+            (0.25 * scalar_values["f1_macro"])
+            + (0.20 * scalar_values["accuracy"])
+            + (0.20 * scalar_values["td_stability"])
+            + (0.15 * coverage_quality)
+            + (0.10 * scalar_values["reward_norm"])
+            + (0.05 * scalar_values["history_reward_norm"])
+            + (0.05 * scalar_values["generator_correct_frac"])
+        )
         scalar_tensor = torch.tensor(
             [[scalar_values[key] for key in AUDIT_SCALAR_KEYS]],
             dtype=torch.float32,
@@ -556,6 +602,9 @@ class FMRLLearnableAggregationStrategy(FedAvg):
                 "label_coverage": scalar_values["label_coverage"],
                 "local_num_examples": self._float_metric(metrics, "local_num_examples"),
                 "total_steps": total_steps,
+                "audit_score": audit_score,
+                "td_stability": scalar_values["td_stability"],
+                "coverage_quality": coverage_quality,
             },
         }
 
@@ -568,13 +617,26 @@ class FMRLLearnableAggregationStrategy(FedAvg):
             warmup_rounds=self.warmup_rounds,
         )
 
-    def _gate_utility(self, utility: float) -> float:
-        return gate_utility(
-            utility,
-            utility_temperature=self.utility_temperature,
-            max_utility=self.max_utility,
-            utility_threshold=self.utility_threshold,
+    def _calibrate_round_utilities(self, server_round: int) -> None:
+        if not self.selection_records:
+            return
+        if self._is_warmup(server_round):
+            for record in self.selection_records:
+                record["utility"] = 1.0
+            return
+
+        round_mean_score = float(
+            np.mean([record.get("combined_score", 0.0) for record in self.selection_records])
         )
+        for record in self.selection_records:
+            record["utility"] = centered_utility(
+                score=float(record.get("combined_score", 0.0)),
+                round_mean_score=round_mean_score,
+                utility_strength=self.utility_strength,
+                min_utility=self.min_utility,
+                max_utility=self.max_utility,
+                utility_threshold=self.utility_threshold,
+            )
 
     def _train_server_models(self, system_utility: float) -> dict[str, float]:
         if not self.stage1_data_cache:
@@ -604,8 +666,9 @@ class FMRLLearnableAggregationStrategy(FedAvg):
         features = []
         for cid in self.client_order[: self.max_agents]:
             data = self.stage1_data_cache[cid]
-            critic = self._get_critic(cid)
-            utilities.append(critic(data["h"], data["scalars"]).view(1))
+            record = next((r for r in self.selection_records if r["cid"] == cid), None)
+            utility_value = float(record["utility"]) if record is not None else 0.0
+            utilities.append(torch.tensor([utility_value], device=self.device))
             features.append(data["feature"].view(-1))
 
         if not utilities:
@@ -625,8 +688,12 @@ class FMRLLearnableAggregationStrategy(FedAvg):
     def _compute_system_utility(
         self, upload_records: list[dict[str, float]], selected_fraction: float
     ) -> float:
+        weights = np.asarray([record.get("num_examples", 1.0) for record in upload_records], dtype=float)
+        weights = np.maximum(weights, EPS)
+
         def avg(key: str) -> float:
-            return float(np.mean([record.get(key, 0.0) for record in upload_records]))
+            values = np.asarray([record.get(key, 0.0) for record in upload_records], dtype=float)
+            return float(np.average(values, weights=weights))
 
         reward_norm = float(
             np.clip(
@@ -643,12 +710,12 @@ class FMRLLearnableAggregationStrategy(FedAvg):
             self.stage1_data_cache.get(record["cid"], {}).get("metrics", {}).get("td_error", 0.0)
             for record in upload_records
         ]
-        td_stability = float(1.0 / (1.0 + max(float(np.mean(td_values)), 0.0)))
+        td_stability = float(1.0 / (1.0 + max(float(np.average(td_values, weights=weights)), 0.0)))
         novelty_values = [
             self.stage1_data_cache.get(record["cid"], {}).get("metrics", {}).get("kl_div", 0.0)
             for record in upload_records
         ]
-        novelty = float(np.tanh(max(float(np.mean(novelty_values)), 0.0)))
+        novelty = float(np.tanh(max(float(np.average(novelty_values, weights=weights)), 0.0)))
         communication_efficiency = float(1.0 - np.clip(selected_fraction, 0.0, 1.0))
 
         components = {

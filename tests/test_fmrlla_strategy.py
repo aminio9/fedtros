@@ -1,6 +1,11 @@
 import torch
 
-from src.federated.selection_utils import gate_utility, select_utility_records
+from src.federated.selection_utils import (
+    centered_utility,
+    combine_utility_score,
+    critic_utility_score,
+    select_utility_records,
+)
 from src.federated.server_models import AsyncCritic, CentralizedAggregator
 
 
@@ -19,26 +24,57 @@ def test_centralized_aggregator_outputs_system_utility():
     assert q_total.shape == (1, 1)
 
 
-def test_fmrlla_gates_low_utilities_and_selects_only_nonzero_clients():
-    assert (
-        gate_utility(
-            0.05,
-            utility_temperature=1.0,
-            max_utility=10.0,
+def test_fmrlla_utility_is_fedavg_neutral_for_iid_like_scores():
+    utilities = [
+        centered_utility(
+            score=0.55,
+            round_mean_score=0.55,
+            utility_strength=0.75,
+            min_utility=0.25,
+            max_utility=2.0,
             utility_threshold=0.1,
         )
-        == 0.0
+        for _ in range(3)
+    ]
+
+    assert utilities == [1.0, 1.0, 1.0]
+
+
+def test_fmrlla_downweights_or_drops_relative_low_quality_clients():
+    low = centered_utility(
+        score=0.05,
+        round_mean_score=0.50,
+        utility_strength=0.75,
+        min_utility=0.25,
+        max_utility=2.0,
+        utility_threshold=0.1,
     )
-    assert (
-        gate_utility(
-            0.20,
-            utility_temperature=1.0,
-            max_utility=10.0,
-            utility_threshold=0.1,
-        )
-        == 0.20
+    high = centered_utility(
+        score=0.80,
+        round_mean_score=0.50,
+        utility_strength=0.75,
+        min_utility=0.25,
+        max_utility=2.0,
+        utility_threshold=0.1,
     )
 
+    assert low == 0.0
+    assert high > 1.0
+
+
+def test_fmrlla_combines_audit_score_with_bounded_critic_residual():
+    critic_score = critic_utility_score(1.0, utility_temperature=1.0)
+    combined = combine_utility_score(
+        audit_score=0.8,
+        critic_score=critic_score,
+        critic_blend=0.15,
+    )
+
+    assert 0.0 <= critic_score <= 1.0
+    assert 0.5 < combined < 0.8
+
+
+def test_fmrlla_selects_only_nonzero_utility_clients():
     selection_records = [
         {"cid": "1", "utility": 0.25, "selected": False},
         {"cid": "2", "utility": 0.00, "selected": False},

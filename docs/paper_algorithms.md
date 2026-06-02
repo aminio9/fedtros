@@ -146,33 +146,36 @@ Phase A: utility estimation and client selection
             reward, historical reward, F1, accuracy, TD stability,
             novelty, class entropy, label coverage, generator quality,
             and local step count
-4:      Estimate client utility u_i = C_i(h_i, x_i) using the client critic
-5:      Clip or temperature-scale u_i for numerical stability
-6:      Set u_i = 0 if it falls below the selection threshold lambda
+4:      Compute audit score q_i from the scalar diagnostics
+5:      Estimate critic score c_i = C_i(h_i, x_i)
+6:      Combine them as z_i = (1 - beta) q_i + beta c_i
 7:  end for
-8:  Select clients A_k = {i : u_i > 0}
-9:  if |A_k| < q_min then
-10:     Add highest-utility clients until |A_k| = q_min
-11: end if
-12: Limit |A_k| so that |A_k| <= ceil(rho_max |C_k|)
+8:  Compute round mean z_bar = mean(z_i over C_k)
+9:  Set utility u_i = clip(1 + 2 gamma (z_i - z_bar), u_min, u_max)
+10: Set u_i = 0 if z_i < lambda and z_i < z_bar
+11: Select clients A_k = {i : u_i > 0}
+12: if |A_k| < q_min then
+13:     Add highest-utility clients until |A_k| = q_min
+14: end if
+15: Limit |A_k| so that |A_k| <= ceil(rho_max |C_k|)
 
 Phase B: utility-weighted model update
-12: for each selected client i in A_k do
-13:     Compute local parameter delta Delta_i = theta_i^k - theta^{k-1}
-14: end for
-15: Compute utility-weighted update:
+16: for each selected client i in A_k do
+17:     Compute local parameter delta Delta_i = theta_i^k - theta^{k-1}
+18: end for
+19: Compute sample-aware utility-weighted update:
         theta^k = theta^{k-1}
-                  + eta * sum_{i in A_k} u_i Delta_i / sum_{i in A_k} u_i
-16: Compute round-level system utility from reward, F1, accuracy,
+                  + eta * sum_{i in A_k} n_i u_i Delta_i / sum_{i in A_k} n_i u_i
+20: Compute round-level system utility from reward, F1, accuracy,
     TD stability, novelty, and communication efficiency
-17: Update the server-side critics and centralized mixer using system utility
-18: Save theta^k and FMRL-LA monitoring records
-19: return theta^k
+21: Update the server-side critics and centralized mixer using system utility
+22: Save theta^k and FMRL-LA monitoring records
+23: return theta^k
 ```
 
 ### Analysis
 
-This is the algorithm that most clearly distinguishes the proposed cooperative federated approach from standard FL. FedAvg assumes every participating client contributes according to sample count, while FMRL-LA estimates whether an update is useful for the global objective before using it. This is especially important under non-IID partitions, where some clients may have missing classes, unstable TD updates, or poor generator quality. The main benefit is robustness: high-quality and informative updates can receive more influence, while low-utility updates can be ignored or down-weighted. The tradeoff is overhead. FMRL-LA requires audit metadata, server-side critics, a mixer, and a two-phase round structure, so it should be evaluated with both accuracy and communication cost.
+This is the algorithm that most clearly distinguishes the proposed cooperative federated approach from standard FL. FedAvg assumes every participating client contributes only through sample count, while FMRL-LA keeps that sample-count prior but modulates it with a bounded utility factor. This is important under non-IID partitions, where some clients may have missing classes, unstable TD updates, or poor generator quality. The main benefit is robustness: high-quality and informative updates can receive more influence, while low-utility updates can be ignored or down-weighted. The main safeguard is that if all clients look similar, the centered utility stays near 1, so the behavior collapses back to FedAvg-like aggregation. The tradeoff is overhead. FMRL-LA requires audit metadata, server-side critics, a mixer, and a two-phase round structure, so it should be evaluated with both accuracy and communication cost.
 
 ## Algorithm 4: EVT Calibration and Open-Set Inference
 
