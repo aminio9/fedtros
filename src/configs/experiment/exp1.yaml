@@ -22,7 +22,7 @@ experiment:
     - federated_history.csv
     - communication_metrics.csv
 federated:
-  num_clients: 10
+  num_clients: 3
   num_rounds: 100
 model:
   num_actions: 5
@@ -30,6 +30,8 @@ dataset:
   known_labels: ${dataset.source_labels}
   preprocessing:
     output_dir: ${tracking.run_dir}/processed
+    closed_set_test_size: 0.1
+    validation_split: 0.0
     alpha: 1.0
     iid: true
 open_set:

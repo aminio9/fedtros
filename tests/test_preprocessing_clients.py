@@ -94,3 +94,25 @@ def test_preprocessing_writes_non_empty_tensor_for_each_client(tmp_path, num_cli
         .splitlines()
     }
     assert manifest_client_ids == set(range(1, num_clients + 1))
+
+
+def test_preprocessing_can_skip_validation_split(tmp_path):
+    raw_path = tmp_path / "raw.csv"
+    output_dir = tmp_path / "processed"
+    _write_raw_dataset(raw_path)
+    cfg = _cfg(raw_path, output_dir, num_clients=3)
+    cfg.dataset.preprocessing.closed_set_test_size = 0.1
+    cfg.dataset.preprocessing.validation_split = 0.0
+
+    metadata = run_preprocessing(cfg, project_root=tmp_path)
+
+    known_train = torch.load(output_dir / "known_train.pt", map_location="cpu", weights_only=True)
+    validation = torch.load(output_dir / "validation.pt", map_location="cpu", weights_only=True)
+    closed_test = torch.load(
+        output_dir / "closed_set_test.pt",
+        map_location="cpu",
+        weights_only=True,
+    )
+    assert known_train["labels"].numel() == metadata["num_train_samples"] == 115
+    assert validation["labels"].numel() == metadata["num_validation_samples"] == 0
+    assert closed_test["labels"].numel() == metadata["num_closed_test_samples"] == 13

@@ -51,7 +51,9 @@ def test_experiment_config_uses_run_local_processed_dir():
     assert cfg.dataset.preprocessing.output_dir.startswith("outputs/")
     assert cfg.dataset.preprocessing.output_dir.endswith("_exp1_closed_set_seed42/processed")
     assert cfg.dataset.preprocessing.iid is True
-    assert cfg.federated.num_clients == 10
+    assert cfg.dataset.preprocessing.closed_set_test_size == 0.1
+    assert cfg.dataset.preprocessing.validation_split == 0.0
+    assert cfg.federated.num_clients == 3
     assert cfg.evaluation.mode == "closed_set"
     assert cfg.training.generator.enabled is False
 

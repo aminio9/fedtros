@@ -82,6 +82,15 @@ def _transform_features(
     scaler: MinMaxScaler | None,
     encoder: OneHotEncoder | None,
 ) -> np.ndarray:
+    if frame.empty:
+        categorical_dim = (
+            sum(len(categories) for categories in encoder.categories_) if encoder else 0
+        )
+        feature_dim = len(numerical) + categorical_dim
+        if feature_dim <= 0:
+            raise RuntimeError("No usable feature columns found after preprocessing.")
+        return np.empty((0, feature_dim), dtype=np.float32)
+
     numeric_part = (
         scaler.transform(_numeric_array(frame, numerical))
         if scaler
@@ -195,8 +204,13 @@ def _split_known_data(
             random_state=seed,
         )
 
-    if not 0.0 < validation_split < 1.0:
-        raise ValueError("dataset.preprocessing.validation_split must be in (0, 1).")
+    if validation_split < 0.0 or validation_split >= 1.0:
+        raise ValueError("dataset.preprocessing.validation_split must be in [0, 1).")
+    if validation_split == 0.0:
+        empty_val_df = train_val_df.iloc[0:0].copy()
+        empty_val_y = np.empty(0, dtype=train_val_y.dtype)
+        return train_val_df, empty_val_df, test_df, train_val_y, empty_val_y, test_y
+
     try:
         train_df, val_df, train_y, val_y = train_test_split(
             train_val_df,
