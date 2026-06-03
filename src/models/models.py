@@ -27,8 +27,93 @@ class ResidualBlock(nn.Module):
         return x + self.block(x)
 
 
-class TabularTransformerEncoder(nn.Module):
-    """Transformer encoder over scalar tabular feature tokens."""
+def _cfg_value(cfg: DictConfig | None, key: str, default: object) -> object:
+    if cfg is None:
+        return default
+    return getattr(cfg, key, default)
+
+
+class FTFeatureTokenizer(nn.Module):
+    """FT-Transformer-style numerical tokenizer for scalar tabular features."""
+
+    def __init__(
+        self,
+        feature_dim: int,
+        d_model: int,
+        dropout: float,
+    ):
+        super().__init__()
+        self.feature_dim = int(feature_dim)
+        self.weight = nn.Parameter(torch.empty(self.feature_dim, d_model))
+        self.bias = nn.Parameter(torch.empty(self.feature_dim, d_model))
+        self.feature_gate = nn.Sequential(
+            nn.LayerNorm(self.feature_dim),
+            nn.Linear(self.feature_dim, self.feature_dim),
+            nn.Sigmoid(),
+        )
+        self.dropout = nn.Dropout(dropout)
+        nn.init.xavier_uniform_(self.weight)
+        nn.init.zeros_(self.bias)
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        if features.dim() != 2:
+            raise ValueError(f"Expected [batch, features], got {tuple(features.shape)}")
+        if features.shape[1] != self.feature_dim:
+            raise ValueError(
+                f"Tokenizer feature_dim mismatch: expected {self.feature_dim}, got {features.shape[1]}"
+            )
+        tokens = features.unsqueeze(-1) * self.weight.unsqueeze(0) + self.bias.unsqueeze(0)
+        gate = self.feature_gate(features).unsqueeze(-1)
+        return self.dropout(tokens * gate)
+
+
+class GatedTransformerBlock(nn.Module):
+    """Pre-norm transformer block with data-dependent gates on residual updates."""
+
+    def __init__(self, d_model: int, nhead: int, dim_feedforward: int, dropout: float):
+        super().__init__()
+        self.attn_norm = nn.LayerNorm(d_model)
+        self.attn = nn.MultiheadAttention(
+            embed_dim=d_model,
+            num_heads=nhead,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.attn_gate = nn.Sequential(nn.Linear(d_model, d_model), nn.Sigmoid())
+        self.ff_norm = nn.LayerNorm(d_model)
+        self.ff = nn.Sequential(
+            nn.Linear(d_model, dim_feedforward),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim_feedforward, d_model),
+        )
+        self.ff_gate = nn.Sequential(nn.Linear(d_model, d_model), nn.Sigmoid())
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+        x = self.attn_norm(tokens)
+        attn_out, _ = self.attn(x, x, x, need_weights=False)
+        tokens = tokens + self.dropout(self.attn_gate(x) * attn_out)
+
+        x = self.ff_norm(tokens)
+        ff_out = self.ff(x)
+        return tokens + self.dropout(self.ff_gate(x) * ff_out)
+
+
+class AttentionPooling(nn.Module):
+    """Learned attention pooling over feature tokens."""
+
+    def __init__(self, d_model: int):
+        super().__init__()
+        self.scorer = nn.Sequential(nn.LayerNorm(d_model), nn.Linear(d_model, 1))
+
+    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+        weights = torch.softmax(self.scorer(tokens), dim=1)
+        return (weights * tokens).sum(dim=1)
+
+
+class GatedTabularTransformerEncoder(nn.Module):
+    """Tokenizer -> gated transformer blocks -> attention pooling -> embedding h."""
 
     def __init__(
         self,
@@ -38,39 +123,53 @@ class TabularTransformerEncoder(nn.Module):
         num_layers: int,
         dim_feedforward: int,
         dropout: float,
-        pooling: str,
     ):
         super().__init__()
         self.feature_dim = int(feature_dim)
-        self.pooling = str(pooling)
-        self.token_projection = nn.Linear(1, d_model)
-        self.position_embedding = nn.Parameter(torch.zeros(1, feature_dim, d_model))
-        encoder_layer = nn.TransformerEncoderLayer(
+        self.tokenizer = FTFeatureTokenizer(
+            feature_dim=feature_dim,
             d_model=d_model,
-            nhead=nhead,
-            dim_feedforward=dim_feedforward,
             dropout=dropout,
-            activation="gelu",
-            batch_first=True,
-            norm_first=True,
         )
-        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.blocks = nn.ModuleList(
+            [
+                GatedTransformerBlock(
+                    d_model=d_model,
+                    nhead=nhead,
+                    dim_feedforward=dim_feedforward,
+                    dropout=dropout,
+                )
+                for _ in range(num_layers)
+            ]
+        )
+        self.pool = AttentionPooling(d_model)
+        self.norm = nn.LayerNorm(d_model)
         self.output_dim = d_model
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
-        if features.dim() != 2:
-            raise ValueError(f"Expected [batch, features], got {tuple(features.shape)}")
-        if features.shape[1] != self.feature_dim:
-            raise ValueError(
-                f"Transformer feature_dim mismatch: expected {self.feature_dim}, got {features.shape[1]}"
-            )
-        x = self.token_projection(features.unsqueeze(-1)) + self.position_embedding
-        encoded = self.encoder(x)
-        if self.pooling == "cls":
-            return encoded[:, 0, :]
-        if self.pooling == "max":
-            return encoded.max(dim=1).values
-        return encoded.mean(dim=1)
+        tokens = self.tokenizer(features)
+        for block in self.blocks:
+            tokens = block(tokens)
+        return self.norm(self.pool(tokens))
+
+
+def _build_gated_tabular_encoder(
+    feature_dim: int,
+    transformer_cfg: DictConfig | None,
+) -> GatedTabularTransformerEncoder:
+    d_model = int(_cfg_value(transformer_cfg, "d_model", 128))
+    nhead = int(_cfg_value(transformer_cfg, "nhead", 4))
+    num_layers = int(_cfg_value(transformer_cfg, "num_layers", 4))
+    dim_feedforward = int(_cfg_value(transformer_cfg, "dim_feedforward", 2 * d_model))
+    dropout = float(_cfg_value(transformer_cfg, "dropout", 0.1))
+    return GatedTabularTransformerEncoder(
+        feature_dim=feature_dim,
+        d_model=d_model,
+        nhead=nhead,
+        num_layers=num_layers,
+        dim_feedforward=dim_feedforward,
+        dropout=dropout,
+    )
 
 
 class PriorNetwork(nn.Module):
@@ -78,44 +177,20 @@ class PriorNetwork(nn.Module):
 
     def __init__(self, s_dim: int, z_dim: int, transformer_cfg: DictConfig | None = None):
         super().__init__()
-        self.transformer_enabled = bool(
-            transformer_cfg is not None and getattr(transformer_cfg, "enabled", False)
+        self.encoder = _build_gated_tabular_encoder(s_dim, transformer_cfg)
+        self.shared_embedding = nn.Sequential(
+            nn.Linear(self.encoder.output_dim, 256),
+            nn.LayerNorm(256),
+            nn.LeakyReLU(0.2),
         )
-        if self.transformer_enabled:
-            self.transformer = TabularTransformerEncoder(
-                feature_dim=s_dim,
-                d_model=int(transformer_cfg.d_model),
-                nhead=int(transformer_cfg.nhead),
-                num_layers=int(transformer_cfg.num_layers),
-                dim_feedforward=int(transformer_cfg.dim_feedforward),
-                dropout=float(transformer_cfg.dropout),
-                pooling=str(transformer_cfg.pooling),
-            )
-            encoder_dim = self.transformer.output_dim
-        else:
-            self.transformer = None
-            encoder_dim = 512
-            self.fc_in = nn.Linear(s_dim, encoder_dim)
-            self.res1 = ResidualBlock(encoder_dim)
-            self.res2 = ResidualBlock(encoder_dim)
-
-        self.fc2 = nn.Linear(encoder_dim, 256)
-        self.norm2 = nn.LayerNorm(256)
 
         self.mu_head = nn.Linear(256, z_dim)
         self.logvar_head = nn.Linear(256, z_dim)
-        self.act = nn.LeakyReLU(0.2)
 
     def forward(self, s: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        if self.transformer is not None:
-            x = self.transformer(s)
-        else:
-            x = self.act(self.fc_in(s))
-            x = self.res1(x)
-            x = self.res2(x)
-        x = self.act(self.norm2(self.fc2(x)))
-        mu = self.mu_head(x)
-        logvar = self.logvar_head(x).clamp(LOGVAR_MIN, LOGVAR_MAX)
+        h = self.shared_embedding(self.encoder(s))
+        mu = self.mu_head(h)
+        logvar = self.logvar_head(h).clamp(LOGVAR_MIN, LOGVAR_MAX)
         return mu, logvar
 
 
@@ -131,52 +206,25 @@ class RecognitionNetwork(nn.Module):
     ):
         super().__init__()
         self.num_actions = num_actions
-        self.transformer_enabled = bool(
-            transformer_cfg is not None and getattr(transformer_cfg, "enabled", False)
+        self.encoder = _build_gated_tabular_encoder(s_dim + num_actions, transformer_cfg)
+        self.shared_embedding = nn.Sequential(
+            nn.Linear(self.encoder.output_dim, 256),
+            nn.LayerNorm(256),
+            nn.LeakyReLU(0.2),
         )
-        if self.transformer_enabled:
-            self.transformer = TabularTransformerEncoder(
-                feature_dim=s_dim,
-                d_model=int(transformer_cfg.d_model),
-                nhead=int(transformer_cfg.nhead),
-                num_layers=int(transformer_cfg.num_layers),
-                dim_feedforward=int(transformer_cfg.dim_feedforward),
-                dropout=float(transformer_cfg.dropout),
-                pooling=str(transformer_cfg.pooling),
-            )
-            self.action_projection = nn.Linear(num_actions, self.transformer.output_dim)
-            encoder_dim = self.transformer.output_dim
-        else:
-            self.transformer = None
-            self.action_projection = None
-            in_dim = s_dim + num_actions
-            encoder_dim = 512
-            self.fc_in = nn.Linear(in_dim, encoder_dim)
-            self.res1 = ResidualBlock(encoder_dim)
-            self.res2 = ResidualBlock(encoder_dim)
-
-        self.fc2 = nn.Linear(encoder_dim, 256)
-        self.norm2 = nn.LayerNorm(256)
 
         self.mu_head = nn.Linear(256, z_dim)
         self.logvar_head = nn.Linear(256, z_dim)
-        self.act = nn.LeakyReLU(0.2)
 
     def forward(self, s: torch.Tensor, a: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         if a.dim() == 1 or (a.dim() == 2 and a.shape[1] == 1):
             a_onehot = to_one_hot(a, self.num_actions)
         else:
             a_onehot = a
-        if self.transformer is not None and self.action_projection is not None:
-            x = self.transformer(s) + self.action_projection(a_onehot)
-        else:
-            x = torch.cat([s, a_onehot], dim=-1)
-            x = self.act(self.fc_in(x))
-            x = self.res1(x)
-            x = self.res2(x)
-        x = self.act(self.norm2(self.fc2(x)))
-        mu = self.mu_head(x)
-        logvar = self.logvar_head(x).clamp(LOGVAR_MIN, LOGVAR_MAX)
+        features = torch.cat([s, a_onehot.to(dtype=s.dtype)], dim=-1)
+        h = self.shared_embedding(self.encoder(features))
+        mu = self.mu_head(h)
+        logvar = self.logvar_head(h).clamp(LOGVAR_MIN, LOGVAR_MAX)
         return mu, logvar
 
 
