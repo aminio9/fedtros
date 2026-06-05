@@ -199,7 +199,7 @@ def _validate_experiment_contract(cfg: DictConfig) -> None:
             raise ValueError(
                 f"{experiment_id} must use 100 logical federated rounds per cf_marlos-experiment-plan.md."
             )
-        expected_clients = 3 if experiment_id == "E1" else 10
+        expected_clients = 10
         if experiment_id != "E7" and int(OmegaConf.select(cfg, "federated.num_clients")) != expected_clients:
             raise ValueError(
                 f"{experiment_id} must use {expected_clients} clients per cf_marlos-experiment-plan.md."
