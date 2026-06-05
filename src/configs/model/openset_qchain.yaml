@@ -10,11 +10,11 @@ dropout: 0.0
 use_generation_network: true
 generation_hidden_dim: 64
 transformer:
-  enabled: true
+  enabled: false
   input_dim: ${model.state_dim}
   d_model: 128
   nhead: 4
-  num_layers: 4
+  num_layers: 2
   dim_feedforward: 256
   dropout: 0.1
-  pooling: attention
+  pooling: mean

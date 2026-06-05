@@ -41,21 +41,6 @@ def test_model_forward_shapes():
     assert recon.shape == (2, 5)
 
 
-def test_prior_and_recognition_use_gated_tabular_encoder():
-    factory = OpenSetQChainModelFactory(_model_cfg())
-    value_network = factory.create_value_network()
-
-    prior_encoder = value_network.encoder.prior.encoder
-    recognition_encoder = value_network.encoder.recognition.encoder
-
-    assert prior_encoder.tokenizer.feature_dim == 5
-    assert recognition_encoder.tokenizer.feature_dim == 9
-    assert len(prior_encoder.blocks) == 4
-    assert len(recognition_encoder.blocks) == 4
-    assert prior_encoder.pool.__class__.__name__ == "AttentionPooling"
-    assert recognition_encoder.pool.__class__.__name__ == "AttentionPooling"
-
-
 def test_flower_parameter_roundtrip_sets_agent_weights():
     factory = OpenSetQChainModelFactory(_model_cfg())
     agent = Agent(factory, _training_cfg(), torch.device("cpu"))
