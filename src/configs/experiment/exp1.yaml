@@ -22,7 +22,7 @@ experiment:
     - federated_history.csv
     - communication_metrics.csv
 federated:
-  num_clients: 3
+  num_clients: 10
   num_rounds: 100
 model:
   num_actions: 5
