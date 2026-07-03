@@ -65,7 +65,7 @@ federated:
     drift_min_multiplier: 0.95
     server_optimizer: none
     aggregation_lr: 1.0
-    local_proximal_mu: 0.001
+    local_proximal_mu: 0.000
     validation_reward_blend: 0.90
     validation_reward_ema_decay: 0.80
     support_reward_weights:

@@ -9,3 +9,4 @@ invoke_hydra_run() {
 invoke_hydra_run "experiment=exp1" "+method=fmrl_ava" "seed=42"
 invoke_hydra_run "experiment=exp1" "+method=fedavg" "seed=42"
 invoke_hydra_run "experiment=exp1" "+method=fedprox" "seed=42"
+poetry run python run.py "experiment=exp1" "+method=fmrl_ava_glow" "seed=42"
