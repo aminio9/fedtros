@@ -6,6 +6,11 @@ import gymnasium as gym
 import numpy as np
 import torch
 
+<<<<<<< HEAD
+=======
+from src.utils.imbalance import class_weights_from_config, sample_weights_from_class_weights
+
+>>>>>>> ea28efe (Initial commit with updated source code)
 logger = logging.getLogger("Environment")
 
 
@@ -42,6 +47,14 @@ class BlockchainIntrusionEnv(gym.Env):
         num_clients: int | None = None,
         # NON-IID FIX: Accept global number of actions
         global_num_actions: int | None = None,
+<<<<<<< HEAD
+=======
+        reward_correct: float = 1.0,
+        reward_incorrect: float = -1.0,
+        class_balanced_rewards: bool = False,
+        class_balance_power: float = 1.0,
+        imbalance_cfg: object | None = None,
+>>>>>>> ea28efe (Initial commit with updated source code)
     ) -> None:
         super().__init__()
 
@@ -107,6 +120,21 @@ class BlockchainIntrusionEnv(gym.Env):
             # non-IID shards.
             self.num_actions_nt = int(self.all_labels_a_t.max().item()) + 1
 
+<<<<<<< HEAD
+=======
+        self.reward_correct = float(reward_correct)
+        self.reward_incorrect = float(reward_incorrect)
+        self.class_balanced_rewards = bool(class_balanced_rewards)
+        self.class_balance_power = float(class_balance_power)
+        self._imbalance_cfg = imbalance_cfg
+        self._weight_negative_reward = bool(
+            getattr(imbalance_cfg, "weight_negative_reward", False)
+            if imbalance_cfg is not None
+            else False
+        )
+        self._class_reward_weights = self._build_class_reward_weights()
+
+>>>>>>> ea28efe (Initial commit with updated source code)
         # ------------------------------------------------------------------
         # Determine which indices belong to THIS env/agent
         # ------------------------------------------------------------------
@@ -145,6 +173,11 @@ class BlockchainIntrusionEnv(gym.Env):
         if self._available_indices.size == 0:
             raise ValueError("No samples available for this environment/agent.")
 
+<<<<<<< HEAD
+=======
+        self._sampling_probabilities = self._build_sampling_probabilities()
+
+>>>>>>> ea28efe (Initial commit with updated source code)
         # RNG for episode sampling (decoupled from Gym's own RNG)
         self._rng = np.random.default_rng()
 
@@ -208,7 +241,18 @@ class BlockchainIntrusionEnv(gym.Env):
         """
         # 1. Reward from current state
         true_label_a_t = self._get_current_true_label()
+<<<<<<< HEAD
         reward_r: float = 1.0 if int(action_a_t) == int(true_label_a_t) else -1.0
+=======
+        class_weight = float(self._class_reward_weights[int(true_label_a_t)].item())
+        if int(action_a_t) == int(true_label_a_t):
+            reward_r = self.reward_correct * class_weight
+        else:
+            if self._weight_negative_reward:
+                reward_r = self.reward_incorrect * class_weight
+            else:
+                reward_r = self.reward_incorrect
+>>>>>>> ea28efe (Initial commit with updated source code)
 
         # 2. Info about *current* transition
         current_index = int(self.episode_indices[self.current_step])
@@ -250,8 +294,75 @@ class BlockchainIntrusionEnv(gym.Env):
             self._available_indices,
             size=self.steps_per_episode,
             replace=True,
+<<<<<<< HEAD
         )
 
+=======
+            p=self._sampling_probabilities,
+        )
+
+    def _build_class_reward_weights(self) -> torch.Tensor:
+        """Return inverse-frequency weights for correct rewards when enabled."""
+        weights = torch.ones(self.num_actions_nt, dtype=torch.float32, device=self._data_device)
+        if self._imbalance_cfg is not None and bool(getattr(self._imbalance_cfg, "enabled", False)):
+            cfg_weights = class_weights_from_config(
+                self.all_labels_a_t.detach().cpu(),
+                num_classes=self.num_actions_nt,
+                cfg=self._imbalance_cfg,
+            )
+            if bool(getattr(self._imbalance_cfg, "weighted_reward", False)):
+                weights = cfg_weights.to(device=self._data_device)
+            if bool(getattr(self._imbalance_cfg, "log_weights", True)):
+                self.logger.info(
+                    "Class imbalance config | weights=%s | weighted_reward=%s | "
+                    "weight_negative=%s",
+                    [round(float(v), 6) for v in cfg_weights.tolist()],
+                    bool(getattr(self._imbalance_cfg, "weighted_reward", False)),
+                    self._weight_negative_reward,
+                )
+            return weights
+        if not self.class_balanced_rewards:
+            return weights
+
+        labels = self.all_labels_a_t.detach().long()
+        valid = (labels >= 0) & (labels < self.num_actions_nt)
+        if not bool(valid.any()):
+            return weights
+
+        counts = torch.bincount(labels[valid].cpu(), minlength=self.num_actions_nt).float()
+        present = counts > 0
+        if not bool(present.any()):
+            return weights
+
+        mean_count = counts[present].mean()
+        balanced = torch.ones_like(counts)
+        balanced[present] = (mean_count / counts[present]).pow(self.class_balance_power)
+        balanced[present] = balanced[present] / balanced[present].mean().clamp_min(1e-12)
+        return balanced.to(device=self._data_device)
+
+    def _build_sampling_probabilities(self) -> np.ndarray | None:
+        if self._imbalance_cfg is None or not bool(getattr(self._imbalance_cfg, "enabled", False)):
+            return None
+        if not bool(getattr(self._imbalance_cfg, "class_balanced_sampling", False)):
+            return None
+        class_weights = class_weights_from_config(
+            self.all_labels_a_t.detach().cpu(),
+            num_classes=self.num_actions_nt,
+            cfg=self._imbalance_cfg,
+        )
+        sample_weights = sample_weights_from_class_weights(
+            self.all_labels_a_t.detach().cpu(),
+            class_weights,
+        )
+        available_weights = sample_weights[self._available_indices].numpy().astype(np.float64)
+        if not np.isfinite(available_weights).all() or available_weights.sum() <= 0.0:
+            self.logger.warning("Invalid class-balanced sampling weights; using uniform sampling.")
+            return None
+        probabilities = available_weights / available_weights.sum()
+        self.logger.info("Class-balanced environment sampling enabled.")
+        return probabilities
+
+>>>>>>> ea28efe (Initial commit with updated source code)
     def _get_current_state(self) -> np.ndarray:
         """Return feature vector for the current step as a NumPy array."""
         idx = int(self.episode_indices[self.current_step])

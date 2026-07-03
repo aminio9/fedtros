@@ -1,0 +1,9 @@
+# @package _global_
+experiment:
+  method: No_Generator_Ablation
+training:
+  generator:
+    enabled: false
+open_set:
+  evt:
+    enabled: true

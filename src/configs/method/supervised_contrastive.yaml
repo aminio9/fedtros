@@ -1,0 +1,8 @@
+# @package _global_
+experiment:
+  method: SupCon
+training:
+  auxiliary_losses:
+    supervised_contrastive_lambda: 0.05
+    supervised_contrastive_temperature: 0.1
+    center_loss_lambda: 0.0

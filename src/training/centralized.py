@@ -14,10 +14,18 @@ from src.checkpointing.checkpoints import (
     load_agent_checkpoint,
     metric_improved,
     save_agent_checkpoint,
+<<<<<<< HEAD
 )
 from src.data.io import load_tensor_dataset
 from src.evaluation.closed_set import evaluate_closed_set, load_class_names
 from src.models.models import OpenSetQChainModelFactory
+=======
+    select_checkpoint_metric,
+)
+from src.data.io import load_tensor_dataset
+from src.evaluation.closed_set import evaluate_closed_set, load_class_names
+from src.models.cvae_dqn import OpenSetQChainModelFactory
+>>>>>>> ea28efe (Initial commit with updated source code)
 from src.rl.environment import BlockchainIntrusionEnv
 from src.rl.local_training import run_local_training_round
 from src.rl.replay_buffer import ExperienceReplayBuffer
@@ -53,6 +61,14 @@ def run_training(
         device=device,
         move_data_to_device=bool(cfg.device.move_data_to_device),
         global_num_actions=int(cfg.model.num_actions),
+<<<<<<< HEAD
+=======
+        reward_correct=float(cfg.training.reward.correct),
+        reward_incorrect=float(cfg.training.reward.incorrect),
+        class_balanced_rewards=bool(cfg.training.reward.class_balanced),
+        class_balance_power=float(cfg.training.reward.class_balance_power),
+        imbalance_cfg=getattr(cfg.training, "imbalance", None),
+>>>>>>> ea28efe (Initial commit with updated source code)
     )
     agent = Agent(OpenSetQChainModelFactory(cfg.model), cfg.training, device=device)
     if cfg.training.resume_from is not None:
@@ -101,11 +117,38 @@ def run_training(
             "epoch": epoch,
             "global_step": total_steps,
             "train/loss": float(train_metrics.get("avg_td_loss", 0.0)),
+<<<<<<< HEAD
             "train/accuracy": float(train_metrics.get("policy_accuracy", 0.0)),
             "train/reward": float(train_metrics.get("avg_reward_per_episode", 0.0)),
             "train/double_q_loss": float(train_metrics.get("avg_td_loss", 0.0)),
             "train/kl_loss": float(train_metrics.get("avg_kl_loss", 0.0)),
             "train/prox_loss": float(train_metrics.get("avg_prox_loss", 0.0)),
+=======
+            "train/total_loss": float(train_metrics.get("avg_total_loss", 0.0)),
+            "train/accuracy": float(train_metrics.get("policy_accuracy", 0.0)),
+            "train/reward": float(train_metrics.get("avg_reward_per_episode", 0.0)),
+            "train/reward_mean": float(train_metrics.get("reward_mean", 0.0)),
+            "train/reward_std": float(train_metrics.get("reward_std", 0.0)),
+            "train/double_q_loss": float(train_metrics.get("avg_td_loss", 0.0)),
+            "train/kl_loss": float(train_metrics.get("avg_kl_loss", 0.0)),
+            "train/classification_loss": float(
+                train_metrics.get("avg_classification_loss", 0.0)
+            ),
+            "train/prox_loss": float(train_metrics.get("avg_prox_loss", 0.0)),
+            "train/gradient_norm_prior": float(
+                train_metrics.get("gradient_norm_prior", 0.0)
+            ),
+            "train/gradient_norm_q": float(train_metrics.get("gradient_norm_q", 0.0)),
+            "train/learning_rate_prior": float(
+                train_metrics.get("learning_rate_prior", 0.0)
+            ),
+            "train/learning_rate_q_rl": float(
+                train_metrics.get("learning_rate_q_rl", 0.0)
+            ),
+            "train/q_value_mean": float(train_metrics.get("q_value_mean", 0.0)),
+            "train/q_value_std": float(train_metrics.get("q_value_std", 0.0)),
+            "train/kl_std": float(train_metrics.get("kl_std", 0.0)),
+>>>>>>> ea28efe (Initial commit with updated source code)
             "train/epsilon": float(train_metrics.get("epsilon", 0.0)),
         }
 
@@ -142,10 +185,25 @@ def run_training(
                 resolve_path(project_root, cfg.checkpointing.latest_checkpoint_path),
                 state,
             )
+<<<<<<< HEAD
 
         monitor_value = metrics.get(str(cfg.checkpointing.monitor_metric))
         if monitor_value is None and str(cfg.checkpointing.monitor_metric) == "val/accuracy":
             monitor_value = metrics.get("train/accuracy")
+=======
+            save_agent_checkpoint(
+                agent,
+                cfg,
+                resolve_path(project_root, cfg.checkpointing.last_model_path),
+                state,
+            )
+
+        selected_metric = select_checkpoint_metric(
+            metrics,
+            monitor_metric=str(cfg.checkpointing.monitor_metric),
+        )
+        monitor_value = selected_metric[1] if selected_metric is not None else None
+>>>>>>> ea28efe (Initial commit with updated source code)
         if metric_improved(
             float(monitor_value) if monitor_value is not None else None,
             best_metric,
@@ -155,11 +213,21 @@ def run_training(
             best_metrics = dict(metrics)
             if bool(cfg.checkpointing.save_best):
                 state.best_metric = best_metric
+<<<<<<< HEAD
+=======
+                metric_name = selected_metric[0] if selected_metric is not None else None
+>>>>>>> ea28efe (Initial commit with updated source code)
                 save_agent_checkpoint(
                     agent,
                     cfg,
                     resolve_path(project_root, cfg.checkpointing.best_model_path),
                     state,
+<<<<<<< HEAD
+=======
+                    selected_metric_name=metric_name,
+                    selected_metric_value=best_metric,
+                    is_best=True,
+>>>>>>> ea28efe (Initial commit with updated source code)
                 )
 
     final_state = CheckpointState(

@@ -1,0 +1,19 @@
+name: no_rejection
+enabled: false
+evt:
+  enabled: false
+  threshold_mode: fixed
+  calibration_protocol: validation_only
+  target_known_fpr: 0.0
+  target_unknown_tpr: null
+  score_direction: higher_unknown
+  decision_threshold: 1.0
+  fixed_threshold: 1.0e12
+  unknown_label_id: -1
+  open_set_label_id: 99
+scorer:
+  name: no_rejection
+  requires_fit: false
+  score_direction: higher_unknown
+  threshold_mode: fixed
+  threshold_source: none

@@ -18,3 +18,10 @@ Run from the repository root with Bash.
 - `export_results.sh`: export suite-level CSVs and plots from completed run directories.
 
 Centralized `centralized_no_osr` and `centralized_osr` experiment runs are kept as commented reference commands and are skipped by the runnable experiment scripts.
+<<<<<<< HEAD
+=======
+
+Run `python scripts/cheap_validation.py` and `bash scripts/experiments/run_validation_tiny.sh`
+before any full experiment script. `run_full_suite.sh` and `e7_efficiency_scalability.sh`
+are intentionally expensive.
+>>>>>>> ea28efe (Initial commit with updated source code)

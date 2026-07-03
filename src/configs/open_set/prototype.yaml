@@ -1,0 +1,20 @@
+name: prototype
+enabled: true
+evt:
+  enabled: false
+  threshold_mode: validation_known_fpr
+  calibration_protocol: validation_only
+  target_known_fpr: 0.05
+  target_unknown_tpr: null
+  score_direction: higher_unknown
+  decision_threshold: 0.5
+  fixed_threshold: 0.5
+  unknown_label_id: -1
+  open_set_label_id: 99
+scorer:
+  name: prototype_distance
+  requires_fit: true
+  score_direction: higher_unknown
+  threshold_mode: validation_known_fpr
+  threshold_source: validation
+  feature_source: prior_embedding

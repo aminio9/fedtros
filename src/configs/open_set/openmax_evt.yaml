@@ -1,0 +1,11 @@
+defaults:
+  - evt
+  - _self_
+
+name: openmax_evt
+scorer:
+  name: openmax_evt_reconstruction
+  requires_fit: true
+  score_direction: higher_unknown
+  threshold_mode: ${open_set.evt.threshold_mode}
+  threshold_source: validation

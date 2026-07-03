@@ -3,6 +3,12 @@ set -euo pipefail
 
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
+<<<<<<< HEAD
+=======
+echo "WARNING: run_full_suite.sh launches E1-E8 sequentially and is expensive."
+echo "Run scripts/experiments/run_validation_tiny.sh and python scripts/cheap_validation.py first."
+
+>>>>>>> ea28efe (Initial commit with updated source code)
 bash "$script_dir/e1_closed_set.sh"
 bash "$script_dir/e2_open_set.sh"
 bash "$script_dir/e3_federated_noniid.sh"

@@ -1,0 +1,12 @@
+# @package _global_
+experiment:
+  method: Class_Balanced_Sampling
+training:
+  imbalance:
+    enabled: true
+    weight_mode: inverse_frequency
+    min_weight: 0.2
+    max_weight: 5.0
+    normalize: mean
+    weighted_reward: false
+    class_balanced_sampling: true

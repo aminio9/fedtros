@@ -10,6 +10,35 @@ def _config_dir() -> str:
     return str((Path(__file__).resolve().parents[1] / "src" / "configs").resolve())
 
 
+<<<<<<< HEAD
+=======
+@pytest.mark.parametrize(
+    "override",
+    [
+        "model=openset_qchain",
+        "optimizer=adam",
+        "optimizer=adamw",
+        "runtime=full",
+    ],
+)
+def test_first_class_hydra_configs_compose_and_validate(override):
+    overrides = [
+        "experiment=validation",
+        "tracking.run_id=test_first_class_configs",
+        override,
+    ]
+    if not override.startswith("runtime="):
+        overrides.insert(1, "runtime=tiny")
+    with initialize_config_dir(version_base=None, config_dir=_config_dir()):
+        cfg = compose(
+            config_name="config_fl",
+            overrides=overrides,
+        )
+
+    validate_config(cfg)
+
+
+>>>>>>> ea28efe (Initial commit with updated source code)
 def test_hydra_config_loads_from_src_configs():
     with initialize_config_dir(version_base=None, config_dir=_config_dir()):
         cfg = compose(config_name="config_fl")
@@ -53,7 +82,11 @@ def test_experiment_config_uses_run_local_processed_dir():
     assert cfg.dataset.preprocessing.iid is True
     assert cfg.dataset.preprocessing.closed_set_test_size == 0.1
     assert cfg.dataset.preprocessing.validation_split == 0.0
+<<<<<<< HEAD
     assert cfg.federated.num_clients == 3
+=======
+    assert cfg.federated.num_clients == 10
+>>>>>>> ea28efe (Initial commit with updated source code)
     assert cfg.evaluation.mode == "closed_set"
     assert cfg.training.generator.enabled is False
 
@@ -121,3 +154,55 @@ def test_validation_rejects_cpu_fallback():
 
     with pytest.raises(ValueError, match=r"Automatic CPU fallback is disabled"):
         validate_config(cfg)
+<<<<<<< HEAD
+=======
+
+
+def test_validation_rejects_non_openset_qchain_model_name():
+    with initialize_config_dir(version_base=None, config_dir=_config_dir()):
+        cfg = compose(
+            config_name="config_fl",
+            overrides=["experiment=validation", "runtime=tiny", "model.name=tabular_transformer"],
+        )
+
+    with pytest.raises(ValueError, match="Unsupported model.name"):
+        validate_config(cfg)
+
+
+def test_validation_rejects_utility_open_set_baseline_as_run_py_pipeline():
+    with initialize_config_dir(version_base=None, config_dir=_config_dir()):
+        cfg = compose(
+            config_name="config_fl",
+            overrides=["experiment=validation", "runtime=tiny", "+method=msp_baseline"],
+        )
+
+    with pytest.raises(ValueError, match="standalone scorer utility"):
+        validate_config(cfg)
+
+
+def test_validation_rejects_openmax_scaffold_as_run_py_pipeline():
+    with initialize_config_dir(version_base=None, config_dir=_config_dir()):
+        cfg = compose(
+            config_name="config_fl",
+            overrides=["experiment=validation", "runtime=tiny", "open_set=openmax_evt"],
+        )
+
+    with pytest.raises(ValueError, match="not a real OpenMax"):
+        validate_config(cfg)
+
+
+def test_validation_rejects_fedmade_outside_federated_pipeline():
+    with initialize_config_dir(version_base=None, config_dir=_config_dir()):
+        cfg = compose(
+            config_name="config_fl",
+            overrides=[
+                "experiment=validation",
+                "runtime=tiny",
+                "+method=fedmade",
+                "experiment.pipeline=centralized",
+            ],
+        )
+
+    with pytest.raises(ValueError, match="requires a federated pipeline"):
+        validate_config(cfg)
+>>>>>>> ea28efe (Initial commit with updated source code)

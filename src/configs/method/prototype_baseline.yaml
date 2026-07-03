@@ -1,0 +1,15 @@
+# @package _global_
+experiment:
+  method: Prototype_Baseline
+open_set:
+  name: prototype
+  enabled: true
+  evt:
+    enabled: false
+  scorer:
+    name: prototype_distance
+    requires_fit: true
+    score_direction: higher_unknown
+    threshold_mode: validation_known_fpr
+    threshold_source: validation
+    feature_source: prior_embedding

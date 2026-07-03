@@ -29,7 +29,11 @@ rows.
 
 Cross-dataset generalization plots should use the E5 external-validation runs on B-TAT, ToN-IoT, and CIC-IDS2017.
 
+<<<<<<< HEAD
 Open-set plots 9 and 10 now read from the dedicated files written by `src/evaluation/openset_eval.py`:
+=======
+Open-set plots 9 and 10 read from the dedicated files written by `src/evaluation/open_set.py`:
+>>>>>>> ea28efe (Initial commit with updated source code)
 
 - `before_osr_confusion_matrix.csv`
 - `after_osr_confusion_matrix.csv`

@@ -1,6 +1,10 @@
 # cf_marlos Experimental Plan for Closed-Set, Open-Set, and Non-IID Federated Intrusion Detection
 
+<<<<<<< HEAD
 This plan defines the final evaluation protocol for the unified intrusion-detection system implemented in the `cf_marlos` repository. The system combines CVAE-style latent modeling, Double DQN training, EVT-based open-set rejection, and horizontal federated learning with FedAvg, FedProx, and FMRL-AVA. B-NAT is the primary dataset for all core experiments, with frozen preprocessing and seed-controlled client partitions. Closed-set B-NAT experiments use the full source label set with no unknown labels held out; B-NAT open-set experiments keep `FoT` as the held-out unknown attack. A separate multi-dataset open-set non-IID validation block uses the external datasets B-TAT, ToN-IoT, and CIC-IDS2017 only; B-NAT is not repeated in that external-validation experiment.
+=======
+This plan defines the final evaluation protocol for the unified intrusion-detection system implemented in the `cf_marlos` repository. The system combines CVAE-style latent modeling, contextual-bandit CVAE-DQN training, EVT-based open-set rejection, and horizontal federated learning with FedAvg, FedProx, and FMRL-AVA. B-NAT is the primary dataset for all core experiments, with frozen preprocessing and seed-controlled client partitions. Closed-set B-NAT experiments use the full source label set with no unknown labels held out; B-NAT open-set experiments keep `FoT` as the held-out unknown attack. A separate multi-dataset open-set non-IID validation block uses the external datasets B-TAT, ToN-IoT, and CIC-IDS2017 only; B-NAT is not repeated in that external-validation experiment.
+>>>>>>> ea28efe (Initial commit with updated source code)
 
 ## 1. Scope and Research Questions
 
@@ -36,13 +40,21 @@ The agent uses:
 
 - epsilon-greedy exploration
 - experience replay
+<<<<<<< HEAD
 - Double DQN target selection
+=======
+- retained Double-DQN target selection with default gamma=0.0
+>>>>>>> ea28efe (Initial commit with updated source code)
 - soft target-network updates
 
 The local training objective combines:
 
 - KL divergence for the latent prior
+<<<<<<< HEAD
 - TD loss for the Q-network
+=======
+- full-action bandit Q loss plus low-weight TD loss for the Q-network
+>>>>>>> ea28efe (Initial commit with updated source code)
 - reconstruction loss for the generator
 
 ### 2.2 Open-set decision rule
@@ -389,7 +401,11 @@ flowchart TD
     B --> C[Known train, validation, closed-set test]
     B --> D[Open-set test with held-out unknowns]
     C --> E[Dirichlet client partitioning]
+<<<<<<< HEAD
     E --> F[Local CVAE-Double DQN training]
+=======
+    E --> F[Local CVAE-contextual-bandit CVAE-DQN training]
+>>>>>>> ea28efe (Initial commit with updated source code)
     F --> G[Generator training on correctly classified known samples]
     F --> H[Audit metrics and client summaries]
     H --> I[FMRL-AVA critic and utility scoring]

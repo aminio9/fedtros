@@ -2,7 +2,11 @@ defaults:
   - dataset: bnat
   - model: openset_qchain
   - agent: double_q
+<<<<<<< HEAD
   - optimizer: adam
+=======
+  - optimizer: adamw
+>>>>>>> ea28efe (Initial commit with updated source code)
   - scheduler: none
   - training: default
   - evaluation: default

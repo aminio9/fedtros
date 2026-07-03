@@ -1,0 +1,8 @@
+# @package _global_
+experiment:
+  method: EVT_Baseline
+open_set:
+  evt:
+    enabled: true
+    threshold_mode: validation_known_fpr
+    calibration_protocol: validation_only

@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 import logging
+<<<<<<< HEAD
 from dataclasses import dataclass
+=======
+import json
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from hashlib import sha256
+>>>>>>> ea28efe (Initial commit with updated source code)
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +20,21 @@ from src.agents.agent import Agent
 
 logger = logging.getLogger(__name__)
 
+<<<<<<< HEAD
+=======
+VALIDATION_PREFIXES = ("val/", "validation/")
+VALIDATION_COMPONENTS = (
+    "val/macro_f1",
+    "val/balanced_accuracy",
+    "validation/macro_f1",
+    "validation/balanced_accuracy",
+    "val/open_set/auroc",
+    "val/open_set/unknown_f1",
+    "validation/open_set/auroc",
+    "validation/open_set/unknown_f1",
+)
+
+>>>>>>> ea28efe (Initial commit with updated source code)
 
 @dataclass
 class CheckpointState:
@@ -59,15 +81,146 @@ def build_agent_checkpoint(
     return payload
 
 
+<<<<<<< HEAD
+=======
+def _config_payload(cfg: DictConfig) -> dict[str, Any]:
+    return OmegaConf.to_container(cfg, resolve=True)  # type: ignore[return-value]
+
+
+def _config_hash(cfg: DictConfig) -> str:
+    payload = json.dumps(_config_payload(cfg), sort_keys=True, default=str)
+    return sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _selected_known_labels(cfg: DictConfig) -> list[str]:
+    labels = OmegaConf.select(cfg, "dataset.preprocessing.known_labels", default=[])
+    return [str(label) for label in labels or []]
+
+
+def _selected_unknown_labels(cfg: DictConfig) -> list[str]:
+    source_labels = OmegaConf.select(cfg, "dataset.source_labels", default=[])
+    known_labels = set(_selected_known_labels(cfg))
+    return [str(label) for label in source_labels or [] if str(label) not in known_labels]
+
+
+def is_validation_metric(metric_name: str | None) -> bool:
+    if not metric_name:
+        return False
+    return str(metric_name).startswith(VALIDATION_PREFIXES)
+
+
+def select_checkpoint_metric(
+    metrics: dict[str, Any],
+    *,
+    monitor_metric: str,
+) -> tuple[str, float] | None:
+    """Select a validation-only checkpoint metric from a metric dictionary."""
+    if monitor_metric == "combined_validation_score":
+        values = []
+        for key in VALIDATION_COMPONENTS:
+            if key in metrics:
+                try:
+                    values.append(float(metrics[key]))
+                except (TypeError, ValueError):
+                    continue
+        if values:
+            return monitor_metric, float(np.mean(values))
+        return None
+
+    if not is_validation_metric(monitor_metric):
+        return None
+    value = metrics.get(monitor_metric)
+    if value is None:
+        return None
+    try:
+        return monitor_metric, float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def build_checkpoint_metadata(
+    cfg: DictConfig,
+    state: CheckpointState,
+    *,
+    checkpoint_path: str | Path,
+    selected_metric_name: str | None = None,
+    selected_metric_value: float | None = None,
+) -> dict[str, Any]:
+    return {
+        "checkpoint_path": str(checkpoint_path),
+        "epoch": int(state.epoch),
+        "round": int(state.epoch),
+        "global_step": int(state.global_step),
+        "selected_metric_name": selected_metric_name,
+        "selected_metric_value": selected_metric_value,
+        "config_hash": _config_hash(cfg),
+        "seed": OmegaConf.select(cfg, "seed", default=None),
+        "known_labels": _selected_known_labels(cfg),
+        "unknown_labels": _selected_unknown_labels(cfg),
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def write_checkpoint_metadata(
+    cfg: DictConfig,
+    path: str | Path,
+    state: CheckpointState,
+    *,
+    selected_metric_name: str | None = None,
+    selected_metric_value: float | None = None,
+    is_best: bool = False,
+) -> None:
+    checkpoint_path = Path(path)
+    metadata = build_checkpoint_metadata(
+        cfg,
+        state,
+        checkpoint_path=checkpoint_path,
+        selected_metric_name=selected_metric_name,
+        selected_metric_value=selected_metric_value,
+    )
+    metadata_path = checkpoint_path.parent / "checkpoint_metadata.json"
+    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
+    if is_best:
+        best_payload = {
+            "selected_metric_name": selected_metric_name,
+            "selected_metric_value": selected_metric_value,
+            "metrics": state.metrics,
+            "metadata": metadata,
+        }
+        (checkpoint_path.parent / "best_metrics.json").write_text(
+            json.dumps(best_payload, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
+
+>>>>>>> ea28efe (Initial commit with updated source code)
 def save_agent_checkpoint(
     agent: Agent,
     cfg: DictConfig,
     path: str | Path,
     state: CheckpointState,
+<<<<<<< HEAD
+=======
+    *,
+    selected_metric_name: str | None = None,
+    selected_metric_value: float | None = None,
+    is_best: bool = False,
+>>>>>>> ea28efe (Initial commit with updated source code)
 ) -> Path:
     checkpoint_path = Path(path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(build_agent_checkpoint(agent, cfg, state), checkpoint_path)
+<<<<<<< HEAD
+=======
+    write_checkpoint_metadata(
+        cfg,
+        checkpoint_path,
+        state,
+        selected_metric_name=selected_metric_name,
+        selected_metric_value=selected_metric_value,
+        is_best=is_best,
+    )
+>>>>>>> ea28efe (Initial commit with updated source code)
     logger.info("Saved checkpoint to %s", checkpoint_path)
     return checkpoint_path
 

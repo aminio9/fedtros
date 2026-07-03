@@ -1,0 +1,6 @@
+# @package _global_
+experiment:
+  method: No_EVT_Ablation
+open_set:
+  evt:
+    enabled: false

@@ -6,7 +6,13 @@ invoke_hydra_run() {
 }
 
 for alpha in "0.1" "0.5" "1.0" "10.0"; do
+<<<<<<< HEAD
   invoke_hydra_run "experiment=exp3" "+method=fmrl_ava" "seed=42" "dataset.preprocessing.alpha=$alpha"
+=======
+  invoke_hydra_run "experiment=exp3" "+method=fmrl_ava_glow" "seed=42" "dataset.preprocessing.alpha=$alpha"
+  invoke_hydra_run "experiment=exp3" "+method=fmrl_ava" "seed=42" "dataset.preprocessing.alpha=$alpha"
+  invoke_hydra_run "experiment=exp3" "+method=fedmade" "seed=42" "dataset.preprocessing.alpha=$alpha"
+>>>>>>> ea28efe (Initial commit with updated source code)
   invoke_hydra_run "experiment=exp3" "+method=fedavg" "seed=42" "dataset.preprocessing.alpha=$alpha"
   invoke_hydra_run "experiment=exp3" "+method=fedprox" "seed=42" "dataset.preprocessing.alpha=$alpha"
   # invoke_hydra_run "experiment=exp3" "+method=centralized_no_osr" "seed=42" "dataset.preprocessing.alpha=$alpha" "tracking.run_id=e3_central_alpha${alpha}_seed42"

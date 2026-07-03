@@ -1,0 +1,24 @@
+# @package _global_
+experiment:
+  method: Proposed_ClassBalanced_SupCon_Center_EVT
+training:
+  imbalance:
+    enabled: true
+    weight_mode: effective_number
+    effective_number_beta: 0.999
+    min_weight: 0.2
+    max_weight: 5.0
+    normalize: mean
+    weighted_reward: true
+    weight_negative_reward: false
+    class_balanced_sampling: true
+  auxiliary_losses:
+    supervised_contrastive_lambda: 0.05
+    supervised_contrastive_temperature: 0.1
+    center_loss_lambda: 0.05
+open_set:
+  evt:
+    enabled: true
+    threshold_mode: validation_known_fpr
+    calibration_protocol: validation_only
+    target_known_fpr: 0.05

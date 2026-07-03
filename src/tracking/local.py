@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import csv
+<<<<<<< HEAD
+=======
+import hashlib
+>>>>>>> ea28efe (Initial commit with updated source code)
 import json
 import logging
 import logging.config
@@ -123,11 +127,21 @@ class LocalRunTracker:
         configure_run_logging(self.cfg, self.project_root, self.run_dir)
 
         timestamp = datetime.now(timezone.utc).isoformat()
+<<<<<<< HEAD
+=======
+        resolved_config_yaml = OmegaConf.to_yaml(self.cfg, resolve=True)
+        config_hash = hashlib.sha256(resolved_config_yaml.encode("utf-8")).hexdigest()
+>>>>>>> ea28efe (Initial commit with updated source code)
         self.metadata.update(
             {
                 "experiment_name": str(self.cfg.experiment.name),
                 "run_id": str(self.cfg.tracking.run_id),
                 "timestamp_utc": timestamp,
+<<<<<<< HEAD
+=======
+                "config_sha256": config_hash,
+                "config_sha256_short": config_hash[:12],
+>>>>>>> ea28efe (Initial commit with updated source code)
                 "seed": int(self.cfg.seed),
                 "device": str(device) if device is not None else str(self.cfg.device.prefer),
                 "script": self.script_name,
@@ -146,6 +160,22 @@ class LocalRunTracker:
                 "dataset": str(self.cfg.dataset.name),
                 "model": str(self.cfg.model.name),
                 "method": str(self.cfg.experiment.method),
+<<<<<<< HEAD
+=======
+                "known_labels": list(self.cfg.dataset.preprocessing.known_labels),
+                "unknown_label_id": int(self.cfg.dataset.preprocessing.unknown_label_id),
+                "state_dim": int(self.cfg.model.state_dim),
+                "latent_dim": int(self.cfg.model.latent_dim),
+                "num_actions": int(self.cfg.model.num_actions),
+                "optimizer": OmegaConf.to_container(self.cfg.optimizer, resolve=True),
+                "scheduler": OmegaConf.to_container(self.cfg.scheduler, resolve=True),
+                "loss_weights": OmegaConf.to_container(
+                    self.cfg.training.loss_weights,
+                    resolve=True,
+                ),
+                "reward": OmegaConf.to_container(self.cfg.training.reward, resolve=True),
+                "evt": OmegaConf.to_container(self.cfg.open_set.evt, resolve=True),
+>>>>>>> ea28efe (Initial commit with updated source code)
             }
         )
         self.save_config()

@@ -1,11 +1,19 @@
 dir: ${tracking.run_dir}
 best_model_path: ${checkpointing.dir}/best_model.pt
 latest_checkpoint_path: ${checkpointing.dir}/latest_checkpoint.pt
+<<<<<<< HEAD
+=======
+last_model_path: ${checkpointing.dir}/last_model.pt
+>>>>>>> ea28efe (Initial commit with updated source code)
 final_model_path: ${checkpointing.dir}/final_model.pt
 save_best: true
 save_latest: true
 save_final: true
+<<<<<<< HEAD
 monitor_metric: val/accuracy
+=======
+monitor_metric: val/macro_f1
+>>>>>>> ea28efe (Initial commit with updated source code)
 monitor_mode: max
 include_rng_state: true
 strict_load: true

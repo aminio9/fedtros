@@ -14,17 +14,30 @@ import torch
 import torch.nn.functional as F
 from flwr.common import Parameters, parameters_to_ndarrays
 from omegaconf import DictConfig
+<<<<<<< HEAD
 from sklearn.metrics import balanced_accuracy_score, classification_report, confusion_matrix, f1_score
+=======
+from sklearn.metrics import confusion_matrix, f1_score
+>>>>>>> ea28efe (Initial commit with updated source code)
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.agents.agent import Agent
 from src.agents.policy import EpsilonGreedyPolicy, EpsilonScheduler
+<<<<<<< HEAD
 from src.evaluation.openset_eval import (
+=======
+from src.evaluation.open_set import (
+>>>>>>> ea28efe (Initial commit with updated source code)
     calibrate_evt_thresholds,
     evaluate_open_set,
     fit_evt_models,
 )
+<<<<<<< HEAD
 from src.models.models import OpenSetQChainModelFactory
+=======
+from src.evaluation.metrics import compute_classification_metrics
+from src.models.cvae_dqn import OpenSetQChainModelFactory
+>>>>>>> ea28efe (Initial commit with updated source code)
 from src.openset.evt import save_evt_collection, save_evt_meta
 from src.rl.environment import BlockchainIntrusionEnv
 from src.rl.local_training import run_local_training_round
@@ -88,6 +101,14 @@ class FlowerClient(fl.client.NumPyClient):
             logger=self.logger,
             move_data_to_device=self._move_data_to_device,
             global_num_actions=cfg.model.num_actions,
+<<<<<<< HEAD
+=======
+            reward_correct=float(cfg.training.reward.correct),
+            reward_incorrect=float(cfg.training.reward.incorrect),
+            class_balanced_rewards=bool(cfg.training.reward.class_balanced),
+            class_balance_power=float(cfg.training.reward.class_balance_power),
+            imbalance_cfg=getattr(cfg.training, "imbalance", None),
+>>>>>>> ea28efe (Initial commit with updated source code)
         )
 
         # -----------------------------------------------------------
@@ -128,6 +149,10 @@ class FlowerClient(fl.client.NumPyClient):
         self.cached_metrics: dict[str, Any] = {}
         self.lifetime_reward = 0.0
         self.local_data_profile = self._build_local_data_profile()
+<<<<<<< HEAD
+=======
+        self._configure_local_class_support()
+>>>>>>> ea28efe (Initial commit with updated source code)
 
         # Directories
         figures_root = _resolve_project_path(cfg.paths.figures_dir)
@@ -146,11 +171,38 @@ class FlowerClient(fl.client.NumPyClient):
         self.eval_class_names: list[str] = []
         self.eval_output_dir: Path | None = self.client_figure_dir
         self.closed_set_data_path: Path | None = None
+<<<<<<< HEAD
+=======
+        self.eval_dataset_role: str = "none"
+>>>>>>> ea28efe (Initial commit with updated source code)
         self.open_set_data_path: Path | None = None
         self._init_closed_set_evaluation()
 
         self.logger.info("Client %s: Initialization complete.", cid)
 
+<<<<<<< HEAD
+=======
+    def _configure_local_class_support(self) -> None:
+        """Tell the local agent/policy which labels exist on this non-IID client."""
+        try:
+            hist = json.loads(str(self.local_data_profile.get("label_histogram", "{}")))
+        except Exception:
+            self.logger.warning("Client %s: failed to parse local label histogram.", self.cid)
+            hist = {}
+        num_actions = int(self.cfg.model.num_actions)
+        counts = [int(hist.get(str(i), 0)) for i in range(num_actions)]
+        self.agent.set_local_class_counts(counts)
+        if hasattr(self.policy, "set_allowed_actions"):
+            self.policy.set_allowed_actions([i for i, count in enumerate(counts) if count > 0])
+        self.logger.info(
+            "Client %s local class support configured | coverage=%d/%d | counts=%s",
+            self.cid,
+            sum(1 for count in counts if count > 0),
+            num_actions,
+            counts,
+        )
+
+>>>>>>> ea28efe (Initial commit with updated source code)
     def _switch_runtime_device(self, device: torch.device | str) -> None:
         target_device = torch.device(device)
         if target_device == self.device:
@@ -200,7 +252,16 @@ class FlowerClient(fl.client.NumPyClient):
         phase = config.get("phase", "standard")
         round_num = config.get("server_round", "?")
         strategy_name = str(self.cfg.strategy.name).lower()
+<<<<<<< HEAD
         proximal_mu = float(self.cfg.server.proximal_mu) if strategy_name == "fedprox" else 0.0
+=======
+        if strategy_name == "fedprox":
+            proximal_mu = float(self.cfg.server.proximal_mu)
+        elif strategy_name == "fmrl_ava":
+            proximal_mu = float(getattr(self.cfg.strategy, "local_proximal_mu", 0.0))
+        else:
+            proximal_mu = 0.0
+>>>>>>> ea28efe (Initial commit with updated source code)
 
         execution_device, switched = self._enter_execution_device()
         try:
@@ -217,6 +278,17 @@ class FlowerClient(fl.client.NumPyClient):
                 self.set_parameters(param_list)
                 num_steps_trained, metrics = self._perform_training_loop(proximal_mu=proximal_mu)
                 metrics.setdefault("total_steps", float(num_steps_trained))
+<<<<<<< HEAD
+=======
+                metrics.update(
+                    {
+                        "local_num_examples": self.local_data_profile["local_num_examples"],
+                        "class_entropy": self.local_data_profile["class_entropy"],
+                        "label_coverage": self.local_data_profile["label_coverage"],
+                        "full_label_histogram": self.local_data_profile["label_histogram"],
+                    }
+                )
+>>>>>>> ea28efe (Initial commit with updated source code)
                 updated_params = self.agent.get_federated_parameters()
                 num_examples = int(self.local_data_profile["local_num_examples"])
                 return updated_params, num_examples, metrics
@@ -234,7 +306,11 @@ class FlowerClient(fl.client.NumPyClient):
                 self.set_parameters(param_list)
 
                 # B. Train
+<<<<<<< HEAD
                 num_steps_trained, metrics = self._perform_training_loop()
+=======
+                num_steps_trained, metrics = self._perform_training_loop(proximal_mu=proximal_mu)
+>>>>>>> ea28efe (Initial commit with updated source code)
 
                 # C. Generate Audit Metadata
                 self.lifetime_reward += metrics.get("total_reward", 0.0)
@@ -381,6 +457,14 @@ class FlowerClient(fl.client.NumPyClient):
         batch = self.buffer.sample(audit_batch_size, self.device)
         states, actions, rewards, next_states, dones, true_actions = batch
 
+<<<<<<< HEAD
+=======
+        prior_was_training = self.agent.prior_net.training
+        recognition_was_training = self.agent.recognition_net.training
+        main_was_training = self.agent.value_net_main.training
+        target_was_training = self.agent.value_net_target.training
+
+>>>>>>> ea28efe (Initial commit with updated source code)
         # Prepare Networks
         self.agent.prior_net.eval()
         self.agent.recognition_net.eval()
@@ -440,11 +524,18 @@ class FlowerClient(fl.client.NumPyClient):
             # Calculate Macro F1
             batch_f1 = f1_score(y_true, y_pred, average="macro", zero_division=0.0)
 
+<<<<<<< HEAD
         # Restore Training Mode
         self.agent.prior_net.train()
         self.agent.recognition_net.train()
         self.agent.value_net_main.train()
         self.agent.value_net_target.train()
+=======
+        self.agent.prior_net.train(prior_was_training)
+        self.agent.recognition_net.train(recognition_was_training)
+        self.agent.value_net_main.train(main_was_training)
+        self.agent.value_net_target.train(target_was_training)
+>>>>>>> ea28efe (Initial commit with updated source code)
 
         return {
             "mu_vector": avg_mu_vector,
@@ -524,11 +615,20 @@ class FlowerClient(fl.client.NumPyClient):
         """Prepare dataloader and output folder for closed-set evaluation."""
         paths_cfg = self.cfg.paths
 
+<<<<<<< HEAD
+=======
+        validation_rel = getattr(getattr(self.cfg, "evaluation", None), "validation_data", None)
+        candidate_paths: list[tuple[str, Any]] = []
+        if validation_rel:
+            candidate_paths.append(("validation", validation_rel))
+
+>>>>>>> ea28efe (Initial commit with updated source code)
         test_data_key = f"test_closed_client_{self.cid}"
         shared_rel = getattr(paths_cfg, "shared_closed_set_test_data", None)
         generic_rel = getattr(paths_cfg, "closed_set_test_data", None)
         client_rel = getattr(paths_cfg, test_data_key, None)
 
+<<<<<<< HEAD
         test_data_rel = None
         for candidate in (shared_rel, generic_rel, client_rel):
             if candidate:
@@ -553,6 +653,70 @@ class FlowerClient(fl.client.NumPyClient):
             self.logger.error("Client %s: failed to load closed-set test data: %s", self.cid, exc)
             return
 
+=======
+        for candidate in (shared_rel, generic_rel, client_rel):
+            if candidate:
+                candidate_paths.append(("test", candidate))
+
+        class_names_rel = getattr(paths_cfg, "class_names", None)
+        if not (candidate_paths and class_names_rel):
+            self.logger.warning("Client %s: paths for %s missing.", self.cid, test_data_key)
+            return
+
+        class_names_path = _resolve_project_path(class_names_rel)
+        data_device = self.device if self._move_data_to_device else torch.device("cpu")
+        selected: tuple[str, Path, torch.Tensor, torch.Tensor] | None = None
+
+        for eval_role, eval_data_rel in candidate_paths:
+            eval_data_path = _resolve_project_path(eval_data_rel)
+            if not eval_data_path.exists():
+                continue
+            try:
+                data = torch.load(eval_data_path, map_location="cpu", weights_only=True)
+                features = data["features"].to(device=data_device).float()
+                labels = data["labels"].to(device=data_device).long()
+            except Exception as exc:
+                self.logger.error(
+                    "Client %s: failed to load closed-set %s data from %s: %s",
+                    self.cid,
+                    eval_role,
+                    eval_data_path,
+                    exc,
+                )
+                continue
+
+            num_samples = int(labels.numel())
+            if int(features.shape[0]) != num_samples:
+                self.logger.warning(
+                    "Client %s: closed-set %s data %s has mismatched features/labels "
+                    "(features=%d, labels=%d); trying next candidate.",
+                    self.cid,
+                    eval_role,
+                    eval_data_path.name,
+                    int(features.shape[0]),
+                    num_samples,
+                )
+                continue
+            if num_samples == 0:
+                self.logger.warning(
+                    "Client %s: closed-set %s data %s has zero samples; trying next candidate.",
+                    self.cid,
+                    eval_role,
+                    eval_data_path.name,
+                )
+                continue
+
+            selected = (eval_role, eval_data_path, features, labels)
+            break
+
+        if selected is None:
+            self.logger.warning("Client %s: no non-empty closed-set eval data found.", self.cid)
+            return
+
+        eval_role, eval_data_path, features, labels = selected
+        self.closed_set_data_path = eval_data_path
+        self.eval_dataset_role = eval_role
+>>>>>>> ea28efe (Initial commit with updated source code)
         dataset = TensorDataset(features, labels)
         self.eval_loader = DataLoader(
             dataset, batch_size=self.cfg.training.batch_size, shuffle=False
@@ -561,14 +725,25 @@ class FlowerClient(fl.client.NumPyClient):
             class_names_path, int(self.cfg.model.num_actions)
         )
         self.logger.info(
+<<<<<<< HEAD
             "Client %s: Closed-set eval data loaded (%s) | samples=%d",
             self.cid,
             test_data_path.name,
+=======
+            "Client %s: Closed-set eval data loaded (%s, role=%s) | samples=%d",
+            self.cid,
+            eval_data_path.name,
+            eval_role,
+>>>>>>> ea28efe (Initial commit with updated source code)
             len(dataset),
         )
 
         self.eval_enabled = True
+<<<<<<< HEAD
         self.logger.info("Client %s: Closed-set eval enabled using %s", self.cid, test_data_path.name)
+=======
+        self.logger.info("Client %s: Closed-set eval enabled using %s", self.cid, eval_data_path.name)
+>>>>>>> ea28efe (Initial commit with updated source code)
 
     def _load_class_names(self, path: Path, num_actions: int) -> list[str]:
         if path.exists():
@@ -663,11 +838,25 @@ class FlowerClient(fl.client.NumPyClient):
     ) -> tuple[float, int, dict[str, float]]:
         loss, y_true, y_pred = self._run_closed_set_inference()
         num_examples = int(y_true.size)
+<<<<<<< HEAD
         accuracy = float((y_true == y_pred).mean()) if num_examples else 0.0
         f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
         balanced_accuracy = (
             float(balanced_accuracy_score(y_true, y_pred)) if num_examples else 0.0
         )
+=======
+        labels = list(range(len(self.eval_class_names)))
+        class_names = {idx: name for idx, name in enumerate(self.eval_class_names)}
+        metric_bundle = compute_classification_metrics(
+            y_true,
+            y_pred,
+            label_ids=labels,
+            class_names=class_names,
+        )
+        accuracy = float(metric_bundle["accuracy"])
+        f1 = float(metric_bundle["macro_f1"])
+        balanced_accuracy = float(metric_bundle["balanced_accuracy"])
+>>>>>>> ea28efe (Initial commit with updated source code)
 
         if num_examples == 0:
             return loss, 0, {
@@ -677,6 +866,7 @@ class FlowerClient(fl.client.NumPyClient):
                 "num_examples": 0,
             }
 
+<<<<<<< HEAD
         labels = list(range(len(self.eval_class_names)))
         report = classification_report(
             y_true,
@@ -686,11 +876,23 @@ class FlowerClient(fl.client.NumPyClient):
             digits=4,
             zero_division=0,
         )
+=======
+        per_class_recall = {
+            str(label): value
+            for label, value in metric_bundle["per_class_recall_by_id"].items()
+        }
+        per_class_f1 = {
+            str(label): value
+            for label, value in metric_bundle["per_class_f1_by_id"].items()
+        }
+        report = str(metric_bundle["classification_report_text"])
+>>>>>>> ea28efe (Initial commit with updated source code)
         self._save_client_report(round_index, report, prefix)
         self._plot_client_confusion_matrix(round_index, y_true, y_pred, prefix)
 
         self.logger.info(f"\n[Client {self.cid} | {prefix}] Closed-Set Report:\n{report}")
 
+<<<<<<< HEAD
         return (
             loss,
             num_examples,
@@ -701,6 +903,90 @@ class FlowerClient(fl.client.NumPyClient):
                 "num_examples": num_examples,
             },
         )
+=======
+        metrics = {
+            "accuracy": accuracy,
+            "balanced_accuracy": balanced_accuracy,
+            "f1_macro": f1,
+            "per_class_recall": json.dumps(per_class_recall, sort_keys=True),
+            "per_class_f1": json.dumps(per_class_f1, sort_keys=True),
+            "num_examples": num_examples,
+            "eval_dataset_role": self.eval_dataset_role,
+        }
+        if self.eval_dataset_role == "validation":
+            metrics.update(
+                {
+                    "val/accuracy": accuracy,
+                    "val/balanced_accuracy": balanced_accuracy,
+                    "val/macro_f1": f1,
+                    "val/num_examples": num_examples,
+                }
+            )
+
+        return loss, num_examples, metrics
+
+    def _load_evt_calibration_data(
+        self,
+        fallback_features: torch.Tensor,
+        fallback_labels: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, str]:
+        """Prefer the validation tensor for EVT calibration during FL evaluation."""
+        validation_rel = getattr(getattr(self.cfg, "evaluation", None), "validation_data", None)
+        unknown_label_id = int(getattr(self.cfg.evt, "unknown_label_id", -1))
+        calibration_protocol = str(
+            getattr(self.cfg.evt, "calibration_protocol", "validation_only")
+        ).lower()
+        if validation_rel:
+            validation_path = _resolve_project_path(validation_rel)
+            if validation_path.exists():
+                try:
+                    data = torch.load(validation_path, map_location="cpu", weights_only=True)
+                    features = data["features"].float()
+                    labels = data["labels"].long()
+                    known_mask = labels != unknown_label_id
+                    if not bool(known_mask.all()):
+                        dropped = int((~known_mask).sum().item())
+                        self.logger.warning(
+                            "Client %s: validation EVT calibration contained %d unknown labels; "
+                            "dropping them.",
+                            self.cid,
+                            dropped,
+                        )
+                        features = features[known_mask]
+                        labels = labels[known_mask]
+                    if labels.numel() > 0:
+                        self.logger.info(
+                            "Client %s: using validation tensor for EVT calibration "
+                            "(%s, samples=%d).",
+                            self.cid,
+                            validation_path.name,
+                            int(labels.numel()),
+                        )
+                        return features, labels, str(validation_path)
+                    self.logger.warning(
+                        "Client %s: validation EVT calibration tensor is empty after filtering.",
+                        self.cid,
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "Client %s: failed to load validation EVT calibration tensor %s.",
+                        self.cid,
+                        validation_path,
+                    )
+
+        if calibration_protocol == "validation_only":
+            raise FileNotFoundError(
+                "EVT calibration_protocol=validation_only requires an existing validation tensor "
+                "at evaluation.validation_data."
+            )
+
+        self.logger.warning(
+            "Client %s: falling back to local training shard for EVT calibration; "
+            "round-level open-set metrics are not validation-protocol metrics.",
+            self.cid,
+        )
+        return fallback_features.float(), fallback_labels.long(), "local_train_fallback"
+>>>>>>> ea28efe (Initial commit with updated source code)
 
     def _fit_evt_and_run_openset_eval(
         self,
@@ -728,9 +1014,25 @@ class FlowerClient(fl.client.NumPyClient):
             return {}
 
         try:
+<<<<<<< HEAD
             evt_models = fit_evt_models(
                 features=features.float(),
                 labels=labels.long(),
+=======
+            (
+                calibration_features,
+                calibration_labels,
+                calibration_source,
+            ) = self._load_evt_calibration_data(features, labels)
+        except Exception:
+            self.logger.exception("Client %s: EVT calibration data loading failed.", self.cid)
+            return {}
+
+        try:
+            evt_models = fit_evt_models(
+                features=calibration_features.float(),
+                labels=calibration_labels.long(),
+>>>>>>> ea28efe (Initial commit with updated source code)
                 batch_size=int(self.cfg.training.batch_size),
                 evt_cfg=evt_cfg,
                 prior_net=self.agent.prior_net,
@@ -749,8 +1051,13 @@ class FlowerClient(fl.client.NumPyClient):
 
         try:
             meta = calibrate_evt_thresholds(
+<<<<<<< HEAD
                 features=features.float(),
                 labels=labels.long(),
+=======
+                features=calibration_features.float(),
+                labels=calibration_labels.long(),
+>>>>>>> ea28efe (Initial commit with updated source code)
                 batch_size=int(self.cfg.training.batch_size),
                 evt_models=evt_models,
                 evt_cfg=evt_cfg,
@@ -789,7 +1096,12 @@ class FlowerClient(fl.client.NumPyClient):
                 .long()
             )
             openset_examples = int(open_labels.numel())
+<<<<<<< HEAD
             num_unknown = int((open_labels == -1).sum().item())
+=======
+            unknown_label_id = int(getattr(evt_cfg, "unknown_label_id", -1))
+            num_unknown = int((open_labels == unknown_label_id).sum().item())
+>>>>>>> ea28efe (Initial commit with updated source code)
             self.logger.info(
                 "Client %s: Open-set eval data loaded (%s) | total=%d | unknown=%d",
                 self.cid,
@@ -821,6 +1133,10 @@ class FlowerClient(fl.client.NumPyClient):
         metrics["openset_examples"] = openset_examples
         metrics["openset_unknown"] = num_unknown
         metrics["open_set_dataset"] = open_set_path.name
+<<<<<<< HEAD
+=======
+        metrics["evt_calibration_source"] = calibration_source
+>>>>>>> ea28efe (Initial commit with updated source code)
         self.logger.info(
             "[Client %s | %s] Open-Set AUROC: %.4f",
             self.cid,

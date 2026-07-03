@@ -1,4 +1,5 @@
 name: openset_qchain
+<<<<<<< HEAD
 state_dim: 31
 latent_dim: 32
 num_actions: 4
@@ -18,3 +19,22 @@ transformer:
   dim_feedforward: 256
   dropout: 0.1
   pooling: mean
+=======
+family: cvae_dqn
+state_dim: 31
+latent_dim: 32
+num_actions: 4
+backbone:
+  hidden_dim: 256
+  depth: 3
+  ensemble_size: 4
+  dropout: 0.05
+  expansion: 2
+  q_hidden_dim: 256
+  q_depth: 2
+  q_ensemble_size: 4
+generator:
+  hidden_dim: 128
+  depth: 2
+  dropout: 0.05
+>>>>>>> ea28efe (Initial commit with updated source code)

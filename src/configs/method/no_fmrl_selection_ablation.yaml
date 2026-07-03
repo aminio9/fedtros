@@ -1,0 +1,7 @@
+# @package _global_
+experiment:
+  method: No_FMRL_Selection_Ablation
+federated:
+  strategy:
+    name: fedavg
+    aggregation_strategy: fedavg

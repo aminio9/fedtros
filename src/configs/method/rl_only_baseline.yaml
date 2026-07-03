@@ -1,0 +1,14 @@
+# @package _global_
+experiment:
+  method: RL_Only
+training:
+  loss_weights:
+    classification: 0.0
+  imbalance:
+    enabled: false
+  auxiliary_losses:
+    supervised_contrastive_lambda: 0.0
+    center_loss_lambda: 0.0
+open_set:
+  evt:
+    enabled: false

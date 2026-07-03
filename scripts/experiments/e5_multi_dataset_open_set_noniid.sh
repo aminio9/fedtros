@@ -18,6 +18,11 @@ run_dataset() {
     return 0
   fi
 
+<<<<<<< HEAD
+=======
+  ran_any=1
+
+>>>>>>> ea28efe (Initial commit with updated source code)
   invoke_hydra_run \
     "experiment=exp5" \
     "+method=fmrl_ava" \
@@ -33,6 +38,22 @@ run_dataset() {
 
   invoke_hydra_run \
     "experiment=exp5" \
+<<<<<<< HEAD
+=======
+    "+method=fedmade" \
+    "seed=42" \
+    "dataset.name=$dataset_name" \
+    "dataset.raw_path=$raw_file" \
+    "dataset.source_labels=$source_labels" \
+    "dataset.known_labels=$known_labels" \
+    "dataset.preprocessing.raw_file=$raw_file" \
+    "model.num_actions=$num_actions" \
+    "dataset.preprocessing.output_dir=outputs/e5_${run_slug}_fedmade/processed" \
+    "tracking.run_id=e5_${run_slug}_fedmade_seed42"
+
+  invoke_hydra_run \
+    "experiment=exp5" \
+>>>>>>> ea28efe (Initial commit with updated source code)
     "+method=fedavg" \
     "seed=42" \
     "dataset.name=$dataset_name" \

@@ -1,0 +1,6 @@
+# @package _global_
+experiment:
+  method: No_Vector_Alignment_Ablation
+federated:
+  strategy:
+    alignment_strength: 0.0

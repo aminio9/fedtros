@@ -9,11 +9,85 @@ from scipy.stats import genpareto
 logger = logging.getLogger("EVT")
 
 
+<<<<<<< HEAD
 class EVTModel:
     """EVT wrapper that supports fixed thresholds for robust tail fitting."""
 
     def __init__(self, tail_size_percent: float):
         self.tail_size_percent = min(max(float(tail_size_percent), 1e-6), 1.0)
+=======
+def _cfg_value(cfg, key: str, default=None):
+    return getattr(cfg, key, default) if cfg is not None else default
+
+
+def resolve_tail_fraction(evt_cfg=None, *, default_fraction: float = 0.01) -> tuple[float, str]:
+    """Resolve EVT tail size to a fraction in (0, 1].
+
+    Preferred config keys:
+    - ``tail_fraction``: explicit fraction in (0, 1].
+    - ``tail_percent``: explicit percent in (0, 100].
+
+    Legacy key:
+    - ``tail_size_percent`` requires ``tail_semantics`` when the value is in
+      (0, 1], because old code treated it as a fraction while the name implies
+      percent. Use ``tail_semantics=percent`` or ``tail_semantics=fraction``.
+    """
+    tail_fraction = _cfg_value(evt_cfg, "tail_fraction", None)
+    if tail_fraction is not None:
+        value = float(tail_fraction)
+        if not 0.0 < value <= 1.0:
+            raise ValueError("open_set.evt.tail_fraction must be in (0, 1].")
+        return value, "tail_fraction"
+
+    tail_percent = _cfg_value(evt_cfg, "tail_percent", None)
+    if tail_percent is not None:
+        value = float(tail_percent)
+        if not 0.0 < value <= 100.0:
+            raise ValueError("open_set.evt.tail_percent must be in (0, 100].")
+        return value / 100.0, "tail_percent"
+
+    legacy_value = _cfg_value(evt_cfg, "tail_size_percent", None)
+    if legacy_value is not None:
+        value = float(legacy_value)
+        semantics = str(_cfg_value(evt_cfg, "tail_semantics", "") or "").lower()
+        if semantics in {"percent", "percentage"}:
+            if not 0.0 < value <= 100.0:
+                raise ValueError("open_set.evt.tail_size_percent as percent must be in (0, 100].")
+            return value / 100.0, "tail_size_percent:percent"
+        if semantics in {"fraction", "legacy_fraction"}:
+            if not 0.0 < value <= 1.0:
+                raise ValueError("open_set.evt.tail_size_percent as fraction must be in (0, 1].")
+            return value, "tail_size_percent:fraction"
+        if value > 1.0:
+            if value > 100.0:
+                raise ValueError("open_set.evt.tail_size_percent must not exceed 100.")
+            return value / 100.0, "tail_size_percent:percent_inferred"
+        raise ValueError(
+            "open_set.evt.tail_size_percent is ambiguous for values in (0, 1]. "
+            "Use tail_fraction, tail_percent, or set tail_semantics explicitly."
+        )
+
+    if not 0.0 < default_fraction <= 1.0:
+        raise ValueError("default EVT tail fraction must be in (0, 1].")
+    return float(default_fraction), "default_tail_fraction"
+
+
+class EVTModel:
+    """EVT wrapper that supports fixed thresholds for robust tail fitting."""
+
+    def __init__(self, tail_size_percent: float | None = None, *, tail_fraction: float | None = None):
+        if tail_fraction is None:
+            if tail_size_percent is None:
+                tail_fraction = 0.01
+            else:
+                # Constructor values are treated as fractions for backward
+                # compatibility with tests and persisted payloads.
+                tail_fraction = float(tail_size_percent)
+        if not 0.0 < float(tail_fraction) <= 1.0:
+            raise ValueError("EVTModel tail_fraction must be in (0, 1].")
+        self.tail_fraction = float(tail_fraction)
+        self.tail_size_percent = self.tail_fraction
+>>>>>>> ea28efe (Initial commit with updated source code)
         self.threshold_u: float | None = None
         self.gpd_params: tuple[float, float, float] | None = None
 
@@ -39,7 +113,11 @@ class EVTModel:
                 self.threshold_u = float(sorted_errors[0]) - 1e-9
                 idx = 0
             else:
+<<<<<<< HEAD
                 idx = int(sorted_errors.size * (1.0 - self.tail_size_percent))
+=======
+                idx = int(sorted_errors.size * (1.0 - self.tail_fraction))
+>>>>>>> ea28efe (Initial commit with updated source code)
                 idx = min(max(idx, 0), sorted_errors.size - 2)
                 self.threshold_u = float(sorted_errors[idx])
 
@@ -51,7 +129,11 @@ class EVTModel:
             if fixed_threshold is None:
                 # Heuristic fallback if we aren't using a fixed threshold
                 sorted_errors = np.sort(reconstruction_errors)
+<<<<<<< HEAD
                 idx = int(sorted_errors.size * (1.0 - self.tail_size_percent * 0.5))
+=======
+                idx = int(sorted_errors.size * (1.0 - self.tail_fraction * 0.5))
+>>>>>>> ea28efe (Initial commit with updated source code)
                 self.threshold_u = float(sorted_errors[idx])
                 tail = (
                     reconstruction_errors[reconstruction_errors > self.threshold_u]
@@ -87,12 +169,20 @@ class EVTModel:
         return {
             "threshold_u": self.threshold_u,
             "gpd_params": self.gpd_params,
+<<<<<<< HEAD
+=======
+            "tail_fraction": self.tail_fraction,
+>>>>>>> ea28efe (Initial commit with updated source code)
             "tail_size_percent": self.tail_size_percent,
         }
 
     @classmethod
     def from_payload(cls, payload: dict) -> "EVTModel":
+<<<<<<< HEAD
         model = cls(payload["tail_size_percent"])
+=======
+        model = cls(tail_fraction=float(payload.get("tail_fraction", payload["tail_size_percent"])))
+>>>>>>> ea28efe (Initial commit with updated source code)
         model.threshold_u = float(payload["threshold_u"])
         model.gpd_params = tuple(payload["gpd_params"])
         return model

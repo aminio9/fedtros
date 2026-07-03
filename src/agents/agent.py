@@ -4,14 +4,32 @@ from collections import OrderedDict
 import numpy as np
 import torch
 import torch.nn as nn
+<<<<<<< HEAD
+=======
+import torch.nn.functional as F
+>>>>>>> ea28efe (Initial commit with updated source code)
 import torch.optim as optim
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader, TensorDataset
 
+<<<<<<< HEAD
 from src.models.models import OpenSetQChainModelFactory, ValueNetwork
 from src.utils.utils import (
     calculate_kl_divergence,
     calculate_kl_divergence_raw,
+=======
+from src.models.cvae_dqn import OpenSetQChainModelFactory, ValueNetwork
+from src.training.losses import (
+    center_compactness_loss,
+    diagonal_gaussian_kl,
+    focal_cross_entropy_loss,
+    kl_warmup_weight,
+    smooth_reconstruction_loss,
+    supervised_contrastive_loss,
+)
+from src.utils.imbalance import compute_class_weights
+from src.utils.utils import (
+>>>>>>> ea28efe (Initial commit with updated source code)
     reparameterization_trick,
     soft_update_target_network,
 )
@@ -27,6 +45,38 @@ def _ensure_action_index(a: torch.Tensor, num_actions: int) -> torch.Tensor:
     return a.clamp_(0, num_actions - 1)
 
 
+<<<<<<< HEAD
+=======
+def _cfg_float(cfg: object, path: str, default: float) -> float:
+    value = _cfg_value(cfg, path, default)
+    return float(default if value is None else value)
+
+
+def _cfg_int(cfg: object, path: str, default: int) -> int:
+    value = _cfg_value(cfg, path, default)
+    return int(default if value is None else value)
+
+
+def _cfg_bool(cfg: object, path: str, default: bool) -> bool:
+    value = _cfg_value(cfg, path, default)
+    return bool(default if value is None else value)
+
+
+def _cfg_str(cfg: object, path: str, default: str) -> str:
+    value = _cfg_value(cfg, path, default)
+    return str(default if value is None else value)
+
+
+def _cfg_value(cfg: object, path: str, default: object | None = None) -> object | None:
+    value = cfg
+    for part in path.split("."):
+        value = getattr(value, part, None)
+        if value is None:
+            return default
+    return value
+
+
+>>>>>>> ea28efe (Initial commit with updated source code)
 class DirectMLAdam(optim.Optimizer):
     """Adam variant that avoids unsupported ops on DirectML by using add/mul instead of lerp."""
 
@@ -108,10 +158,47 @@ class Agent:
         self.gamma = train_cfg.gamma
         self.use_double_dqn = train_cfg.use_double_dqn
         self.use_prior_kl_raw = bool(train_cfg.prior_kl_raw)
+<<<<<<< HEAD
         self._prior_kl_fn = (
             calculate_kl_divergence_raw if self.use_prior_kl_raw else calculate_kl_divergence
         )
         self.prior_grad_clip_norm = train_cfg.prior_grad_clip_norm
+=======
+        self.prior_grad_clip_norm = train_cfg.prior_grad_clip_norm
+        self.q_grad_clip_norm = getattr(train_cfg, "q_grad_clip_norm", 1.0)
+        self.train_step_index = 0
+        self.local_class_counts: torch.Tensor | None = None
+        self.local_class_mask: torch.Tensor | None = None
+        self.missing_class_mask_enabled = _cfg_bool(
+            train_cfg, "missing_class_gradient.enabled", False
+        )
+        self.missing_class_mask_value = _cfg_float(
+            train_cfg, "missing_class_gradient.mask_value", -20.0
+        )
+        self.kl_free_nats = _cfg_float(train_cfg, "kl.free_nats", 0.25)
+        self.kl_warmup_steps = _cfg_int(train_cfg, "kl.warmup_steps", 100)
+        self.classification_loss_name = _cfg_str(
+            train_cfg, "classification_loss.name", "focal"
+        ).lower()
+        self.focal_gamma = _cfg_float(train_cfg, "classification_loss.focal_gamma", 2.0)
+        self.use_class_weights = _cfg_bool(
+            train_cfg, "classification_loss.use_class_weights", True
+        )
+        self.optimizer_name = _cfg_str(train_cfg, "optimizer_name", "adamw").lower()
+        self.optimizer_weight_decay = _cfg_float(train_cfg, "optimizer_weight_decay", 1e-4)
+        self.optimizer_eps = _cfg_float(train_cfg, "optimizer_eps", 1e-8)
+        self.optimizer_betas = self._optimizer_betas(train_cfg)
+        self.loss_weights = {
+            "prior_kl": _cfg_float(train_cfg, "loss_weights.prior_kl", 1.0),
+            "q_td": _cfg_float(train_cfg, "loss_weights.q_td", 1.0),
+            "bandit_q": _cfg_float(train_cfg, "loss_weights.bandit_q", 0.0),
+            "classification": _cfg_float(train_cfg, "loss_weights.classification", 0.0),
+            "generator_reconstruction": _cfg_float(
+                train_cfg, "loss_weights.generator_reconstruction", 1.0
+            ),
+            "proximal": _cfg_float(train_cfg, "loss_weights.proximal", 1.0),
+        }
+>>>>>>> ea28efe (Initial commit with updated source code)
 
         # Nets (encoder + decoder stack)
         self.value_network: ValueNetwork = model_factory.create_value_network().to(device)
@@ -132,6 +219,7 @@ class Agent:
         self.value_net_target.load_state_dict(self.value_net_main.state_dict())
         self.value_net_target.eval()
 
+<<<<<<< HEAD
         use_directml_safe = device.type in {"dml", "directml", "privateuseone"}
         adam_cls = DirectMLAdam if use_directml_safe else optim.Adam
 
@@ -148,11 +236,61 @@ class Agent:
             self.optimizer_q_rl = adam_cls(rl_params, lr=train_cfg.lr_q_rl, foreach=False)
         else:
             self.optimizer_q_rl = adam_cls(rl_params, lr=train_cfg.lr_q_rl)
+=======
+        self._use_directml_safe_optimizer = device.type in {"dml", "directml", "privateuseone"}
+        self.optimizer_prior = self._make_optimizer(
+            self.prior_net.parameters(),
+            lr=float(train_cfg.lr_prior),
+        )
+        # RL optimizer trains *both* the local RecognitionNet and the global MainQNet
+        rl_params = list(self.recognition_net.parameters()) + list(self.value_net_main.parameters())
+        self.optimizer_q_rl = self._make_optimizer(rl_params, lr=float(train_cfg.lr_q_rl))
+>>>>>>> ea28efe (Initial commit with updated source code)
 
         self.td_loss_fn = nn.SmoothL1Loss()
         self._capture_proximal_reference()
         self.logger.debug("Agent initialized with Double-DQN: %s", self.use_double_dqn)
 
+<<<<<<< HEAD
+=======
+    @staticmethod
+    def _optimizer_betas(train_cfg: DictConfig) -> tuple[float, float]:
+        raw_betas = _cfg_value(train_cfg, "optimizer_betas", None)
+        if raw_betas is None:
+            return (0.9, 0.95)
+        betas = [float(value) for value in raw_betas]
+        if len(betas) != 2:
+            return (0.9, 0.95)
+        return (betas[0], betas[1])
+
+    def _make_optimizer(self, params, *, lr: float) -> optim.Optimizer:
+        if self._use_directml_safe_optimizer:
+            return DirectMLAdam(
+                params,
+                lr=lr,
+                betas=self.optimizer_betas,
+                eps=self.optimizer_eps,
+                weight_decay=self.optimizer_weight_decay,
+            )
+        if self.optimizer_name == "adam":
+            return optim.Adam(
+                params,
+                lr=lr,
+                betas=self.optimizer_betas,
+                eps=self.optimizer_eps,
+                weight_decay=self.optimizer_weight_decay,
+                foreach=False,
+            )
+        return optim.AdamW(
+            params,
+            lr=lr,
+            betas=self.optimizer_betas,
+            eps=self.optimizer_eps,
+            weight_decay=self.optimizer_weight_decay,
+            foreach=False,
+        )
+
+>>>>>>> ea28efe (Initial commit with updated source code)
     def to(self, device: torch.device | str) -> "Agent":
         """Move the agent and optimizer state to a new device."""
         target_device = torch.device(device)
@@ -164,9 +302,39 @@ class Agent:
             self.generation_net.to(target_device)
         self._move_optimizer_state(self.optimizer_prior, target_device)
         self._move_optimizer_state(self.optimizer_q_rl, target_device)
+<<<<<<< HEAD
         self.device = target_device
         return self
 
+=======
+        if self.local_class_counts is not None:
+            self.local_class_counts = self.local_class_counts.to(target_device)
+        if self.local_class_mask is not None:
+            self.local_class_mask = self.local_class_mask.to(target_device)
+        self.device = target_device
+        return self
+
+    def set_local_class_counts(self, counts: list[int] | torch.Tensor) -> None:
+        """Record local label support so local losses do not train absent classes."""
+        counts_t = torch.as_tensor(counts, dtype=torch.float32, device=self.device)
+        if counts_t.numel() < self.action_dim:
+            counts_t = F.pad(counts_t, (0, self.action_dim - counts_t.numel()))
+        counts_t = counts_t[: self.action_dim]
+        self.local_class_counts = counts_t
+        self.local_class_mask = counts_t > 0
+
+    def _mask_absent_class_logits(self, logits: torch.Tensor) -> torch.Tensor:
+        """Mask absent local classes for client-side supervised classification loss only."""
+        if not self.missing_class_mask_enabled:
+            return logits
+        if self.local_class_mask is None:
+            return logits
+        mask = self.local_class_mask.to(device=logits.device)
+        if bool(mask.all()):
+            return logits
+        return logits.masked_fill(~mask.view(1, -1), float(self.missing_class_mask_value))
+
+>>>>>>> ea28efe (Initial commit with updated source code)
     @staticmethod
     def _move_optimizer_state(optimizer: optim.Optimizer, device: torch.device) -> None:
         for state in optimizer.state.values():
@@ -188,6 +356,7 @@ class Agent:
         Build y_t targets using the PRIOR for z_{t+1}.
         (Eq. 9 or 13, but using prior for z)
         """
+<<<<<<< HEAD
         self.prior_net.eval()
         self.value_net_main.eval()
         self.value_net_target.eval()
@@ -206,22 +375,65 @@ class Agent:
                 0
             ]  # [B,1]
         return q_target_next
+=======
+        prior_was_training = self.prior_net.training
+        main_was_training = self.value_net_main.training
+        target_was_training = self.value_net_target.training
+
+        try:
+            self.prior_net.eval()
+            self.value_net_main.eval()
+            self.value_net_target.eval()
+
+            next_mu_p, next_log_var_p = self.prior_net(next_states_s)
+            z_next = reparameterization_trick(next_mu_p, next_log_var_p)
+
+            if self.use_double_dqn:
+                # Double-DQN (Eq. 13)
+                q_main_next = self.value_net_main(z_next, next_states_s)  # [B, A]
+                a_star = q_main_next.argmax(dim=1, keepdim=True)  # [B, 1]
+                q_target_next = self.value_net_target(z_next, next_states_s).gather(
+                    1, a_star
+                )  # [B,1]
+            else:
+                # Standard DQN (Eq. 9)
+                q_target_next = self.value_net_target(
+                    z_next, next_states_s
+                ).max(dim=1, keepdim=True)[0]  # [B,1]
+            return q_target_next
+        finally:
+            self.prior_net.train(prior_was_training)
+            self.value_net_main.train(main_was_training)
+            self.value_net_target.train(target_was_training)
+>>>>>>> ea28efe (Initial commit with updated source code)
 
     def train_step(
         self,
         batch: tuple[torch.Tensor, ...],
         *,
         proximal_mu: float = 0.0,
+<<<<<<< HEAD
     ) -> tuple[float, float, float, float]:
         """
         Performs one full training step (Prior update + RL update).
         batch = (states_s, actions_a_t, rewards_r, next_states_s, dones, true_actions_a_t)
         Returns: (td_loss_item, kl_loss_item, prox_loss_item, avg_q_item)
+=======
+    ) -> dict[str, float]:
+        """
+        Performs one full training step (Prior update + RL update).
+        batch = (states_s, actions_a_t, rewards_r, next_states_s, dones, true_actions_a_t)
+        Returns a scalar dictionary with explicit loss, gradient, Q, KL, and LR metrics.
+>>>>>>> ea28efe (Initial commit with updated source code)
         """
         states_s, actions_a_t, rewards_r, next_states_s, dones, true_actions_a_t = batch
 
         actions_a_t = _ensure_action_index(actions_a_t, self.action_dim)
         true_actions_a_t = _ensure_action_index(true_actions_a_t, self.action_dim)
+<<<<<<< HEAD
+=======
+        step_index = self.train_step_index + 1
+>>>>>>> ea28efe (Initial commit with updated source code)
         proximal_mu = float(proximal_mu)
         prox_loss_total = torch.zeros((), device=self.device)
 
@@ -235,6 +447,7 @@ class Agent:
             )  # q_phi(z|s, a_T)
         mu_p, log_var_p = self.prior_net(states_s)  # p_theta(z|s)
 
+<<<<<<< HEAD
         kl_loss = self._prior_kl_fn(mu_q_T, log_var_q_T, mu_p, log_var_p)
         kl_objective = kl_loss
         if proximal_mu > 0.0:
@@ -246,6 +459,59 @@ class Agent:
         kl_objective.backward()
         if self.prior_grad_clip_norm is not None:
             torch.nn.utils.clip_grad_norm_(
+=======
+        kl_per_sample_raw = diagonal_gaussian_kl(
+            mu_q_T,
+            log_var_q_T,
+            mu_p,
+            log_var_p,
+            free_nats=0.0,
+            reduce="none",
+            clamp_logvar=not self.use_prior_kl_raw,
+        )
+        kl_per_sample = diagonal_gaussian_kl(
+            mu_q_T,
+            log_var_q_T,
+            mu_p,
+            log_var_p,
+            free_nats=self.kl_free_nats,
+            reduce="none",
+            clamp_logvar=not self.use_prior_kl_raw,
+        )
+        kl_loss = kl_per_sample.mean()
+        kl_warmup = kl_warmup_weight(step_index, self.kl_warmup_steps)
+        labels = true_actions_a_t.squeeze(1)
+        supcon_lambda = _cfg_float(
+            self.train_cfg, "auxiliary_losses.supervised_contrastive_lambda", 0.0
+        )
+        center_lambda = _cfg_float(self.train_cfg, "auxiliary_losses.center_loss_lambda", 0.0)
+        supcon_temperature = _cfg_float(
+            self.train_cfg, "auxiliary_losses.supervised_contrastive_temperature", 0.1
+        )
+        supcon_loss = torch.zeros((), device=self.device)
+        center_loss = torch.zeros((), device=self.device)
+        if supcon_lambda > 0.0:
+            supcon_loss = supervised_contrastive_loss(
+                mu_p,
+                labels,
+                temperature=supcon_temperature,
+            )
+        if center_lambda > 0.0:
+            center_loss = center_compactness_loss(mu_p, labels)
+        kl_objective = self.loss_weights["prior_kl"] * kl_warmup * kl_loss
+        kl_objective = kl_objective + supcon_lambda * supcon_loss + center_lambda * center_loss
+        if proximal_mu > 0.0:
+            prior_prox = self._proximal_penalty("prior_net")
+            prior_prox_weighted = self.loss_weights["proximal"] * 0.5 * proximal_mu * prior_prox
+            prox_loss_total = prox_loss_total + prior_prox_weighted
+            kl_objective = kl_objective + prior_prox_weighted
+
+        self.optimizer_prior.zero_grad()
+        kl_objective.backward()
+        prior_grad_norm = torch.zeros((), device=self.device)
+        if self.prior_grad_clip_norm is not None:
+            prior_grad_norm = torch.nn.utils.clip_grad_norm_(
+>>>>>>> ea28efe (Initial commit with updated source code)
                 self.prior_net.parameters(), float(self.prior_grad_clip_norm)
             )
         self.optimizer_prior.step()
@@ -266,19 +532,80 @@ class Agent:
         q_values_all = self.value_net_main(z_now, states_s)
         q_pred = q_values_all.gather(1, actions_a_t)
 
+<<<<<<< HEAD
         # Calculate TD Loss (Eq. 11)
         td_loss = self.td_loss_fn(q_pred, y_t)
         td_objective = td_loss
+=======
+        with torch.no_grad():
+            mu_p_cls, _ = self.prior_net(states_s)
+        cls_logits = self.value_net_main(mu_p_cls.detach(), states_s)
+        cls_logits_for_loss = self._mask_absent_class_logits(cls_logits)
+        class_weights = self._batch_class_weights(true_actions_a_t.squeeze(1))
+        if self.classification_loss_name == "cross_entropy":
+            cls_loss = F.cross_entropy(
+                cls_logits_for_loss,
+                true_actions_a_t.squeeze(1),
+                weight=class_weights,
+            )
+        else:
+            cls_loss = focal_cross_entropy_loss(
+                cls_logits_for_loss,
+                true_actions_a_t.squeeze(1),
+                class_weights=class_weights,
+                gamma=self.focal_gamma,
+            )
+
+        # Contextual-bandit full-action Q supervision. The traffic sample order is
+        # not a causal MDP transition, so gamma=0 in GLOW, while the old TD path
+        # remains available for backward-compatible configs.
+        with torch.no_grad():
+            mu_p_bandit, _ = self.prior_net(states_s)
+        q_bandit_all = self.value_net_main(mu_p_bandit.detach(), states_s)
+        if self.local_class_mask is not None and self.missing_class_mask_enabled:
+            present_mask = self.local_class_mask.to(device=self.device, dtype=torch.bool)
+        else:
+            present_mask = torch.ones(self.action_dim, dtype=torch.bool, device=self.device)
+        if not bool(present_mask.any()):
+            present_mask = torch.ones(self.action_dim, dtype=torch.bool, device=self.device)
+
+        reward_correct = _cfg_float(self.train_cfg, "reward.correct", 1.0)
+        reward_incorrect = _cfg_float(self.train_cfg, "reward.incorrect", -1.0)
+        bandit_targets = torch.zeros_like(q_bandit_all)
+        bandit_targets[:, present_mask] = float(reward_incorrect)
+        bandit_targets.scatter_(1, labels.view(-1, 1), float(reward_correct))
+        bandit_loss_matrix = F.smooth_l1_loss(
+            q_bandit_all,
+            bandit_targets,
+            reduction="none",
+        )
+        bandit_loss = bandit_loss_matrix[:, present_mask].mean()
+
+        # Calculate TD Loss (Eq. 11)
+        td_loss = self.td_loss_fn(q_pred, y_t)
+        td_objective = (
+            self.loss_weights["q_td"] * td_loss
+            + self.loss_weights["bandit_q"] * bandit_loss
+            + self.loss_weights["classification"] * cls_loss
+        )
+>>>>>>> ea28efe (Initial commit with updated source code)
         if proximal_mu > 0.0:
             rl_prox = self._proximal_penalty("recognition_net") + self._proximal_penalty(
                 "value_net_main"
             )
+<<<<<<< HEAD
             prox_loss_total = prox_loss_total + 0.5 * proximal_mu * rl_prox
             td_objective = td_objective + 0.5 * proximal_mu * rl_prox
+=======
+            rl_prox_weighted = self.loss_weights["proximal"] * 0.5 * proximal_mu * rl_prox
+            prox_loss_total = prox_loss_total + rl_prox_weighted
+            td_objective = td_objective + rl_prox_weighted
+>>>>>>> ea28efe (Initial commit with updated source code)
 
         # Optimize both recognition and main_q nets
         self.optimizer_q_rl.zero_grad()
         td_objective.backward()
+<<<<<<< HEAD
         torch.nn.utils.clip_grad_norm_(
             list(self.recognition_net.parameters()) + list(self.value_net_main.parameters()),
             max_norm=1.0,  # Common practice for DQN stability
@@ -287,6 +614,60 @@ class Agent:
 
         avg_q = q_pred.mean().item()
         return td_loss.item(), kl_loss.item(), prox_loss_total.item(), avg_q
+=======
+        q_params = list(self.recognition_net.parameters()) + list(self.value_net_main.parameters())
+        if self.q_grad_clip_norm is not None:
+            q_grad_norm = torch.nn.utils.clip_grad_norm_(
+                q_params,
+                max_norm=float(self.q_grad_clip_norm),
+            )
+        else:
+            q_grad_norm = self._grad_norm(q_params)
+        self.optimizer_q_rl.step()
+
+        q_pred_detached = q_pred.detach()
+        q_values_detached = q_values_all.detach()
+        self.train_step_index = step_index
+        loss_total = kl_objective.detach() + td_objective.detach()
+        return {
+            "loss/total": float(loss_total.item()),
+            "loss/prior_kl": float(kl_loss.item()),
+            "loss/prior_kl_raw": float(kl_per_sample_raw.mean().item()),
+            "loss/prior_kl_weighted": float(
+                (self.loss_weights["prior_kl"] * kl_warmup * kl_loss).item()
+            ),
+            "loss/prior_kl_warmup": float(kl_warmup),
+            "loss/supervised_contrastive": float(supcon_loss.item()),
+            "loss/supervised_contrastive_weighted": float((supcon_lambda * supcon_loss).item()),
+            "loss/center_compactness": float(center_loss.item()),
+            "loss/center_compactness_weighted": float((center_lambda * center_loss).item()),
+            "loss/q_td": float(td_loss.item()),
+            "loss/q_td_weighted": float((self.loss_weights["q_td"] * td_loss).item()),
+            "loss/bandit_q": float(bandit_loss.item()),
+            "loss/bandit_q_weighted": float((self.loss_weights["bandit_q"] * bandit_loss).item()),
+            "loss/classification": float(cls_loss.item()),
+            "loss/classification_weighted": float(
+                (self.loss_weights["classification"] * cls_loss).item()
+            ),
+            "loss/proximal": float(prox_loss_total.item()),
+            "gradient/prior_norm": float(prior_grad_norm.item()),
+            "gradient/q_norm": float(q_grad_norm.item()),
+            "kl/mean": float(kl_per_sample.mean().item()),
+            "kl/std": float(kl_per_sample.std(unbiased=False).item()),
+            "q/pred_mean": float(q_pred_detached.mean().item()),
+            "q/pred_std": float(q_pred_detached.std(unbiased=False).item()),
+            "q/value_mean": float(q_values_detached.mean().item()),
+            "q/value_std": float(q_values_detached.std(unbiased=False).item()),
+            "q/value_min": float(q_values_detached.min().item()),
+            "q/value_max": float(q_values_detached.max().item()),
+            "q/target_mean": float(y_t.detach().mean().item()),
+            "q/target_std": float(y_t.detach().std(unbiased=False).item()),
+            "lr/prior": self._optimizer_lr(self.optimizer_prior),
+            "lr/q_rl": self._optimizer_lr(self.optimizer_q_rl),
+            "local_class_coverage_count": float(present_mask.sum().item()),
+            "missing_class_mask_enabled": float(self.missing_class_mask_enabled),
+        }
+>>>>>>> ea28efe (Initial commit with updated source code)
 
     def update_target_network(self, tau: float):
         """Soft update the target network (Eq. 10)."""
@@ -298,6 +679,40 @@ class Agent:
         self.logger.debug("Performing hard target update")
         self.value_net_target.load_state_dict(self.value_net_main.state_dict())
 
+<<<<<<< HEAD
+=======
+    @staticmethod
+    def _optimizer_lr(optimizer: optim.Optimizer) -> float:
+        return float(optimizer.param_groups[0]["lr"]) if optimizer.param_groups else 0.0
+
+    @staticmethod
+    def _grad_norm(params: list[torch.nn.Parameter]) -> torch.Tensor:
+        norms = [
+            param.grad.detach().norm(2)
+            for param in params
+            if param.grad is not None
+        ]
+        if not norms:
+            device = params[0].device if params else torch.device("cpu")
+            return torch.zeros((), device=device)
+        return torch.linalg.vector_norm(torch.stack(norms), ord=2)
+
+    def _batch_class_weights(self, labels: torch.Tensor) -> torch.Tensor | None:
+        if not self.use_class_weights:
+            return None
+        imbalance_cfg = getattr(self.train_cfg, "imbalance", None)
+        weights = compute_class_weights(
+            labels.detach().cpu(),
+            num_classes=self.action_dim,
+            mode=_cfg_str(imbalance_cfg, "weight_mode", "inverse_frequency"),
+            beta=_cfg_float(imbalance_cfg, "effective_number_beta", 0.999),
+            min_weight=_cfg_float(imbalance_cfg, "min_weight", 0.2),
+            max_weight=_cfg_float(imbalance_cfg, "max_weight", 5.0),
+            normalize=_cfg_str(imbalance_cfg, "normalize", "mean"),
+        )
+        return weights.to(device=self.device)
+
+>>>>>>> ea28efe (Initial commit with updated source code)
     def _capture_proximal_reference(self) -> None:
         """Store the current federated parameters as the FedProx anchor."""
         self._proximal_reference = {
@@ -497,6 +912,13 @@ class Agent:
         full_loader = DataLoader(dataset, batch_size=gen_batch_size, shuffle=False)
 
         correct_mask_parts: list[torch.Tensor] = []
+<<<<<<< HEAD
+=======
+        prior_was_training = self.prior_net.training
+        recognition_was_training = self.recognition_net.training
+        q_was_training = self.value_net_main.training
+        generator_was_training = self.generation_net.training
+>>>>>>> ea28efe (Initial commit with updated source code)
         with torch.no_grad():
             self.prior_net.eval()
             self.value_net_main.eval()
@@ -509,6 +931,13 @@ class Agent:
                 correct_mask_parts.append((preds == true_actions).cpu())
 
         if not correct_mask_parts:
+<<<<<<< HEAD
+=======
+            self.prior_net.train(prior_was_training)
+            self.recognition_net.train(recognition_was_training)
+            self.value_net_main.train(q_was_training)
+            self.generation_net.train(generator_was_training)
+>>>>>>> ea28efe (Initial commit with updated source code)
             return {}
 
         correct_mask = torch.cat(correct_mask_parts, dim=0)
@@ -520,6 +949,13 @@ class Agent:
             active_logger.warning(
                 f"Generator training skipped: {num_correct}/{total_samples} correct (< {min_correct})"
             )
+<<<<<<< HEAD
+=======
+            self.prior_net.train(prior_was_training)
+            self.recognition_net.train(recognition_was_training)
+            self.value_net_main.train(q_was_training)
+            self.generation_net.train(generator_was_training)
+>>>>>>> ea28efe (Initial commit with updated source code)
             return {
                 "generator_samples": float(num_correct),
                 "generator_correct_frac": num_correct / max(1, total_samples),
@@ -529,6 +965,7 @@ class Agent:
         filtered_dataset = TensorDataset(features[correct_mask], labels[correct_mask])
         train_loader = DataLoader(filtered_dataset, batch_size=gen_batch_size, shuffle=True)
 
+<<<<<<< HEAD
         use_directml_safe = self.device.type in {"dml", "directml", "privateuseone"}
         adam_cls = DirectMLAdam if use_directml_safe else optim.Adam
 
@@ -539,6 +976,11 @@ class Agent:
             optimizer = adam_cls(self.generation_net.parameters(), lr=gen_lr)
 
         loss_fn = nn.MSELoss()
+=======
+        optimizer = self._make_optimizer(self.generation_net.parameters(), lr=gen_lr)
+        recon_beta = _cfg_float(generator_cfg, "reconstruction_beta", 1.0)
+        generator_grad_clip_norm = _cfg_value(generator_cfg, "grad_clip_norm", None)
+>>>>>>> ea28efe (Initial commit with updated source code)
 
         self.generation_net.train()
         self.recognition_net.eval()
@@ -546,12 +988,24 @@ class Agent:
         active_logger.info(f"--- Generator Training Start (Samples: {num_correct}) ---")
 
         last_epoch_loss = 0.0
+<<<<<<< HEAD
         last_epoch_prox_loss = 0.0
+=======
+        last_epoch_weighted_loss = 0.0
+        last_epoch_prox_loss = 0.0
+        last_epoch_grad_norm = 0.0
+>>>>>>> ea28efe (Initial commit with updated source code)
 
         for round_idx in range(1, gen_rounds + 1):
             for epoch in range(1, gen_epochs + 1):
                 total_loss = 0.0
+<<<<<<< HEAD
                 total_prox_loss = 0.0
+=======
+                total_weighted_loss = 0.0
+                total_prox_loss = 0.0
+                total_grad_norm = 0.0
+>>>>>>> ea28efe (Initial commit with updated source code)
                 batch_count = 0
 
                 for states_s, true_actions in train_loader:
@@ -563,15 +1017,36 @@ class Agent:
                         latent_z = reparameterization_trick(mu_q, log_var_q)
 
                     recon = self.generation_net(latent_z, true_actions)
+<<<<<<< HEAD
                     mse_loss = loss_fn(recon, states_s)
                     loss = mse_loss
                     prox_loss = torch.zeros((), device=self.device)
                     if proximal_mu > 0.0:
                         prox_loss = 0.5 * proximal_mu * self._proximal_penalty("generation_net")
+=======
+                    reconstruction_loss = smooth_reconstruction_loss(
+                        recon,
+                        states_s,
+                        beta=recon_beta,
+                    )
+                    weighted_recon_loss = (
+                        self.loss_weights["generator_reconstruction"] * reconstruction_loss
+                    )
+                    loss = weighted_recon_loss
+                    prox_loss = torch.zeros((), device=self.device)
+                    if proximal_mu > 0.0:
+                        prox_loss = (
+                            self.loss_weights["proximal"]
+                            * 0.5
+                            * proximal_mu
+                            * self._proximal_penalty("generation_net")
+                        )
+>>>>>>> ea28efe (Initial commit with updated source code)
                         loss = loss + prox_loss
 
                     optimizer.zero_grad()
                     loss.backward()
+<<<<<<< HEAD
                     optimizer.step()
 
                     total_loss += mse_loss.item()
@@ -580,20 +1055,60 @@ class Agent:
 
                 last_epoch_loss = total_loss / max(1, batch_count)
                 last_epoch_prox_loss = total_prox_loss / max(1, batch_count)
+=======
+                    generator_params = list(self.generation_net.parameters())
+                    if generator_grad_clip_norm is not None:
+                        grad_norm = torch.nn.utils.clip_grad_norm_(
+                            generator_params,
+                            max_norm=float(generator_grad_clip_norm),
+                        )
+                    else:
+                        grad_norm = self._grad_norm(generator_params)
+                    optimizer.step()
+
+                    total_loss += reconstruction_loss.item()
+                    total_weighted_loss += loss.item()
+                    total_prox_loss += prox_loss.item()
+                    total_grad_norm += grad_norm.item()
+                    batch_count += 1
+
+                last_epoch_loss = total_loss / max(1, batch_count)
+                last_epoch_weighted_loss = total_weighted_loss / max(1, batch_count)
+                last_epoch_prox_loss = total_prox_loss / max(1, batch_count)
+                last_epoch_grad_norm = total_grad_norm / max(1, batch_count)
+>>>>>>> ea28efe (Initial commit with updated source code)
 
                 # --- LOGGING EVERY 5 EPOCHS ---
                 if epoch % 5 == 0 or epoch == 1:
                     active_logger.info(
                         f"   > [Round {round_idx}] Epoch {epoch:02d}/{gen_epochs} | "
+<<<<<<< HEAD
                         f"Loss (MSE): {last_epoch_loss:.6f} | "
+=======
+                        f"Loss (SmoothL1): {last_epoch_loss:.6f} | "
+>>>>>>> ea28efe (Initial commit with updated source code)
                         f"Prox: {last_epoch_prox_loss:.6f} | "
                         f"Batch Count: {batch_count}"
                     )
 
+<<<<<<< HEAD
         self.generation_net.eval()
         return {
             "generator_loss": float(last_epoch_loss),
             "generator_prox_loss": float(last_epoch_prox_loss),
+=======
+        self.prior_net.train(prior_was_training)
+        self.recognition_net.train(recognition_was_training)
+        self.value_net_main.train(q_was_training)
+        self.generation_net.train(generator_was_training)
+        return {
+            "generator_loss": float(last_epoch_loss),
+            "generator_reconstruction_loss": float(last_epoch_loss),
+            "generator_weighted_loss": float(last_epoch_weighted_loss),
+            "generator_prox_loss": float(last_epoch_prox_loss),
+            "generator_grad_norm": float(last_epoch_grad_norm),
+            "generator_lr": gen_lr,
+>>>>>>> ea28efe (Initial commit with updated source code)
             "generator_samples": float(num_correct),
             "generator_correct_frac": num_correct / max(1, total_samples),
         }

@@ -15,7 +15,11 @@ Primary source anchors used for this consolidation:
 - `src/rl/local_training.py`
 - `src/agents/agent.py`
 - `src/models/models.py`
+<<<<<<< HEAD
 - `src/evaluation/openset_eval.py`
+=======
+- `src/evaluation/open_set.py`
+>>>>>>> ea28efe (Initial commit with updated source code)
 - `src/openset/evt.py`
 - `src/federated/client.py`
 - `src/federated/server.py`
@@ -59,7 +63,11 @@ The project addresses intrusion detection for B-NAT blockchain traffic under two
 2. The detector must reject unknown or unseen attacks without collapsing known-class behavior.
 3. The learning pipeline must remain usable under horizontal federated training with non-IID client partitions.
 
+<<<<<<< HEAD
 The implementation combines a CVAE-style latent model, Double DQN learning, EVT-based open-set rejection, and federated optimization through FedAvg, FedProx, and FMRL-AVA.
+=======
+The implementation combines a CVAE-style latent model, contextual-bandit Q classification with retained Double-DQN machinery for ablations, EVT-based open-set rejection, and federated optimization through FedAvg, FedProx, and FMRL-AVA.
+>>>>>>> ea28efe (Initial commit with updated source code)
 
 ### Research Objectives
 
@@ -130,9 +138,15 @@ flowchart LR
 | Layer | Main modules | Role |
 |---|---|---|
 | Data | `src/data/preprocessing.py`, `src/data/io.py` | Read raw CSV, transform features, split known/unknown data, write tensor datasets |
+<<<<<<< HEAD
 | RL core | `src/rl/environment.py`, `src/rl/replay_buffer.py`, `src/rl/local_training.py`, `src/agents/policy.py`, `src/agents/agent.py` | Define the intrusion MDP, replay, epsilon-greedy policy, and local training logic |
 | Models | `src/models/models.py` | Build prior, recognition, Q, target-Q, and generator networks |
 | Open-set | `src/openset/evt.py`, `src/evaluation/openset_eval.py` | Fit EVT tails, calibrate thresholds, evaluate unknown rejection |
+=======
+| RL core | `src/rl/environment.py`, `src/rl/replay_buffer.py`, `src/rl/local_training.py`, `src/agents/policy.py`, `src/agents/agent.py` | Define the intrusion contextual-bandit environment, replay, restricted epsilon-greedy policy, and local training logic |
+| Models | `src/models/models.py` | Build prior, recognition, Q, target-Q, and generator networks |
+| Open-set | `src/openset/evt.py`, `src/evaluation/open_set.py` | Fit EVT tails, calibrate thresholds, evaluate unknown rejection |
+>>>>>>> ea28efe (Initial commit with updated source code)
 | Federated | `src/federated/client.py`, `src/federated/server.py`, `src/federated/server_models.py`, `src/federated/run.py` | Run FedAvg, FedProx, and FMRL-AVA in Flower |
 | Evaluation | `src/evaluation/closed_set.py`, `src/evaluation/run.py`, `src/evaluation/compare.py` | Compute closed-set, open-set, and run-comparison outputs |
 | Artifacts | `src/artifacts/communication.py`, `src/artifacts/suite.py`, `src/artifacts/embeddings.py` | Export communication cost, suite CSVs, and latent projections |
@@ -185,7 +199,11 @@ The repository supports two execution modes:
 
 | Decision | Rationale | Tradeoff |
 |---|---|---|
+<<<<<<< HEAD
 | CVAE-style latent encoding plus Double DQN | Separates state encoding, action scoring, and reconstruction-based rejection | More moving parts than a plain classifier |
+=======
+| CVAE-style latent encoding plus contextual-bandit Q learning | Separates state encoding, action scoring, and reconstruction-based rejection while avoiding non-causal bootstrapping | More moving parts than a plain classifier |
+>>>>>>> ea28efe (Initial commit with updated source code)
 | Reconstruction-error EVT rejection | Provides a calibrated unknown score rather than a raw softmax confidence | Sensitive to calibration quality and tail size |
 | Generator trained only on correctly classified known samples | Prevents label contamination in the reconstruction model | Reduces the effective generator training set |
 | Validation-based EVT calibration | Avoids test leakage | Requires a dedicated validation split |
@@ -226,9 +244,17 @@ Reward:
 
 `r_t = +1` if `a_t = a_t^*`, otherwise `r_t = -1`
 
+<<<<<<< HEAD
 Double DQN target:
 
 `y_t = r_t + gamma * Q_target(s_{t+1}, argmax_a Q_main(s_{t+1}, a))`
+=======
+Contextual-bandit default target:
+
+`y_t = r_t`
+
+The retained Double-DQN target path is still implemented as `r_t + gamma * Q_target(...)`, but the default `gamma=0.0` makes it immediate-reward fitting. The main Q signal is the full-action bandit loss that sets the true class to positive reward and wrong present classes to negative reward.
+>>>>>>> ea28efe (Initial commit with updated source code)
 
 FedProx local objective:
 
@@ -250,7 +276,11 @@ Open-set score:
 
 `P_unknown = GPD_CDF(max(0, e(x) - u))`
 
+<<<<<<< HEAD
 Reject when `P_unknown >= delta_global`.
+=======
+Reject when `P_unknown > delta_global`.
+>>>>>>> ea28efe (Initial commit with updated source code)
 
 ### Data Processing Pipeline
 
@@ -465,7 +495,11 @@ return aggregate metrics
 
 **Outputs:** TD loss, KL loss, proximal loss, mean Q value.
 
+<<<<<<< HEAD
 **Procedure:** update the prior network with KL divergence against the recognition network on true labels, then update the recognition and Q networks using the Double DQN target. When `proximal_mu > 0`, add squared-distance penalties against the captured federated reference for the prior, recognition, main-Q, and generator modules.
+=======
+**Procedure:** update the prior network with KL divergence against the recognition network on true labels, then update the recognition and Q networks using the retained TD target plus the full-action contextual-bandit Q loss and focal CE. With the default `gamma=0.0`, TD reduces to immediate reward. When `proximal_mu > 0`, add squared-distance penalties against the captured federated reference for the prior, recognition, main-Q, and generator modules.
+>>>>>>> ea28efe (Initial commit with updated source code)
 
 **Pseudocode:**
 
@@ -476,7 +510,15 @@ kl <- KL(q_phi(z|s,a_true) || p_theta(z|s))
 if proximal_mu > 0:
     kl <- kl + 0.5 * proximal_mu * ||prior - prior_ref||^2
 backpropagate kl through prior network
+<<<<<<< HEAD
 target <- r + gamma * Q_target(s_next, argmax_a Q_main(s_next, a))
+=======
+target_td <- r + gamma * Q_target(s_next, argmax_a Q_main(s_next, a))
+# default gamma = 0.0, so target_td = r
+target_bandit[y_true] <- reward_correct
+target_bandit[present wrong classes] <- reward_incorrect
+mask absent local classes from bandit and CE gradients
+>>>>>>> ea28efe (Initial commit with updated source code)
 td <- SmoothL1(Q_main(z, s)[a], target)
 if proximal_mu > 0:
     td <- td + 0.5 * proximal_mu * (||recognition - ref||^2 + ||main_q - ref||^2)
@@ -549,7 +591,11 @@ for each test sample x:
     a_hat <- argmax_a Q(prior(x), x)
     x_hat <- G(recognition(x, a_hat), a_hat)
     score <- EVT probability from reconstruction error
+<<<<<<< HEAD
     if score >= delta_global:
+=======
+    if score > delta_global:
+>>>>>>> ea28efe (Initial commit with updated source code)
         output Unknown
     else:
         output a_hat
@@ -557,7 +603,11 @@ for each test sample x:
 
 **Complexity:** `O(N * U_e)` for `N` calibration or test samples and one encoder-decoder pass per sample, plus EVT tail fitting per class.
 
+<<<<<<< HEAD
 **Dependencies:** `src/evaluation/openset_eval.py`, `src/openset/evt.py`, `scipy.stats.genpareto`, `sklearn.metrics`.
+=======
+**Dependencies:** `src/evaluation/open_set.py`, `src/openset/evt.py`, `scipy.stats.genpareto`, `sklearn.metrics`.
+>>>>>>> ea28efe (Initial commit with updated source code)
 
 ---
 
@@ -758,7 +808,11 @@ The implementation writes the following main outputs:
 |---|---|
 | Closed-set | Accuracy, balanced accuracy, macro precision, macro recall, macro F1, per-class accuracy |
 | Open-set | AUROC, AUPRC, FPR@95%TPR, unknown F1, unknown detection rate, known accuracy after rejection |
+<<<<<<< HEAD
 | Federated | Round-level reward, TD loss, KL loss, proximal loss, client utility, selected-client fraction |
+=======
+| Federated | Round-level reward, TD loss, bandit-Q loss, KL loss, proximal loss, client utility, selected-client fraction |
+>>>>>>> ea28efe (Initial commit with updated source code)
 | Systems | Communication estimate, cumulative MB, rounds to convergence, seed variance |
 
 ### Verified Reference Results

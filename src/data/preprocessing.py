@@ -257,6 +257,27 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
 
     df_known = df[df[label_col].isin(known_labels)].copy()
     df_unknown = df[~df[label_col].isin(known_labels)].copy()
+<<<<<<< HEAD
+=======
+    max_known_per_label = getattr(p_cfg, "max_known_samples_per_label", None)
+    if max_known_per_label is not None:
+        limit = int(max_known_per_label)
+        if limit <= 0:
+            raise ValueError("dataset.preprocessing.max_known_samples_per_label must be positive.")
+        sampled_groups = [
+            group.sample(n=min(len(group), limit), random_state=seed)
+            for _, group in df_known.groupby(label_col)
+        ]
+        df_known = pd.concat(sampled_groups, ignore_index=True)
+    max_unknown_samples = getattr(p_cfg, "max_unknown_samples", None)
+    if max_unknown_samples is not None and not df_unknown.empty:
+        limit = int(max_unknown_samples)
+        if limit <= 0:
+            raise ValueError("dataset.preprocessing.max_unknown_samples must be positive.")
+        df_unknown = df_unknown.sample(n=min(len(df_unknown), limit), random_state=seed).reset_index(
+            drop=True
+        )
+>>>>>>> ea28efe (Initial commit with updated source code)
     if df_known.empty:
         raise ValueError("No known-label samples found. Check known_labels and label_column.")
 

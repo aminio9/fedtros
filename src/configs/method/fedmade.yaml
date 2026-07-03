@@ -1,0 +1,16 @@
+# @package _global_
+experiment:
+  method: FedMADE
+federated:
+  strategy:
+    name: fedmade
+    aggregation_strategy: fedmade
+    rare_class_strength: 1.25
+    quality_weight_blend: 0.35
+    cluster_balance_strength: 0.50
+    min_weight_multiplier: 0.25
+    max_weight_multiplier: 3.00
+    label_smoothing: 1.0
+    monitor_path: ${tracking.run_dir}/fedmade_monitoring.jsonl
+  server:
+    proximal_mu: 0.0

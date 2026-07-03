@@ -1,6 +1,42 @@
+<<<<<<< HEAD
 name: smoke
 description: Synthetic end-to-end smoke test.
 method: smoke
 dataset: synthetic
 partition: synthetic
 alpha: 1.0
+=======
+# @package _global_
+experiment:
+  name: smoke
+  description: Synthetic local smoke test for configuration and training syntax.
+  method: smoke
+  dataset: synthetic
+  partition: synthetic
+  alpha: 1.0
+  pipeline: smoke
+federated:
+  num_clients: 10
+  num_rounds: 1
+model:
+  latent_dim: 8
+  backbone:
+    hidden_dim: 16
+    depth: 1
+    ensemble_size: 1
+    dropout: 0.0
+    expansion: 1
+    q_hidden_dim: 16
+    q_depth: 1
+    q_ensemble_size: 1
+  generator:
+    hidden_dim: 16
+    depth: 1
+    dropout: 0.0
+    expansion: 1
+training:
+  generator:
+    enabled: false
+tracking:
+  run_id: tiny_smoke_${experiment.method}_seed${seed}
+>>>>>>> ea28efe (Initial commit with updated source code)

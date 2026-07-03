@@ -1,0 +1,14 @@
+# @package _global_
+experiment:
+  method: Class_Balanced_Reward
+training:
+  imbalance:
+    enabled: true
+    weight_mode: effective_number
+    effective_number_beta: 0.999
+    min_weight: 0.2
+    max_weight: 5.0
+    normalize: mean
+    weighted_reward: true
+    weight_negative_reward: false
+    class_balanced_sampling: false

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import json
 import logging
 from pathlib import Path
@@ -477,3 +478,21 @@ def evaluate_open_set(
         encoding="utf-8",
     )
     return metrics
+=======
+"""Backward-compatible imports for the renamed open-set evaluator.
+
+Use :mod:`src.evaluation.open_set` for new code.
+"""
+
+from src.evaluation.open_set import (
+    calibrate_evt_thresholds,
+    evaluate_open_set,
+    fit_evt_models,
+)
+
+__all__ = [
+    "calibrate_evt_thresholds",
+    "evaluate_open_set",
+    "fit_evt_models",
+]
+>>>>>>> ea28efe (Initial commit with updated source code)

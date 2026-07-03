@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 import torch
 import torch.nn.functional as F
+<<<<<<< HEAD
 from sklearn.metrics import (
     accuracy_score,
     balanced_accuracy_score,
@@ -20,6 +21,12 @@ from sklearn.metrics import (
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.agents.agent import Agent
+=======
+from torch.utils.data import DataLoader, TensorDataset
+
+from src.agents.agent import Agent
+from src.evaluation.metrics import compute_classification_metrics
+>>>>>>> ea28efe (Initial commit with updated source code)
 
 logger = logging.getLogger(__name__)
 
@@ -51,13 +58,17 @@ def evaluate_closed_set(
     loader = DataLoader(
         TensorDataset(features.float(), labels.long()), batch_size=batch_size, shuffle=False
     )
+<<<<<<< HEAD
     agent.prior_net.eval()
     agent.value_net_main.eval()
 
+=======
+>>>>>>> ea28efe (Initial commit with updated source code)
     total_loss = 0.0
     total = 0
     y_true: list[int] = []
     y_pred: list[int] = []
+<<<<<<< HEAD
     with torch.no_grad():
         for batch_features, batch_labels in loader:
             batch_features = batch_features.to(device)
@@ -96,11 +107,44 @@ def evaluate_closed_set(
         output_dict=True,
     )
     cm = confusion_matrix(y_true, y_pred, labels=label_ids)
+=======
+    prior_was_training = agent.prior_net.training
+    q_was_training = agent.value_net_main.training
+    try:
+        agent.prior_net.eval()
+        agent.value_net_main.eval()
+        with torch.no_grad():
+            for batch_features, batch_labels in loader:
+                batch_features = batch_features.to(device)
+                batch_labels = batch_labels.to(device)
+                mu, _ = agent.prior_net(batch_features)
+                logits = agent.value_net_main(mu, batch_features)
+                loss = F.cross_entropy(logits, batch_labels, reduction="sum")
+                preds = logits.argmax(dim=1)
+                total_loss += float(loss.item())
+                total += int(batch_labels.numel())
+                y_true.extend(batch_labels.cpu().tolist())
+                y_pred.extend(preds.cpu().tolist())
+    finally:
+        agent.prior_net.train(prior_was_training)
+        agent.value_net_main.train(q_was_training)
+
+    label_ids = sorted(class_names)
+    loss_value = total_loss / max(total, 1)
+    metric_bundle = compute_classification_metrics(
+        y_true,
+        y_pred,
+        label_ids=label_ids,
+        class_names=class_names,
+    )
+    target_names = metric_bundle["target_names"]
+>>>>>>> ea28efe (Initial commit with updated source code)
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     metrics = {
         f"{prefix}/loss": float(loss_value),
+<<<<<<< HEAD
         f"{prefix}/accuracy": float(accuracy),
         f"{prefix}/balanced_accuracy": float(balanced),
         f"{prefix}/macro_precision": float(macro_precision),
@@ -114,15 +158,41 @@ def evaluate_closed_set(
     if prefix == "test":
         metrics["test/loss"] = float(loss_value)
         metrics["test/accuracy"] = float(accuracy)
+=======
+        f"{prefix}/accuracy": float(metric_bundle["accuracy"]),
+        f"{prefix}/balanced_accuracy": float(metric_bundle["balanced_accuracy"]),
+        f"{prefix}/macro_precision": float(metric_bundle["macro_precision"]),
+        f"{prefix}/macro_recall": float(metric_bundle["macro_recall"]),
+        f"{prefix}/macro_f1": float(metric_bundle["macro_f1"]),
+        f"{prefix}/weighted_f1": float(metric_bundle["weighted_f1"]),
+        "num_examples": int(total),
+        "per_class_accuracy": metric_bundle["per_class_recall_by_name"],
+        f"{prefix}/per_class_recall": metric_bundle["per_class_recall_by_name"],
+    }
+    if prefix == "test":
+        metrics["test/loss"] = float(loss_value)
+        metrics["test/accuracy"] = float(metric_bundle["accuracy"])
+>>>>>>> ea28efe (Initial commit with updated source code)
     (output_path / f"{prefix}_metrics.json").write_text(
         json.dumps(metrics, indent=2, sort_keys=True),
         encoding="utf-8",
     )
     (output_path / f"{prefix}_classification_report.json").write_text(
+<<<<<<< HEAD
         json.dumps(report, indent=2, sort_keys=True),
         encoding="utf-8",
     )
     confusion_df = pd.DataFrame(cm, index=target_names, columns=target_names)
+=======
+        json.dumps(metric_bundle["classification_report"], indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    confusion_df = pd.DataFrame(
+        metric_bundle["confusion_matrix"],
+        index=target_names,
+        columns=target_names,
+    )
+>>>>>>> ea28efe (Initial commit with updated source code)
     confusion_df.to_csv(output_path / f"{prefix}_confusion_matrix.csv")
     if save_predictions:
         pred_records = [
@@ -137,7 +207,12 @@ def evaluate_closed_set(
         "Closed-set %s metrics | loss=%.6f | accuracy=%.4f | macro_f1=%.4f",
         prefix,
         loss_value,
+<<<<<<< HEAD
         accuracy,
         macro_f1,
+=======
+        metric_bundle["accuracy"],
+        metric_bundle["macro_f1"],
+>>>>>>> ea28efe (Initial commit with updated source code)
     )
     return metrics

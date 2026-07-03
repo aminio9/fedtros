@@ -86,6 +86,7 @@ Output:
 15:                 L_p <- L_p + (mu_i / 2) ||theta_p - theta_p^{k-1}||_2^2
 16:             end if
 17:             Update theta_p using gradient descent on L_p
+<<<<<<< HEAD
 18:             Compute Double-DQN target:
                     y = r + gamma(1-d) Q_{theta_Q^-}(z', s',
                         argmax_a Q_psi(z', s', a))
@@ -119,11 +120,56 @@ Output:
 41: Compute diagnostics m_i^k including reward, accuracy, F1, TD loss,
     KL loss, generator quality, class entropy, label coverage, and step count
 42: return theta_i^k, m_i^k
+=======
+18:             Compute retained TD target:
+                    y_td = r + gamma(1-d) Q_{theta_Q^-}(z', s',
+                        argmax_a Q_psi(z', s', a))
+19:             Compute low-weight TD loss:
+                    L_TD = Huber(Q_psi(z, s, a) - y_td)
+20:             Compute full-action contextual-bandit target:
+                    target[a*] = reward_correct
+                    target[present wrong local classes] = reward_incorrect
+                    absent local classes are excluded from Q-gradient
+21:             Compute focal CE on prior-latent Q logits
+22:             L_Q = lambda_td L_TD + lambda_bandit L_bandit + lambda_cls L_CE
+23:             if mu_i > 0 then
+24:                 L_Q <- L_Q + (mu_i / 2)(
+                          ||theta_r - theta_r^{k-1}||_2^2
+                        + ||theta_Q - theta_Q^{k-1}||_2^2)
+25:             end if
+26:             Update theta_r and theta_Q using gradient descent on L_Q
+27:             Periodically update target network:
+                    theta_Q^- <- tau theta_Q + (1 - tau) theta_Q^-
+28:         end if
+29:     end for
+30: end for
+31: Build correctly classified set:
+        C_i = {(s,a*) in D_i : argmax_a Q_psi(p_theta(s), s, a) = a*}
+32: if generator training is enabled and |C_i| is sufficient then
+33:     for each mini-batch (s,a*) from C_i do
+34:         Sample latent z from q_phi(z|s,a*)
+35:         Reconstruct s_hat = G_omega(z,a*)
+36:         Compute reconstruction loss L_G = MSE(s_hat, s)
+37:         if mu_i > 0 then
+38:             L_G <- L_G + (mu_i / 2)||theta_G - theta_G^{k-1}||_2^2
+39:         end if
+40:         Update theta_G using gradient descent on L_G
+41:     end for
+42: end if
+43: Set theta_i^k = {theta_p, theta_r, theta_Q, theta_G}
+44: Compute diagnostics m_i^k including reward, accuracy, F1, TD loss,
+    bandit-Q loss, KL loss, generator quality, class entropy, label coverage, and step count
+45: return theta_i^k, m_i^k
+>>>>>>> ea28efe (Initial commit with updated source code)
 ```
 
 ### Analysis
 
+<<<<<<< HEAD
 This algorithm is the most important client-side method because it explains why the local update is more than a standard supervised classifier update. The prior network is trained by matching the recognition posterior, while the recognition and main Q-network are trained with a Double-DQN TD objective. The target Q-network is deliberately local: it stabilizes the TD target but is not federated as a separate parameter block. The generator is trained only on correctly classified known samples, which reduces reconstruction contamination and supports the EVT open-set detector. The FedProx terms are optional and appear only when `mu_i > 0`, so the same algorithm covers FedAvg, FedProx, and the client update used inside FMRL-AVA. -->
+=======
+This algorithm is the most important client-side method because it explains why the local update is more than a standard supervised classifier update. The prior network is trained by matching the recognition posterior, while the recognition and main Q-network are trained with contextual-bandit full-action Q supervision, focal CE, and a retained low-weight TD objective for backward compatibility. The target Q-network is deliberately local: it stabilizes TD ablations but is not federated as a separate parameter block. The generator is trained only on correctly classified known samples, which reduces reconstruction contamination and supports the EVT open-set detector. The FedProx terms are optional and appear only when `mu_i > 0`, so the same algorithm covers FedAvg, FedProx, and the client update used inside FMRL-AVA. -->
+>>>>>>> ea28efe (Initial commit with updated source code)
 
 ## Algorithm 3: FMRL-AVA Adaptive Vector-Aligned Client Selection and Aggregation
 
@@ -240,7 +286,11 @@ Inference:
 19: Reconstruct x_hat using q_phi(x,c_hat) and G_omega
 20: Compute reconstruction error e_x = MSE(x_hat, x)
 21: Compute unknown probability p_u = M_evt[c_hat](e_x)
+<<<<<<< HEAD
 22: if p_u >= delta then
+=======
+22: if p_u > delta then
+>>>>>>> ea28efe (Initial commit with updated source code)
 23:     y_hat <- Unknown
 24: else
 25:     y_hat <- c_hat
@@ -259,3 +309,31 @@ This algorithm should appear because it explains how the method moves from close
 - Use Algorithm 3 in the federated optimization subsection because FMRL-AVA is the custom cooperative aggregation method.
 - Use Algorithm 4 in the open-set detection subsection.
 - Describe FedAvg and FedProx in text with their equations rather than giving them a separate algorithm block. -->
+<<<<<<< HEAD
+=======
+
+## Algorithm: FMRL-AVA-GLOW
+
+Input: clients C, global parameters θ, logical rounds T.
+
+For each logical round t:
+
+1. Server broadcasts θ to sampled clients.
+2. Each client trains local CVAE-DQN with contextual-bandit loss:
+   - KL(q(z|s,y) || p(z|s)) with warmup/free-nats.
+   - Full-action bandit Q loss: true class -> positive reward, present wrong local classes -> negative reward, absent classes -> no gradient.
+   - Focal classification loss with effective-number class weights.
+   - Optional local proximal penalty against the broadcast global parameters.
+3. Each client reports metadata: macro-F1, balanced accuracy, TD stability, label coverage, label histogram, update norm, and latent summary.
+4. If t is in warmup, select all clients.
+5. Otherwise, apply coverage-safe selection: keep at least 90% of clients and preserve every class in the aggregate selected histogram.
+6. Selected clients upload cached parameters.
+7. Server computes the plain FedAvg reference delta using only sample counts.
+8. Server computes bounded utility, drift, and weak alignment multipliers.
+9. Server aggregates deltas using FedAvg-anchored bounded weights.
+10. Server evaluates validation reward.
+11. Server trains the critic/mixer from validation/support advantage.
+12. The critic may lightly affect selection only after the configured activation round.
+
+Primary reported metrics: macro-F1, balanced accuracy, worst-class F1, minority-class recall. Overall accuracy is secondary.
+>>>>>>> ea28efe (Initial commit with updated source code)

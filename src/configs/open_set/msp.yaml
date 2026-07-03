@@ -1,0 +1,33 @@
+name: msp
+enabled: true
+scorer:
+  name: msp
+  score_direction: higher_unknown
+  threshold_mode: validation_known_fpr
+  target_known_fpr: 0.05
+evt:
+  enabled: false
+  score: max_softmax_probability
+  tail_fraction: null
+  tail_percent: 1.0
+  tail_size_percent: null
+  tail_semantics: percent
+  min_errors_per_class: 10
+  min_tail_size: 10
+  q: 0.0
+  threshold_mode: validation_known_fpr
+  calibration_protocol: validation_only
+  target_known_fpr: 0.05
+  target_unknown_tpr: null
+  score_direction: higher_unknown
+  decision_threshold: 0.5
+  fixed_threshold: 0.5
+  delta_grid:
+    - 1.0e-6
+    - 0.99
+    - 200
+  per_class_thresholds: false
+  unknown_label_id: -1
+  open_set_label_id: 99
+  error_scale_factor: 1.0
+

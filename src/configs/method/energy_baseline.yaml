@@ -1,0 +1,15 @@
+# @package _global_
+experiment:
+  method: Energy_Baseline
+open_set:
+  name: energy
+  enabled: true
+  evt:
+    enabled: false
+  scorer:
+    name: energy
+    requires_fit: false
+    score_direction: higher_unknown
+    threshold_mode: validation_known_fpr
+    threshold_source: validation
+    temperature: 1.0

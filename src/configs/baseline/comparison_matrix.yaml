@@ -1,0 +1,57 @@
+# Baseline comparison scaffold. Add with `+baseline=comparison_matrix` to
+# snapshot the intended fair-comparison matrix in the resolved config.
+required:
+  supervised_mlp:
+    status: scaffold_only
+    note: Needs a first-class supervised MLP trainer/evaluator before reporting.
+  cvae_only:
+    status: scaffold_only
+    note: Needs a latent/generator-only evaluator without Q/DQN claims.
+  q_network_only:
+    status: partial
+    suggested_overrides:
+      training.loss_weights.prior_kl: 0.0
+      training.generator.enabled: false
+  cvae_dqn_without_evt:
+    status: supported
+    suggested_overrides:
+      open_set.evt.enabled: false
+  cvae_dqn_with_evt:
+    status: supported
+    suggested_overrides:
+      open_set.evt.enabled: true
+  class_balanced:
+    status: supported
+    suggested_overrides:
+      training.reward.class_balanced: true
+  msp_open_set:
+    status: utility_only
+    note: Scorer utility exists; needs a first-class runner before reporting.
+  energy_open_set:
+    status: utility_only
+    note: Scorer utility exists; needs a first-class runner before reporting.
+  prototype_distance:
+    status: utility_only
+    note: Scorer utility exists; needs a first-class runner before reporting.
+  openmax_evt:
+    status: scaffold_only
+    note: Needs OpenMax-style activation-tail fitting.
+  fedavg:
+    status: supported
+    suggested_overrides:
+      "+method": fedavg
+  fedprox:
+    status: supported
+    suggested_overrides:
+      "+method": fedprox
+  fmrl_ava:
+    status: supported
+    suggested_overrides:
+      "+method": fmrl_ava
+  centralized:
+    status: supported
+    suggested_overrides:
+      experiment.pipeline: centralized
+  local_only:
+    status: scaffold_only
+    note: Needs an explicit no-aggregation federated/local runner for matched local-only reporting.

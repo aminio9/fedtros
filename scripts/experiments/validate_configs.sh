@@ -19,6 +19,10 @@ poetry run python run.py "experiment=exp6" "+method=fmrl_ava" "training.generato
 poetry run python run.py "experiment=exp6" "+method=fmrl_ava" "federated.strategy.utility_threshold=-1.0" "experiment.method=No_Selection" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp7" "federated.num_clients=20" "federated.num_rounds=50" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp7" "federated.num_clients=20" "federated.num_rounds=100" --cfg job --resolve >/dev/null
+<<<<<<< HEAD
+=======
+poetry run python run.py "experiment=exp3" "+method=fmrl_ava_glow" --cfg job --resolve >/dev/null
+>>>>>>> ea28efe (Initial commit with updated source code)
 poetry run python run.py "experiment=exp3" "+method=fedavg" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp3" "+method=fedprox" --cfg job --resolve >/dev/null
 # poetry run python run.py "experiment=exp3" "+method=centralized_no_osr" --cfg job --resolve >/dev/null
