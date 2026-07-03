@@ -42,11 +42,7 @@ The local agent contains the following neural components.
 | Prior network | \(p_\theta(z \mid s)\) | Encodes the state into a latent distribution used for action-value prediction. |
 | Recognition network | \(q_\phi(z \mid s,a)\) | Infers a class-conditioned latent distribution used during TD learning and reconstruction. |
 | Main Q-network | \(Q_\psi(z,s)\) | Produces known-class action values and defines the closed-set prediction. |
-<<<<<<< HEAD
-| Target Q-network | \(Q_{\psi^-}(z,s)\) | Local stabilization copy used to compute Double-DQN targets. |
-=======
 | Target Q-network | \(Q_{\psi^-}(z,s)\) | Local stabilization copy retained for TD ablations; default contextual-bandit training uses immediate reward. |
->>>>>>> ea28efe (Initial commit with updated source code)
 | Generator | \(G_\omega(z,a)\) | Reconstructs traffic features from latent and class-conditioned inputs. |
 
 The prior network is trained to align with the recognition network on the true class. For a known sample \((s,a^\ast)\), the latent regularization term is
@@ -56,29 +52,18 @@ L_{\mathrm{prior}} =
 \mathrm{KL}\!\left(q_\phi(z \mid s,a^\ast)\,\|\,p_\theta(z \mid s)\right).
 \]
 
-<<<<<<< HEAD
-The recognition network and main Q-network are trained through a Double-DQN target. The main Q-network selects the next action, while the target Q-network evaluates it:
-=======
 The recognition network and main Q-network are trained primarily through contextual-bandit full-action Q supervision. The retained Double-DQN target remains available for ablations, but the default `gamma=0.0` makes the TD target immediate reward:
->>>>>>> ea28efe (Initial commit with updated source code)
 
 \[
 a' = \arg\max_a Q_\psi(z',s',a),
 \]
 
 \[
-<<<<<<< HEAD
-y = r + \gamma(1-d)\,Q_{\psi^-}(z',s',a'),
-=======
 y_{td} = r + \gamma(1-d)\,Q_{\psi^-}(z',s',a'),\quad \gamma=0\Rightarrow y_{td}=r,
->>>>>>> ea28efe (Initial commit with updated source code)
 \]
 
 \[
 L_{\mathrm{TD}} =
-<<<<<<< HEAD
-\mathrm{Huber}\!\left(Q_\psi(z,s,a)-y\right).
-=======
 \mathrm{Huber}\!\left(Q_\psi(z,s,a)-y_{td}\right).
 \]
 
@@ -91,7 +76,6 @@ r_{+}, & j=a^\ast,\\
 r_{-}, & j\neq a^\ast \text{ and class } j \text{ is present locally},\\
 \text{masked}, & j \text{ is absent locally}.
 \end{cases}
->>>>>>> ea28efe (Initial commit with updated source code)
 \]
 
 Experience replay is used to break the correlation between consecutive samples, and an epsilon-greedy policy balances exploration and exploitation during local training. The target network is updated locally through soft or hard synchronization from the main Q-network. It is not uploaded as an independent federated object because it is a stabilizing copy, not a separate global model.
@@ -278,11 +262,7 @@ The same framework also supports controlled ablations. Removing EVT tests whethe
 | شبکه پیشین | \(p_\theta(z \mid s)\) | حالت را به توزیع نهفته‌ای تبدیل می‌کند که برای پیش‌بینی مقدار کنش استفاده می‌شود. |
 | شبکه بازشناسی | \(q_\phi(z \mid s,a)\) | توزیع نهفته وابسته به کلاس را برای یادگیری TD و بازسازی تخمین می‌زند. |
 | شبکه Q اصلی | \(Q_\psi(z,s)\) | مقدار کنش‌های کلاس‌های شناخته‌شده را تولید می‌کند و پیش‌بینی مجموعه بسته را می‌سازد. |
-<<<<<<< HEAD
-| شبکه Q هدف | \(Q_{\psi^-}(z,s)\) | کپی پایدارساز محلی برای محاسبه هدف Double-DQN است. |
-=======
 | شبکه Q هدف | \(Q_{\psi^-}(z,s)\) | کپی پایدارساز محلی برای ابلیشن‌های TD است؛ در حالت پیش‌فرض contextual-bandit هدف فقط پاداش فوری است. |
->>>>>>> ea28efe (Initial commit with updated source code)
 | مولد | \(G_\omega(z,a)\) | ویژگی‌های ترافیکی را از ورودی نهفته و شرط کلاسی بازسازی می‌کند. |
 
 شبکه پیشین با هدف نزدیک شدن به شبکه بازشناسی روی کلاس واقعی آموزش داده می‌شود. برای نمونه شناخته‌شده \((s,a^\ast)\)، جمله منظم‌سازی نهفته به‌صورت زیر است:
@@ -292,32 +272,18 @@ L_{\mathrm{prior}} =
 \mathrm{KL}\!\left(q_\phi(z \mid s,a^\ast)\,\|\,p_\theta(z \mid s)\right).
 \]
 
-<<<<<<< HEAD
-شبکه بازشناسی و شبکه Q اصلی با هدف Double-DQN آموزش داده می‌شوند. شبکه Q اصلی کنش بعدی را انتخاب می‌کند و شبکه Q هدف مقدار آن را ارزیابی می‌کند:
-=======
 شبکه بازشناسی و شبکه Q اصلی در نسخه اصلاح‌شده عمدتاً با زیان full-action contextual-bandit آموزش داده می‌شوند. مسیر Double-DQN برای ابلیشن باقی مانده است، اما مقدار پیش‌فرض `gamma=0.0` باعث می‌شود هدف TD به پاداش فوری تبدیل شود:
->>>>>>> ea28efe (Initial commit with updated source code)
 
 \[
 a' = \arg\max_a Q_\psi(z',s',a),
 \]
 
 \[
-<<<<<<< HEAD
-y = r + \gamma(1-d)\,Q_{\psi^-}(z',s',a'),
-=======
 y_{td} = r + \gamma(1-d)\,Q_{\psi^-}(z',s',a'),\quad \gamma=0\Rightarrow y_{td}=r,
->>>>>>> ea28efe (Initial commit with updated source code)
 \]
 
 \[
 L_{\mathrm{TD}} =
-<<<<<<< HEAD
-\mathrm{Huber}\!\left(Q_\psi(z,s,a)-y\right).
-\]
-
-بازپخش تجربه برای کاهش همبستگی میان نمونه‌های متوالی استفاده می‌شود و سیاست \(\epsilon\)-حریصانه تعادل میان اکتشاف و بهره‌برداری را در آموزش محلی برقرار می‌کند. شبکه هدف فقط به‌صورت محلی از شبکه Q اصلی به‌روزرسانی نرم یا سخت دریافت می‌کند. این شبکه به‌عنوان یک شیء فدرال مستقل ارسال نمی‌شود، زیرا نقش آن پایدارسازی آموزش است و مدل جهانی مستقلی محسوب نمی‌شود.
-=======
 \mathrm{Huber}\!\left(Q_\psi(z,s,a)-y_{td}\right).
 \]
 
@@ -333,7 +299,6 @@ r_{-}, & j\neq a^\ast \text{ و کلاس } j \text{ در کلاینت حاضر �
 \]
 
 در زیان full-action bandit، برچسب درست پاداش مثبت می‌گیرد، کلاس‌های غلط حاضر در shard محلی پاداش منفی می‌گیرند، و کلاس‌های غایب از گرادیان حذف می‌شوند. بازپخش تجربه برای کاهش همبستگی میان نمونه‌های متوالی استفاده می‌شود و سیاست \(\epsilon\)-حریصانه تعادل میان اکتشاف و بهره‌برداری را در آموزش محلی برقرار می‌کند. شبکه هدف فقط به‌صورت محلی از شبکه Q اصلی به‌روزرسانی نرم یا سخت دریافت می‌کند. این شبکه به‌عنوان یک شیء فدرال مستقل ارسال نمی‌شود، زیرا نقش آن پایدارسازی آموزش است و مدل جهانی مستقلی محسوب نمی‌شود.
->>>>>>> ea28efe (Initial commit with updated source code)
 
 هنگامی که FedProx فعال باشد، هدف محلی شامل جریمه پروگزیمال است تا انحراف به‌روزرسانی محلی از پارامترهای جهانی پخش‌شده محدود شود:
 

@@ -3,10 +3,7 @@ import logging
 import sys
 from typing import Any
 
-<<<<<<< HEAD
-=======
 import numpy as np
->>>>>>> ea28efe (Initial commit with updated source code)
 import torch
 from omegaconf import DictConfig
 from tqdm.auto import tqdm
@@ -60,12 +57,9 @@ def run_local_training_round(
     total_correct = 0
     action_counts: dict[int, int] = {}
     label_counts: dict[int, int] = {}
-<<<<<<< HEAD
-=======
     reward_values: list[float] = []
     reward_by_label: dict[int, list[float]] = {}
     scalar_metric_totals: dict[str, float] = {}
->>>>>>> ea28efe (Initial commit with updated source code)
     started_training = False
 
     interactive = sys.stdout.isatty()
@@ -114,11 +108,8 @@ def run_local_training_round(
             state_s = next_state
 
             episode_reward += reward
-<<<<<<< HEAD
-=======
             reward_values.append(float(reward))
             reward_by_label.setdefault(true_label_int, []).append(float(reward))
->>>>>>> ea28efe (Initial commit with updated source code)
             total_steps += 1
             total_correct += int(action_int == true_label_int)
             action_counts[action_int] = action_counts.get(action_int, 0) + 1
@@ -134,17 +125,11 @@ def run_local_training_round(
                     # )
                     started_training = True
                 batch = buffer.sample(batch_size, device)
-<<<<<<< HEAD
-                td_loss, kl_loss, prox_loss, avg_q = agent.train_step(
-                    batch, proximal_mu=proximal_mu
-                )
-=======
                 step_metrics = agent.train_step(batch, proximal_mu=proximal_mu)
                 td_loss = float(step_metrics.get("loss/q_td", 0.0))
                 kl_loss = float(step_metrics.get("loss/prior_kl", 0.0))
                 prox_loss = float(step_metrics.get("loss/proximal", 0.0))
                 avg_q = float(step_metrics.get("q/pred_mean", 0.0))
->>>>>>> ea28efe (Initial commit with updated source code)
 
                 episode_train_steps += 1
                 episode_td_loss += td_loss
@@ -157,14 +142,11 @@ def run_local_training_round(
                 total_kl_loss += kl_loss
                 total_prox_loss += prox_loss
                 total_avg_q += avg_q
-<<<<<<< HEAD
-=======
                 for key, value in step_metrics.items():
                     if isinstance(value, (int, float)):
                         scalar_metric_totals[key] = scalar_metric_totals.get(key, 0.0) + float(
                             value
                         )
->>>>>>> ea28efe (Initial commit with updated source code)
 
                 # Soft-update the target network periodically
                 if total_steps % target_update_freq == 0:
@@ -206,8 +188,6 @@ def run_local_training_round(
     avg_round_kl = total_kl_loss / total_train_steps if total_train_steps else 0.0
     avg_round_prox = total_prox_loss / total_train_steps if total_train_steps else 0.0
     avg_round_q = total_avg_q / total_train_steps if total_train_steps else 0.0
-<<<<<<< HEAD
-=======
     averaged_step_metrics = {
         key: value / total_train_steps
         for key, value in scalar_metric_totals.items()
@@ -231,7 +211,6 @@ def run_local_training_round(
         )
     else:
         class_reward_weights_json = "[]"
->>>>>>> ea28efe (Initial commit with updated source code)
 
     metrics = {
         "total_reward": total_reward,
@@ -241,9 +220,6 @@ def run_local_training_round(
         "avg_td_loss": avg_round_td,
         "avg_kl_loss": avg_round_kl,
         "avg_prox_loss": avg_round_prox,
-<<<<<<< HEAD
-        "avg_q_value": avg_round_q,
-=======
         "avg_total_loss": float(averaged_step_metrics.get("loss/total", 0.0)),
         "avg_classification_loss": float(
             averaged_step_metrics.get("loss/classification", 0.0)
@@ -265,17 +241,11 @@ def run_local_training_round(
         "gradient_norm_q": float(averaged_step_metrics.get("gradient/q_norm", 0.0)),
         "learning_rate_prior": float(averaged_step_metrics.get("lr/prior", 0.0)),
         "learning_rate_q_rl": float(averaged_step_metrics.get("lr/q_rl", 0.0)),
->>>>>>> ea28efe (Initial commit with updated source code)
         "train_steps": float(total_train_steps),
         "total_steps": float(total_steps),
         "buffer_size": float(len(buffer)),
         "epsilon": float(epsilon_scheduler.get_epsilon()),
         "proximal_mu": float(proximal_mu),
-<<<<<<< HEAD
-        "action_histogram": json.dumps(action_counts, sort_keys=True),
-        "label_histogram": json.dumps(label_counts, sort_keys=True),
-    }
-=======
         **reward_stats,
         "per_class_reward": json.dumps(per_class_reward, sort_keys=True),
         "class_reward_weights": class_reward_weights_json,
@@ -284,7 +254,6 @@ def run_local_training_round(
     }
     for key, value in averaged_step_metrics.items():
         metrics[f"train_step/{key}"] = float(value)
->>>>>>> ea28efe (Initial commit with updated source code)
 
     active_logger.info("Local training finished. Ran %s steps.", total_steps)
     active_logger.info("Round Metrics: %s", metrics)

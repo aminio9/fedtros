@@ -6,11 +6,8 @@ from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 
-<<<<<<< HEAD
-=======
 from src.openset.evt import resolve_tail_fraction
 
->>>>>>> ea28efe (Initial commit with updated source code)
 REQUIRED_CONFIG_KEYS = (
     "seed",
     "device.prefer",
@@ -61,18 +58,11 @@ REQUIRED_CONFIG_KEYS = (
     "federated.strategy.max_selected_fraction",
     "federated.strategy.max_agents",
     "federated.strategy.warmup_rounds",
-<<<<<<< HEAD
-    "open_set.evt.tail_size_percent",
-=======
->>>>>>> ea28efe (Initial commit with updated source code)
     "open_set.evt.target_known_fpr",
     "plotting.required_plots",
     "tracking.run_dir",
     "checkpointing.latest_checkpoint_path",
-<<<<<<< HEAD
-=======
     "checkpointing.last_model_path",
->>>>>>> ea28efe (Initial commit with updated source code)
     "logging.level",
 )
 
@@ -90,24 +80,18 @@ def validate_config(cfg: DictConfig, extra_required: Iterable[str] = ()) -> None
 
     _validate_runtime(cfg)
     _validate_experiment_contract(cfg)
-<<<<<<< HEAD
-=======
     _validate_named_config_contracts(cfg)
     _validate_architecture_contracts(cfg)
->>>>>>> ea28efe (Initial commit with updated source code)
 
     known_labels = OmegaConf.select(cfg, "dataset.preprocessing.known_labels")
     if not known_labels:
         raise ValueError("dataset.preprocessing.known_labels must contain at least one label.")
-<<<<<<< HEAD
-=======
     num_actions = int(OmegaConf.select(cfg, "model.num_actions"))
     if num_actions != len(known_labels):
         raise ValueError(
             "model.num_actions must match len(dataset.preprocessing.known_labels): "
             f"{num_actions} != {len(known_labels)}."
         )
->>>>>>> ea28efe (Initial commit with updated source code)
 
     num_clients = int(OmegaConf.select(cfg, "federated.num_clients"))
     if num_clients <= 0:
@@ -177,8 +161,6 @@ def validate_config(cfg: DictConfig, extra_required: Iterable[str] = ()) -> None
     if not 0.0 < max_selected_fraction <= 1.0:
         raise ValueError("federated.strategy.max_selected_fraction must be in (0, 1].")
 
-<<<<<<< HEAD
-=======
     resolve_tail_fraction(OmegaConf.select(cfg, "open_set.evt"))
     target_known_fpr = float(OmegaConf.select(cfg, "open_set.evt.target_known_fpr"))
     target_unknown_tpr = OmegaConf.select(cfg, "open_set.evt.target_unknown_tpr", default=None)
@@ -211,7 +193,6 @@ def validate_config(cfg: DictConfig, extra_required: Iterable[str] = ()) -> None
         raise ValueError("Only calibration_protocol=validation_only is currently supported.")
     _validate_loss_and_reward_config(cfg)
 
->>>>>>> ea28efe (Initial commit with updated source code)
 
 def _validate_runtime(cfg: DictConfig) -> None:
     prefer = str(OmegaConf.select(cfg, "device.prefer")).lower()
@@ -234,8 +215,6 @@ def _validate_runtime(cfg: DictConfig) -> None:
         raise ValueError("runtime.simulation_gpu_batches.batch_size must be positive.")
 
 
-<<<<<<< HEAD
-=======
 def _validate_loss_and_reward_config(cfg: DictConfig) -> None:
     non_negative_paths = (
         "training.loss_weights.prior_kl",
@@ -462,7 +441,6 @@ def _infer_model_family(model_name: str) -> str:
     return "unknown"
 
 
->>>>>>> ea28efe (Initial commit with updated source code)
 def _validate_experiment_contract(cfg: DictConfig) -> None:
     """Enforce the paper-level experiment contract from docs/cf_marlos-experiment-plan.md."""
     experiment_id = str(OmegaConf.select(cfg, "experiment.id", default="")).upper()

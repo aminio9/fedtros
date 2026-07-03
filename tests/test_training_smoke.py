@@ -3,12 +3,8 @@ from omegaconf import OmegaConf
 
 from src.agents.agent import Agent
 from src.agents.policy import EpsilonGreedyPolicy, EpsilonScheduler
-<<<<<<< HEAD
-from src.models.models import OpenSetQChainModelFactory
-=======
 from src.models import CVAEQChainModelAdapter, validate_tabular_output
 from src.models.cvae_dqn import OpenSetQChainModelFactory
->>>>>>> ea28efe (Initial commit with updated source code)
 from src.rl.environment import BlockchainIntrusionEnv
 from src.rl.local_training import run_local_training_round
 from src.rl.replay_buffer import ExperienceReplayBuffer
@@ -23,11 +19,7 @@ def test_minimal_local_training_smoke(tmp_path):
         },
         path,
     )
-<<<<<<< HEAD
-    model_cfg = OmegaConf.create({"state_dim": 5, "latent_dim": 3, "num_actions": 2})
-=======
     model_cfg = OmegaConf.create({"state_dim": 5, "latent_dim": 3, "num_actions": 2, "backbone": {"hidden_dim": 8, "depth": 1, "ensemble_size": 1, "dropout": 0.0, "expansion": 1, "q_hidden_dim": 8, "q_depth": 1, "q_ensemble_size": 1}, "generator": {"hidden_dim": 8, "depth": 1, "dropout": 0.0, "expansion": 1}})
->>>>>>> ea28efe (Initial commit with updated source code)
     training_cfg = OmegaConf.create(
         {
             "seed": 7,
@@ -43,9 +35,6 @@ def test_minimal_local_training_smoke(tmp_path):
             "target_update_freq": 2,
             "use_double_dqn": True,
             "prior_grad_clip_norm": 1.0,
-<<<<<<< HEAD
-            "prior_kl_raw": False,
-=======
             "q_grad_clip_norm": 1.0,
             "prior_kl_raw": False,
             "loss_weights": {
@@ -55,7 +44,6 @@ def test_minimal_local_training_smoke(tmp_path):
                 "generator_reconstruction": 1.0,
                 "proximal": 1.0,
             },
->>>>>>> ea28efe (Initial commit with updated source code)
             "epsilon_start": 0.0,
             "epsilon_end": 0.0,
             "epsilon_decay_rate": 1.0,
@@ -81,8 +69,6 @@ def test_minimal_local_training_smoke(tmp_path):
 
     assert steps == 3
     assert "avg_td_loss" in metrics
-<<<<<<< HEAD
-=======
     assert "avg_total_loss" in metrics
     assert "avg_classification_loss" in metrics
     assert "gradient_norm_q" in metrics
@@ -126,4 +112,3 @@ def test_cvae_dqn_adapter_exposes_shared_output_contract():
     validate_tabular_output(output, batch_size=4, num_classes=2)
     assert output["q_values"] is output["logits"]
     assert output["mu"] is output["features"]
->>>>>>> ea28efe (Initial commit with updated source code)

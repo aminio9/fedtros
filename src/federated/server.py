@@ -22,9 +22,6 @@ from hydra.utils import get_original_cwd
 from omegaconf import DictConfig, OmegaConf
 
 from src.agents.agent import Agent
-<<<<<<< HEAD
-from src.checkpointing.checkpoints import load_agent_checkpoint
-=======
 from src.checkpointing.checkpoints import (
     CheckpointState,
     load_agent_checkpoint,
@@ -33,7 +30,6 @@ from src.checkpointing.checkpoints import (
     write_checkpoint_metadata,
 )
 from src.federated.class_aware import class_aware_aggregation_records
->>>>>>> ea28efe (Initial commit with updated source code)
 from src.federated.selection_utils import (
     alignment_multiplier,
     centered_utility,
@@ -42,11 +38,7 @@ from src.federated.selection_utils import (
     select_utility_records,
     validation_team_reward,
 )
-<<<<<<< HEAD
-from src.models.models import OpenSetQChainModelFactory
-=======
 from src.models.cvae_dqn import OpenSetQChainModelFactory
->>>>>>> ea28efe (Initial commit with updated source code)
 logger = logging.getLogger("Server")
 
 EPS = 1e-8
@@ -151,15 +143,6 @@ def save_global_model(
         }
 
         round_path = model_dir / f"global_model_round_{round_num:04d}.pt"
-<<<<<<< HEAD
-        torch.save(checkpoint, round_path)
-        torch.save(checkpoint, model_dir / "global_model_latest.pt")
-        torch.save(checkpoint, _resolve_path(cfg.checkpointing.latest_checkpoint_path))
-        if bool(cfg.checkpointing.save_best):
-            best_path = _resolve_path(cfg.checkpointing.best_model_path)
-            if not best_path.exists():
-                torch.save(checkpoint, best_path)
-=======
         state = CheckpointState(
             epoch=round_num,
             global_step=round_num,
@@ -175,7 +158,6 @@ def save_global_model(
             _resolve_path(cfg.checkpointing.last_model_path),
             state,
         )
->>>>>>> ea28efe (Initial commit with updated source code)
 
         metrics_path = model_dir / "federated_round_metrics.csv"
         write_header = not metrics_path.exists()
@@ -190,8 +172,6 @@ def save_global_model(
         logger.error("Failed to save PyTorch checkpoint: %s", e)
 
 
-<<<<<<< HEAD
-=======
 def _maybe_save_best_validation_checkpoint(
     cfg: DictConfig,
     server_round: int,
@@ -291,7 +271,6 @@ def _positive_evaluate_results(server_round: int, results):
     return positive_results
 
 
->>>>>>> ea28efe (Initial commit with updated source code)
 def fit_config_fn(server_round: int) -> dict[str, fl.common.Scalar]:
     return {"server_round": server_round, "phase": "standard"}
 
@@ -325,10 +304,7 @@ class SaveModelFedAvg(FedAvg):
     def __init__(self, cfg: DictConfig, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.cfg = cfg
-<<<<<<< HEAD
-=======
         self.best_validation_metric: float | None = None
->>>>>>> ea28efe (Initial commit with updated source code)
 
     def aggregate_fit(
         self,
@@ -348,8 +324,6 @@ class SaveModelFedAvg(FedAvg):
 
         return aggregated_parameters, aggregated_metrics
 
-<<<<<<< HEAD
-=======
     def aggregate_evaluate(self, server_round: int, results, failures):
         filtered_results = _positive_evaluate_results(server_round, results)
         if results and not filtered_results:
@@ -364,16 +338,12 @@ class SaveModelFedAvg(FedAvg):
             )
         return loss, metrics
 
->>>>>>> ea28efe (Initial commit with updated source code)
 
 class SaveModelFedProx(FedProx):
     def __init__(self, cfg: DictConfig, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.cfg = cfg
-<<<<<<< HEAD
-=======
         self.best_validation_metric: float | None = None
->>>>>>> ea28efe (Initial commit with updated source code)
 
     def aggregate_fit(
         self,
@@ -391,8 +361,6 @@ class SaveModelFedProx(FedProx):
 
         return aggregated_parameters, aggregated_metrics
 
-<<<<<<< HEAD
-=======
     def aggregate_evaluate(self, server_round: int, results, failures):
         filtered_results = _positive_evaluate_results(server_round, results)
         if results and not filtered_results:
@@ -649,7 +617,6 @@ class FedMADEClassAwareAggregationStrategy(FedAvg):
             else:
                 logger.warning("%s failure %d: %r", context, idx, failure)
 
->>>>>>> ea28efe (Initial commit with updated source code)
 
 class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
     """
@@ -693,15 +660,12 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
             OmegaConf.select(cfg, "strategy.utility_strength", default=1.0)
         )
         self.critic_blend = float(OmegaConf.select(cfg, "strategy.critic_blend", default=0.15))
-<<<<<<< HEAD
-=======
         self.critic_activation_round = int(
             OmegaConf.select(cfg, "strategy.critic_activation_round", default=40)
         )
         self.critic_active_blend = float(
             OmegaConf.select(cfg, "strategy.critic_active_blend", default=0.05)
         )
->>>>>>> ea28efe (Initial commit with updated source code)
         self.alignment_strength = float(
             OmegaConf.select(cfg, "strategy.alignment_strength", default=0.50)
         )
@@ -717,8 +681,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
         self.validation_reward_ema_decay = float(
             OmegaConf.select(cfg, "strategy.validation_reward_ema_decay", default=0.80)
         )
-<<<<<<< HEAD
-=======
         self.profile_balance_strength = float(
             OmegaConf.select(cfg, "strategy.profile_balance_strength", default=0.0)
         )
@@ -751,7 +713,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
         self.server_tau = float(OmegaConf.select(cfg, "strategy.server_tau", default=1e-3))
         self.server_momentum: list[np.ndarray] | None = None
         self.server_second_moment: list[np.ndarray] | None = None
->>>>>>> ea28efe (Initial commit with updated source code)
         self.validation_reward_weights = self._read_weight_map(
             cfg,
             "strategy.team_reward_weights",
@@ -801,29 +762,19 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
         self.last_validation_metrics: dict[str, float] = {}
         self.last_validation_team_reward: float | None = None
         self.validation_team_reward_ema: float | None = None
-<<<<<<< HEAD
-=======
         self.best_validation_metric: float | None = None
->>>>>>> ea28efe (Initial commit with updated source code)
         self.last_support_reward: float = 0.0
         self.last_team_reward_target: float = 0.0
 
         logger.info(
-<<<<<<< HEAD
-            "FMRL-AVA configured | max_agents=%d scalar_dim=%d threshold=%.4f aggregation_lr=%.3f",
-=======
             "FMRL-AVA configured | max_agents=%d scalar_dim=%d threshold=%.4f "
             "aggregation_lr=%.3f profile_strength=%.3f server_optimizer=%s",
->>>>>>> ea28efe (Initial commit with updated source code)
             self.max_agents,
             self.scalar_dim,
             self.utility_threshold,
             self.aggregation_lr,
-<<<<<<< HEAD
-=======
             self.profile_balance_strength,
             self.server_optimizer_name,
->>>>>>> ea28efe (Initial commit with updated source code)
         )
 
     def _get_critic(self, cid: str) -> torch.nn.Module:
@@ -878,10 +829,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
         return new_params, metrics
 
     def aggregate_evaluate(self, server_round: int, results, failures):
-<<<<<<< HEAD
-        loss, metrics = super().aggregate_evaluate(server_round, results, failures)
-        if metrics:
-=======
         filtered_results = _positive_evaluate_results(server_round, results)
         if results and not filtered_results:
             return None, {}
@@ -893,7 +840,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
                 metrics,
                 self.best_validation_metric,
             )
->>>>>>> ea28efe (Initial commit with updated source code)
             validation_reward = validation_team_reward(metrics, weights=self.validation_reward_weights)
             if self.validation_team_reward_ema is None:
                 self.validation_team_reward_ema = validation_reward
@@ -962,12 +908,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
                 utility_temperature=self.utility_temperature,
             )
             audit_score = float(parsed["metrics"]["audit_score"])
-<<<<<<< HEAD
-            combined_score = combine_utility_score(
-                audit_score=audit_score,
-                critic_score=critic_score,
-                critic_blend=self.critic_blend,
-=======
             active_blend = 0.0
             if self._logical_round(server_round) >= self.critic_activation_round:
                 active_blend = min(float(self.critic_blend), float(self.critic_active_blend))
@@ -975,7 +915,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
                 audit_score=audit_score,
                 critic_score=critic_score,
                 critic_blend=active_blend,
->>>>>>> ea28efe (Initial commit with updated source code)
             )
 
             record = {
@@ -986,16 +925,12 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
                 "critic_raw_utility": float(critic_raw_utility),
                 "critic_score": critic_score,
                 "combined_score": combined_score,
-<<<<<<< HEAD
-                "selected": False,
-=======
                 "critic_blend_active": float(active_blend),
                 "selected": False,
                 "label_histogram": fit_res.metrics.get(
                     "full_label_histogram",
                     fit_res.metrics.get("label_histogram", "{}"),
                 ),
->>>>>>> ea28efe (Initial commit with updated source code)
                 **parsed["metrics"],
             }
             self.stage1_data_cache[client.cid] = parsed
@@ -1067,22 +1002,13 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
                 client_layer - base_layer
                 for client_layer, base_layer in zip(client_weights, base_weights, strict=True)
             ]
-<<<<<<< HEAD
-            for idx, delta in enumerate(deltas):
-                reference_delta[idx] += delta * base_aggregation_weight
-=======
->>>>>>> ea28efe (Initial commit with updated source code)
 
             delta_norm = self._parameter_delta_norm(client_weights, base_weights)
             pending_uploads.append(
                 {
                     "cid": client.cid,
                     "utility": utility,
-<<<<<<< HEAD
-                    "base_aggregation_weight": base_aggregation_weight,
-=======
                     "utility_weighted_examples": base_aggregation_weight,
->>>>>>> ea28efe (Initial commit with updated source code)
                     "delta_norm": delta_norm,
                     "num_examples": num_examples,
                     "recent_reward": float(fit_res.metrics.get("recent_reward", 0.0)),
@@ -1112,17 +1038,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
                     "generator_correct_frac": float(
                         fit_res.metrics.get("generator_correct_frac", 0.0)
                     ),
-<<<<<<< HEAD
-                    "_deltas": deltas,
-                }
-            )
-            total_base_aggregation_weight += base_aggregation_weight
-
-        if not pending_uploads or total_base_aggregation_weight <= EPS:
-            return self.saved_global_parameters, {"fmrl_ava_selected_clients": 0.0}
-
-        reference_delta = [delta / total_base_aggregation_weight for delta in reference_delta]
-=======
                     "quality": self._client_quality(fit_res.metrics),
                     "label_histogram": fit_res.metrics.get(
                         "full_label_histogram",
@@ -1161,7 +1076,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
         if total_base_aggregation_weight <= EPS:
             return self.saved_global_parameters, {"fmrl_ava_selected_clients": 0.0}
 
->>>>>>> ea28efe (Initial commit with updated source code)
         for record in pending_uploads:
             deltas = record.pop("_deltas")
             alignment_cosine = self._delta_cosine(deltas, reference_delta)
@@ -1178,11 +1092,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
         if total_aggregation_weight <= EPS:
             return self.saved_global_parameters, {"fmrl_ava_selected_clients": 0.0}
 
-<<<<<<< HEAD
-        new_weights = [
-            base_layer + self.aggregation_lr * (delta / total_aggregation_weight)
-            for base_layer, delta in zip(base_weights, weighted_deltas, strict=True)
-=======
         normalized_delta = [delta / total_aggregation_weight for delta in weighted_deltas]
         new_weights = [
             base_layer + delta
@@ -1191,7 +1100,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
                 self._server_optimized_delta(normalized_delta),
                 strict=True,
             )
->>>>>>> ea28efe (Initial commit with updated source code)
         ]
         selected_fraction = len(upload_records) / max(len(self.selection_records), 1)
         system_utility = self._compute_system_utility(upload_records, selected_fraction)
@@ -1322,17 +1230,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
             },
         }
 
-<<<<<<< HEAD
-    def _select_records(self, server_round: int) -> list[dict[str, Any]]:
-        return select_utility_records(
-            self.selection_records,
-            server_round=server_round,
-            min_selected_clients=self.min_selected_clients,
-            max_selected_fraction=self.max_selected_fraction,
-            warmup_rounds=self.warmup_rounds,
-        )
-
-=======
     def _parse_hist(self, value: Any, num_classes: int) -> np.ndarray:
         try:
             raw = json.loads(value) if isinstance(value, str) else value
@@ -1403,7 +1300,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
 
         return self._coverage_safe_select(self.selection_records)
 
->>>>>>> ea28efe (Initial commit with updated source code)
     def _calibrate_round_utilities(self, server_round: int) -> None:
         if not self.selection_records:
             return
@@ -1428,10 +1324,7 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
     def _train_server_models(self, system_utility: float) -> dict[str, float]:
         if not self.stage1_data_cache:
             return {}
-<<<<<<< HEAD
-=======
 
->>>>>>> ea28efe (Initial commit with updated source code)
         self.optimizer.zero_grad()
         self.aggregator.train()
         for critic in self.critics.values():
@@ -1439,18 +1332,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
 
         utilities, global_state = self._current_utility_tensor()
         prediction = self.aggregator(utilities, global_state)
-<<<<<<< HEAD
-        target = torch.tensor([[system_utility]], dtype=torch.float32, device=self.device)
-        loss = F.mse_loss(prediction, target)
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.aggregator.parameters(), 1.0)
-        for critic in self.critics.values():
-            torch.nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
-        self.optimizer.step()
-
-        return {
-            "fmrl_ava_mixer_loss": float(loss.item()),
-=======
 
         target = torch.tensor([[system_utility]], dtype=torch.float32, device=self.device)
         mixer_loss = F.mse_loss(prediction, target)
@@ -1511,27 +1392,16 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
             "fmrl_ava_mixer_loss": float(mixer_loss.item()),
             "fmrl_ava_critic_loss": float(critic_loss.item()),
             "fmrl_ava_total_server_loss": float(loss.item()),
->>>>>>> ea28efe (Initial commit with updated source code)
             "fmrl_ava_predicted_system_utility": float(prediction.detach().item()),
             "fmrl_ava_team_reward_target": float(system_utility),
             "fmrl_ava_validation_reward": float(self.validation_team_reward_ema or 0.0),
             "fmrl_ava_support_reward": float(self.last_support_reward),
-<<<<<<< HEAD
-=======
             "fmrl_ava_server_advantage": float(advantage),
->>>>>>> ea28efe (Initial commit with updated source code)
         }
 
     def _current_utility_tensor(self) -> tuple[torch.Tensor, torch.Tensor]:
         utilities = []
         features = []
-<<<<<<< HEAD
-        for cid in self.client_order[: self.max_agents]:
-            data = self.stage1_data_cache[cid]
-            record = next((r for r in self.selection_records if r["cid"] == cid), None)
-            utility_value = float(record["utility"]) if record is not None else 0.0
-            utilities.append(torch.tensor([utility_value], device=self.device))
-=======
 
         for cid in self.client_order[: self.max_agents]:
             data = self.stage1_data_cache[cid]
@@ -1541,7 +1411,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
             utility = torch.sigmoid(raw_utility / self.utility_temperature)
 
             utilities.append(utility.view(1))
->>>>>>> ea28efe (Initial commit with updated source code)
             features.append(data["feature"].view(-1))
 
         if not utilities:
@@ -1549,16 +1418,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
             features.append(torch.zeros(self.client_feature_dim, device=self.device))
 
         utility_tensor = torch.stack(utilities).view(1, -1)
-<<<<<<< HEAD
-        if utility_tensor.shape[1] < self.max_agents:
-            utility_tensor = F.pad(utility_tensor, (0, self.max_agents - utility_tensor.shape[1]))
-
-        global_state = torch.cat(features).view(1, -1)
-        target_dim = self.state_dim
-        if global_state.shape[1] < target_dim:
-            global_state = F.pad(global_state, (0, target_dim - global_state.shape[1]))
-        return utility_tensor, global_state[:, :target_dim]
-=======
 
         if utility_tensor.shape[1] < self.max_agents:
             utility_tensor = F.pad(
@@ -1575,7 +1434,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
             )
 
         return utility_tensor, global_state[:, : self.state_dim]
->>>>>>> ea28efe (Initial commit with updated source code)
 
     def _compute_support_reward(
         self, upload_records: list[dict[str, float]], selected_fraction: float
@@ -1617,21 +1475,12 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
         support_reward = self._compute_support_reward(upload_records, selected_fraction)
         validation_reward = self.validation_team_reward_ema
         if validation_reward is None:
-<<<<<<< HEAD
-            self.last_team_reward_target = support_reward
-=======
->>>>>>> ea28efe (Initial commit with updated source code)
             return support_reward
 
         blend = float(np.clip(self.validation_reward_blend, 0.0, 1.0))
         system_utility = float(
             np.clip((blend * validation_reward) + ((1.0 - blend) * support_reward), 0.0, 1.0)
         )
-<<<<<<< HEAD
-        self.last_team_reward_target = system_utility
-        return system_utility
-
-=======
         return system_utility
 
     def _apply_profile_multipliers(self, records: list[dict[str, Any]]) -> None:
@@ -1735,7 +1584,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
             optimized_delta.append(step.astype(delta.dtype, copy=False))
         return optimized_delta
 
->>>>>>> ea28efe (Initial commit with updated source code)
     def _log_selection_table(self, server_round: int) -> None:
         logger.info("-" * 112)
         logger.info(
@@ -1808,8 +1656,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
         except (TypeError, ValueError):
             return float(default)
 
-<<<<<<< HEAD
-=======
     def _client_quality(self, metrics: dict[str, Scalar]) -> float:
         for key in (
             "local_f1_macro",
@@ -1823,7 +1669,6 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
                 return float(np.clip(self._float_metric(metrics, key), 0.0, 1.0))
         return 1.0
 
->>>>>>> ea28efe (Initial commit with updated source code)
     @staticmethod
     def _read_weight_map(
         cfg: DictConfig,
@@ -1932,13 +1777,10 @@ def get_strategy(cfg: DictConfig) -> Strategy:
         )
         return FMRLAdaptiveVectorAlignedAggregationStrategy(cfg=cfg, **args)
 
-<<<<<<< HEAD
-=======
     if strat_name in {"fedmade", "class_aware", "class_aware_dynamic"}:
         logger.info("--- Strategy: FedMADE-style class-aware aggregation with Model Saving ---")
         return FedMADEClassAwareAggregationStrategy(cfg=cfg, **args)
 
->>>>>>> ea28efe (Initial commit with updated source code)
     if strat_name == "fedprox":
         proximal_mu = float(cfg.server.proximal_mu)
         logger.info("--- Strategy: FedProx (mu=%.2f) with Model Saving ---", proximal_mu)

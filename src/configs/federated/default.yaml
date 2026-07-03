@@ -25,14 +25,6 @@ strategy:
   utility_temperature: 1.0
   utility_strength: 0.75
   critic_blend: 0.15
-<<<<<<< HEAD
-  alignment_strength: 0.50
-  min_alignment_multiplier: 0.50
-  max_alignment_multiplier: 2.00
-  validation_reward_blend: 0.85
-  validation_reward_ema_decay: 0.80
-  aggregation_lr: 1.0
-=======
   critic_activation_round: 40
   critic_active_blend: 0.05
   alignment_strength: 0.50
@@ -54,7 +46,6 @@ strategy:
   validation_reward_ema_decay: 0.80
   aggregation_lr: 1.0
   local_proximal_mu: 0.001
->>>>>>> ea28efe (Initial commit with updated source code)
   min_selected_clients: 1
   max_selected_fraction: 1.0
   min_utility: 0.25

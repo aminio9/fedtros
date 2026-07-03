@@ -291,8 +291,6 @@ validation_reward_ema_decay: 0.80
 5. reward تیمی برای آموزش critic/mixer و گزارش کیفیت باقی می‌ماند، نه برای تعیین مستقیم aggregation.
 
 این طراحی برای non-IID منطقی‌تر است و در IID همچنان رفتار FedAvg-like دارد.
-<<<<<<< HEAD
-=======
 
 ## FMRL-AVA-GLOW patch: research-grade non-IID alpha=0.1 mode
 
@@ -376,4 +374,3 @@ python run.py experiment=exp3 +method=fedavg seed=42 dataset.preprocessing.alpha
 - Lin, T.-Y., Goyal, P., Girshick, R., He, K., Dollar, P. “Focal Loss for Dense Object Detection.” ICCV, 2017. DOI: 10.1109/ICCV.2017.324.
 - Cui, Y., Jia, M., Lin, T.-Y., Song, Y., Belongie, S. “Class-Balanced Loss Based on Effective Number of Samples.” CVPR, 2019. DOI: 10.1109/CVPR.2019.00949.
 - Hou, W., Chen, T., Wang, F., Wu, T., Zheng, Z., Tang, S., Lim, W. Y. B. “FedAdamom: Adaptive Momentum for Improved Generalization in Federated Optimization.” CVPR, 2026. Use the official CVPR OpenAccess URL if no DOI is available; do not invent one.
->>>>>>> ea28efe (Initial commit with updated source code)

@@ -1,13 +1,9 @@
-<<<<<<< HEAD
-import torch
-=======
 from pathlib import Path
 
 import numpy as np
 import torch
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
->>>>>>> ea28efe (Initial commit with updated source code)
 
 from src.federated.selection_utils import (
     alignment_multiplier,
@@ -17,11 +13,6 @@ from src.federated.selection_utils import (
     select_utility_records,
     validation_team_reward,
 )
-<<<<<<< HEAD
-from src.federated.server_models import AsyncCritic, CentralizedAggregator
-
-
-=======
 from src.federated.server import FMRLAdaptiveVectorAlignedAggregationStrategy
 from src.federated.server_models import AsyncCritic, CentralizedAggregator
 
@@ -51,7 +42,6 @@ def _bare_fmrl_strategy():
     return strategy
 
 
->>>>>>> ea28efe (Initial commit with updated source code)
 def test_async_critic_outputs_nonnegative_utility():
     critic = AsyncCritic(hidden_dim=8, latent_dim=3, scalar_dim=4)
     utility = critic(torch.randn(2, 3), torch.rand(2, 4))
@@ -199,8 +189,6 @@ def test_validation_team_reward_does_not_penalize_missing_open_set_metrics():
     )
 
     assert abs(reward - 0.86) < 1e-9
-<<<<<<< HEAD
-=======
 
 
 def test_fmrl_ava_profile_multipliers_break_fedavg_tie_under_label_skew():
@@ -262,4 +250,3 @@ def test_fmrl_ava_method_overlay_uses_glow_safe_defaults():
     assert cfg.federated.strategy.profile_min_multiplier == 1.0
     assert cfg.federated.strategy.drift_penalty_strength > 0.0
     assert cfg.federated.strategy.server_optimizer == "none"
->>>>>>> ea28efe (Initial commit with updated source code)

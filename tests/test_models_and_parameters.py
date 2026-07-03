@@ -4,13 +4,6 @@ from flwr.common import ndarrays_to_parameters, parameters_to_ndarrays
 from omegaconf import OmegaConf
 
 from src.agents.agent import Agent
-<<<<<<< HEAD
-from src.models.models import OpenSetQChainModelFactory
-
-
-def _model_cfg():
-    return OmegaConf.create({"state_dim": 5, "latent_dim": 3, "num_actions": 4})
-=======
 from src.models.cvae_dqn import FastTabMBackbone, GenerationNetwork, OpenSetQChainModelFactory
 
 
@@ -33,7 +26,6 @@ def _model_cfg():
             "generator": {"hidden_dim": 12, "depth": 1, "dropout": 0.0},
         }
     )
->>>>>>> ea28efe (Initial commit with updated source code)
 
 
 def _training_cfg():
@@ -66,8 +58,6 @@ def test_model_forward_shapes():
     assert recon.shape == (2, 5)
 
 
-<<<<<<< HEAD
-=======
 def test_fast_tabm_backbone_shape_contract():
     backbone = FastTabMBackbone(
         input_dim=5,
@@ -95,7 +85,6 @@ def test_generation_network_shape_contract():
     assert recon.shape == (6, 5)
 
 
->>>>>>> ea28efe (Initial commit with updated source code)
 def test_flower_parameter_roundtrip_sets_agent_weights():
     factory = OpenSetQChainModelFactory(_model_cfg())
     agent = Agent(factory, _training_cfg(), torch.device("cpu"))

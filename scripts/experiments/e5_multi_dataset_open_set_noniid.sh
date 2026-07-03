@@ -18,11 +18,8 @@ run_dataset() {
     return 0
   fi
 
-<<<<<<< HEAD
-=======
   ran_any=1
 
->>>>>>> ea28efe (Initial commit with updated source code)
   invoke_hydra_run \
     "experiment=exp5" \
     "+method=fmrl_ava" \
@@ -38,8 +35,6 @@ run_dataset() {
 
   invoke_hydra_run \
     "experiment=exp5" \
-<<<<<<< HEAD
-=======
     "+method=fedmade" \
     "seed=42" \
     "dataset.name=$dataset_name" \
@@ -53,7 +48,6 @@ run_dataset() {
 
   invoke_hydra_run \
     "experiment=exp5" \
->>>>>>> ea28efe (Initial commit with updated source code)
     "+method=fedavg" \
     "seed=42" \
     "dataset.name=$dataset_name" \

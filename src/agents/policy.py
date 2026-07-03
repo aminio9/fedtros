@@ -5,11 +5,7 @@ import numpy as np
 import torch
 from omegaconf import DictConfig
 
-<<<<<<< HEAD
-from src.models.models import MainQNetwork, PriorNetwork
-=======
 from src.models.cvae_dqn import MainQNetwork, PriorNetwork
->>>>>>> ea28efe (Initial commit with updated source code)
 from src.utils.utils import reparameterization_trick
 
 logger = logging.getLogger("Policy")
@@ -50,14 +46,11 @@ class EpsilonGreedyPolicy:
         self.q_net = q_net
         self.num_actions = num_actions
         self.device = device
-<<<<<<< HEAD
-=======
         self.allowed_actions: list[int] | None = None
 
     def set_allowed_actions(self, actions: list[int]) -> None:
         clean = sorted({int(action) for action in actions if 0 <= int(action) < self.num_actions})
         self.allowed_actions = clean if clean else None
->>>>>>> ea28efe (Initial commit with updated source code)
 
     @torch.no_grad()
     def select_action(self, state_np: np.ndarray, epsilon: float) -> int:
@@ -67,27 +60,13 @@ class EpsilonGreedyPolicy:
         """
         # 1. With prob epsilon, explore
         if random.random() < epsilon:
-<<<<<<< HEAD
-=======
             if self.allowed_actions:
                 return int(random.choice(self.allowed_actions))
->>>>>>> ea28efe (Initial commit with updated source code)
             return random.randint(0, self.num_actions - 1)
 
         # 2. Otherwise, exploit (greedy action)
         state = torch.tensor(state_np, dtype=torch.float32, device=self.device).unsqueeze(0)
 
-<<<<<<< HEAD
-        # Get Q-values
-        self.prior_net.eval()  # Set to eval mode for inference
-        self.q_net.eval()  # Set to eval mode for inference
-
-        mu_p, log_var_p = self.prior_net(state)
-        z_sample = reparameterization_trick(mu_p, log_var_p)
-        q_values = self.q_net(z_sample, state)
-
-        return int(q_values.argmax(dim=1).item())
-=======
         prior_was_training = self.prior_net.training
         q_was_training = self.q_net.training
 
@@ -106,4 +85,3 @@ class EpsilonGreedyPolicy:
         finally:
             self.prior_net.train(prior_was_training)
             self.q_net.train(q_was_training)
->>>>>>> ea28efe (Initial commit with updated source code)

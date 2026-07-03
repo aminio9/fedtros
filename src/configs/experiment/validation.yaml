@@ -15,31 +15,22 @@ dataset:
     output_dir: ${tracking.run_dir}/processed
     alpha: 0.1
     iid: false
-<<<<<<< HEAD
-=======
     max_known_samples_per_label: 64
     max_unknown_samples: 32
->>>>>>> ea28efe (Initial commit with updated source code)
 training:
   batch_size: 64
   local_episodes_per_round: 1
   steps_per_episode: 3
   min_buffer_size: 2
   generator:
-<<<<<<< HEAD
-=======
     enabled: false
->>>>>>> ea28efe (Initial commit with updated source code)
     epochs_per_round: 1
 open_set:
   evt:
     enabled: true
-<<<<<<< HEAD
-=======
     tail_percent: 100.0
     min_errors_per_class: 1
     min_tail_size: 1
->>>>>>> ea28efe (Initial commit with updated source code)
 evaluation:
   batch_size: 2048
   export_latent_embeddings: false

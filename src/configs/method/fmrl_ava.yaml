@@ -5,11 +5,6 @@ federated:
   strategy:
     name: fmrl_ava
     aggregation_strategy: fmrl_ava
-<<<<<<< HEAD
-  server:
-    proximal_mu: 0.0
-
-=======
     warmup_rounds: 20
     min_selected_clients: 9
     max_selected_fraction: 1.0
@@ -80,4 +75,3 @@ training:
   kl:
     free_nats: 0.25
     warmup_steps: 200
->>>>>>> ea28efe (Initial commit with updated source code)

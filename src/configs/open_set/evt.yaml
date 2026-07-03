@@ -3,14 +3,6 @@ enabled: true
 evt:
   enabled: true
   score: reconstruction_error
-<<<<<<< HEAD
-  tail_size_percent: 1.0
-  min_errors_per_class: 10
-  min_tail_size: 10
-  q: 0.0
-  target_known_fpr: 0.20
-  decision_threshold: 0.5
-=======
   # Explicit EVT tail semantics:
   # - tail_fraction is a fraction in (0, 1]
   # - tail_percent is a percent in (0, 100]
@@ -29,7 +21,6 @@ evt:
   score_direction: higher_unknown
   decision_threshold: 0.5
   fixed_threshold: 0.5
->>>>>>> ea28efe (Initial commit with updated source code)
   delta_grid:
     - 1.0e-6
     - 0.99
@@ -38,12 +29,9 @@ evt:
   unknown_label_id: -1
   open_set_label_id: 99
   error_scale_factor: 100000.0
-<<<<<<< HEAD
-=======
 scorer:
   name: evt_reconstruction
   requires_fit: true
   score_direction: higher_unknown
   threshold_mode: ${open_set.evt.threshold_mode}
   threshold_source: validation
->>>>>>> ea28efe (Initial commit with updated source code)

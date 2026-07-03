@@ -86,41 +86,6 @@ Output:
 15:                 L_p <- L_p + (mu_i / 2) ||theta_p - theta_p^{k-1}||_2^2
 16:             end if
 17:             Update theta_p using gradient descent on L_p
-<<<<<<< HEAD
-18:             Compute Double-DQN target:
-                    y = r + gamma(1-d) Q_{theta_Q^-}(z', s',
-                        argmax_a Q_psi(z', s', a))
-19:             Compute TD loss:
-                    L_Q = Huber(Q_psi(z, s, a) - y)
-20:             if mu_i > 0 then
-21:                 L_Q <- L_Q + (mu_i / 2)(
-                          ||theta_r - theta_r^{k-1}||_2^2
-                        + ||theta_Q - theta_Q^{k-1}||_2^2)
-22:             end if
-23:             Update theta_r and theta_Q using gradient descent on L_Q
-24:             Periodically update target network:
-                    theta_Q^- <- tau theta_Q + (1 - tau) theta_Q^-
-25:         end if
-26:     end for
-27: end for
-28: Build correctly classified set:
-        C_i = {(s,a*) in D_i : argmax_a Q_psi(p_theta(s), s, a) = a*}
-29: if generator training is enabled and |C_i| is sufficient then
-30:     for each mini-batch (s,a*) from C_i do
-31:         Sample latent z from q_phi(z|s,a*)
-32:         Reconstruct s_hat = G_omega(z,a*)
-33:         Compute reconstruction loss L_G = MSE(s_hat, s)
-34:         if mu_i > 0 then
-35:             L_G <- L_G + (mu_i / 2)||theta_G - theta_G^{k-1}||_2^2
-36:         end if
-37:         Update theta_G using gradient descent on L_G
-38:     end for
-39: end if
-40: Set theta_i^k = {theta_p, theta_r, theta_Q, theta_G}
-41: Compute diagnostics m_i^k including reward, accuracy, F1, TD loss,
-    KL loss, generator quality, class entropy, label coverage, and step count
-42: return theta_i^k, m_i^k
-=======
 18:             Compute retained TD target:
                     y_td = r + gamma(1-d) Q_{theta_Q^-}(z', s',
                         argmax_a Q_psi(z', s', a))
@@ -160,16 +125,11 @@ Output:
 44: Compute diagnostics m_i^k including reward, accuracy, F1, TD loss,
     bandit-Q loss, KL loss, generator quality, class entropy, label coverage, and step count
 45: return theta_i^k, m_i^k
->>>>>>> ea28efe (Initial commit with updated source code)
 ```
 
 ### Analysis
 
-<<<<<<< HEAD
-This algorithm is the most important client-side method because it explains why the local update is more than a standard supervised classifier update. The prior network is trained by matching the recognition posterior, while the recognition and main Q-network are trained with a Double-DQN TD objective. The target Q-network is deliberately local: it stabilizes the TD target but is not federated as a separate parameter block. The generator is trained only on correctly classified known samples, which reduces reconstruction contamination and supports the EVT open-set detector. The FedProx terms are optional and appear only when `mu_i > 0`, so the same algorithm covers FedAvg, FedProx, and the client update used inside FMRL-AVA. -->
-=======
 This algorithm is the most important client-side method because it explains why the local update is more than a standard supervised classifier update. The prior network is trained by matching the recognition posterior, while the recognition and main Q-network are trained with contextual-bandit full-action Q supervision, focal CE, and a retained low-weight TD objective for backward compatibility. The target Q-network is deliberately local: it stabilizes TD ablations but is not federated as a separate parameter block. The generator is trained only on correctly classified known samples, which reduces reconstruction contamination and supports the EVT open-set detector. The FedProx terms are optional and appear only when `mu_i > 0`, so the same algorithm covers FedAvg, FedProx, and the client update used inside FMRL-AVA. -->
->>>>>>> ea28efe (Initial commit with updated source code)
 
 ## Algorithm 3: FMRL-AVA Adaptive Vector-Aligned Client Selection and Aggregation
 
@@ -286,11 +246,7 @@ Inference:
 19: Reconstruct x_hat using q_phi(x,c_hat) and G_omega
 20: Compute reconstruction error e_x = MSE(x_hat, x)
 21: Compute unknown probability p_u = M_evt[c_hat](e_x)
-<<<<<<< HEAD
-22: if p_u >= delta then
-=======
 22: if p_u > delta then
->>>>>>> ea28efe (Initial commit with updated source code)
 23:     y_hat <- Unknown
 24: else
 25:     y_hat <- c_hat
@@ -309,8 +265,6 @@ This algorithm should appear because it explains how the method moves from close
 - Use Algorithm 3 in the federated optimization subsection because FMRL-AVA is the custom cooperative aggregation method.
 - Use Algorithm 4 in the open-set detection subsection.
 - Describe FedAvg and FedProx in text with their equations rather than giving them a separate algorithm block. -->
-<<<<<<< HEAD
-=======
 
 ## Algorithm: FMRL-AVA-GLOW
 
@@ -336,4 +290,3 @@ For each logical round t:
 12. The critic may lightly affect selection only after the configured activation round.
 
 Primary reported metrics: macro-F1, balanced accuracy, worst-class F1, minority-class recall. Overall accuracy is secondary.
->>>>>>> ea28efe (Initial commit with updated source code)

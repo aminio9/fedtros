@@ -16,11 +16,7 @@ from src.evaluation.compare import compare_runs
 from src.federated import run_federated_simulation
 from src.plotting import generate_plots
 from src.tracking import attach_to_existing_run, initialize_run
-<<<<<<< HEAD
-from src.training import run_training
-=======
 from src.training import run_smoke_test, run_training
->>>>>>> ea28efe (Initial commit with updated source code)
 from src.utils.config import resolve_path, validate_config
 from src.utils.entrypoints import prepare_run_context
 
@@ -36,8 +32,6 @@ def _suite_commands(cfg: DictConfig) -> Iterable[list[str]]:
         yield [str(part) for part in command]
 
 
-<<<<<<< HEAD
-=======
 def _sync_model_shape_from_metadata(cfg: DictConfig, metadata: dict) -> None:
     if "state_dim" in metadata:
         cfg.model.state_dim = int(metadata["state_dim"])
@@ -50,7 +44,6 @@ def _sync_tracker_shape_metadata(tracker, cfg: DictConfig) -> None:
     tracker.metadata["num_actions"] = int(cfg.model.num_actions)
 
 
->>>>>>> ea28efe (Initial commit with updated source code)
 def _run_suite(cfg: DictConfig) -> None:
     project_root = Path(get_original_cwd())
     validate_config(cfg)
@@ -114,11 +107,6 @@ def main(cfg: DictConfig) -> None:
         with_tracker=pipeline not in {"plot"},
     )
 
-<<<<<<< HEAD
-    if pipeline == "preprocess":
-        assert context.tracker is not None
-        metadata = run_preprocessing(cfg, project_root=context.project_root)
-=======
     if pipeline == "smoke":
         assert context.device is not None
         assert context.tracker is not None
@@ -135,7 +123,6 @@ def main(cfg: DictConfig) -> None:
         metadata = run_preprocessing(cfg, project_root=context.project_root)
         _sync_model_shape_from_metadata(cfg, metadata)
         _sync_tracker_shape_metadata(context.tracker, cfg)
->>>>>>> ea28efe (Initial commit with updated source code)
         context.tracker.write_json("preprocess_metadata.json", metadata)
         return
 
@@ -146,15 +133,11 @@ def main(cfg: DictConfig) -> None:
     if pipeline in {"full", "reproduce"}:
         assert context.device is not None
         assert context.tracker is not None
-<<<<<<< HEAD
-        run_preprocessing(cfg, project_root=context.project_root)
-=======
         metadata = run_preprocessing(cfg, project_root=context.project_root)
         _sync_model_shape_from_metadata(cfg, metadata)
         _sync_tracker_shape_metadata(context.tracker, cfg)
         context.tracker.save_config()
         context.tracker.save_metadata()
->>>>>>> ea28efe (Initial commit with updated source code)
         run_federated_simulation(
             cfg,
             project_root=context.project_root,
@@ -171,15 +154,11 @@ def main(cfg: DictConfig) -> None:
     if pipeline == "centralized":
         assert context.device is not None
         assert context.tracker is not None
-<<<<<<< HEAD
-        run_preprocessing(cfg, project_root=context.project_root)
-=======
         metadata = run_preprocessing(cfg, project_root=context.project_root)
         _sync_model_shape_from_metadata(cfg, metadata)
         _sync_tracker_shape_metadata(context.tracker, cfg)
         context.tracker.save_config()
         context.tracker.save_metadata()
->>>>>>> ea28efe (Initial commit with updated source code)
         run_training(
             cfg,
             project_root=context.project_root,
@@ -227,17 +206,9 @@ def main(cfg: DictConfig) -> None:
 
     raise ValueError(
         f"Unknown experiment.pipeline={pipeline!r}. "
-<<<<<<< HEAD
-        "Use full, centralized, preprocess, train, federated, evaluate, plot, compare, or export."
-=======
         "Use full, smoke, centralized, preprocess, train, federated, evaluate, plot, compare, or export."
->>>>>>> ea28efe (Initial commit with updated source code)
     )
 
 
 if __name__ == "__main__":
     main()
-<<<<<<< HEAD
-
-=======
->>>>>>> ea28efe (Initial commit with updated source code)

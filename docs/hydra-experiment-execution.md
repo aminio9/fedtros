@@ -11,15 +11,9 @@ same code base:
 ```text
 src/configs/config.yaml
   dataset: dataset/bnat.yaml
-<<<<<<< HEAD
-  model: model/openset_qchain.yaml | model/transformer.yaml
-  agent: agent/double_q.yaml
-  optimizer: optimizer/adam.yaml
-=======
   model: model/openset_qchain.yaml
   agent: agent/double_q.yaml
   optimizer: optimizer/adamw.yaml | optimizer/adam.yaml
->>>>>>> ea28efe (Initial commit with updated source code)
   scheduler: scheduler/none.yaml
   training: training/default.yaml
   evaluation: evaluation/default.yaml | evaluation/closed_set.yaml | evaluation/open_set.yaml
@@ -53,10 +47,6 @@ Single run:
 
 ```bash
 python run.py experiment=exp1
-<<<<<<< HEAD
-python run.py experiment=exp2 dataset=bnat model=transformer
-=======
->>>>>>> ea28efe (Initial commit with updated source code)
 python run.py experiment=exp5 +method=fmrl_ava dataset.name=B-TAT
 python run.py experiment=exp6 runtime=gpu
 python run.py experiment=validation runtime=tiny

@@ -8,11 +8,6 @@ local_episodes_per_round: 15
 steps_per_episode: 100
 replay_buffer_size: 50000
 min_buffer_size: 512
-<<<<<<< HEAD
-gamma: 0.7
-lr_prior: ${optimizer.lr_prior}
-lr_q_rl: ${optimizer.lr_q_rl}
-=======
 rl_mode: contextual_bandit
 gamma: 0.0
 lr_prior: ${optimizer.lr_prior}
@@ -21,18 +16,11 @@ optimizer_name: ${optimizer.name}
 optimizer_weight_decay: ${optimizer.weight_decay}
 optimizer_betas: ${optimizer.betas}
 optimizer_eps: ${optimizer.eps}
->>>>>>> ea28efe (Initial commit with updated source code)
 tau: 0.01
 target_update_freq: 100
 use_double_dqn: ${agent.use_double_dqn}
 prior_grad_clip_norm: 1.0
 q_grad_clip_norm: 1.0
-<<<<<<< HEAD
-epsilon_start: 1.0
-epsilon_end: 0.01
-epsilon_decay_rate: 0.95
-prior_kl_raw: false
-=======
 epsilon_start: 0.30
 epsilon_end: 0.02
 epsilon_decay_rate: 0.97
@@ -75,7 +63,6 @@ classification_loss:
 kl:
   free_nats: 0.25
   warmup_steps: 200
->>>>>>> ea28efe (Initial commit with updated source code)
 generator:
   enabled: true
   batch_size: 128
@@ -84,12 +71,9 @@ generator:
   epochs_per_round: 30
   lr: 0.0005
   min_correct_samples: 10
-<<<<<<< HEAD
-=======
   reconstruction_loss: smooth_l1
   reconstruction_beta: 1.0
   grad_clip_norm: 1.0
->>>>>>> ea28efe (Initial commit with updated source code)
 smoke:
   num_samples: 24
   epochs: 1

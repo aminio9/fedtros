@@ -1,11 +1,3 @@
-<<<<<<< HEAD
-name: smoke
-description: Synthetic end-to-end smoke test.
-method: smoke
-dataset: synthetic
-partition: synthetic
-alpha: 1.0
-=======
 # @package _global_
 experiment:
   name: smoke
@@ -39,4 +31,3 @@ training:
     enabled: false
 tracking:
   run_id: tiny_smoke_${experiment.method}_seed${seed}
->>>>>>> ea28efe (Initial commit with updated source code)

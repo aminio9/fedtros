@@ -1,24 +1,15 @@
 import json
 
-<<<<<<< HEAD
-import pandas as pd
-=======
 import numpy as np
 import pandas as pd
 import pytest
->>>>>>> ea28efe (Initial commit with updated source code)
 import torch
 import torch.nn as nn
 from omegaconf import OmegaConf
 
-<<<<<<< HEAD
-from src.evaluation.openset_eval import evaluate_open_set
-from src.openset.evt import EVTModel
-=======
 from src.evaluation import open_set as open_set_eval
 from src.evaluation.open_set import calibrate_evt_thresholds, evaluate_open_set, fit_evt_models
 from src.openset.evt import EVTModel, resolve_tail_fraction
->>>>>>> ea28efe (Initial commit with updated source code)
 
 
 class ConstantPrior(nn.Module):
@@ -44,8 +35,6 @@ class PredictClassOne(nn.Module):
         return torch.tensor([[0.0, 10.0]], device=states.device).repeat(states.size(0), 1)
 
 
-<<<<<<< HEAD
-=======
 class FeatureRuleQ(nn.Module):
     num_actions = 2
 
@@ -66,15 +55,12 @@ class FeatureRuleQ(nn.Module):
         return logits
 
 
->>>>>>> ea28efe (Initial commit with updated source code)
 class ZeroGenerator(nn.Module):
     def forward(self, z, actions):
         _ = actions
         return torch.zeros(z.size(0), 3, device=z.device)
 
 
-<<<<<<< HEAD
-=======
 def _toy_known_calibration_data(num_per_class=20):
     rows = []
     labels = []
@@ -86,7 +72,6 @@ def _toy_known_calibration_data(num_per_class=20):
     return torch.tensor(rows, dtype=torch.float32), torch.tensor(labels, dtype=torch.long)
 
 
->>>>>>> ea28efe (Initial commit with updated source code)
 def test_evt_probability_increases_in_tail():
     model = EVTModel(tail_size_percent=0.5)
     model.fit(torch.tensor([0.1, 0.2, 0.4, 0.8]).numpy())
@@ -95,8 +80,6 @@ def test_evt_probability_increases_in_tail():
     assert model.predict_probability_unknown(model.threshold_u + 0.1) > 0.0
 
 
-<<<<<<< HEAD
-=======
 def test_evt_tail_percent_one_means_one_percent_not_all_data():
     cfg = OmegaConf.create({"tail_percent": 1.0})
     fraction, source = resolve_tail_fraction(cfg)
@@ -127,7 +110,6 @@ def test_evt_invalid_tail_values_fail():
         resolve_tail_fraction(OmegaConf.create({"tail_percent": 101.0}))
 
 
->>>>>>> ea28efe (Initial commit with updated source code)
 def test_open_set_missing_evt_model_is_unknown(tmp_path):
     metrics = evaluate_open_set(
         features=torch.ones(2, 3),
@@ -195,8 +177,6 @@ def test_open_set_eval_uses_configured_unknown_ids_and_threshold(tmp_path):
     scores = pd.read_csv(tmp_path / "open_set_scores.csv")
     assert scores["y_true"].tolist() == [77, 77]
     assert scores["y_pred"].tolist() == [77, 77]
-<<<<<<< HEAD
-=======
 
 
 def test_open_set_eval_keeps_scores_equal_to_threshold_known(tmp_path):
@@ -355,4 +335,3 @@ def test_oscr_curve_accepts_scores_equal_to_threshold():
     assert ccr[best_zero_fpr] == 1.0
     assert thresholds[best_zero_fpr] == 0.0
     assert 0.0 <= auoscr <= 1.0
->>>>>>> ea28efe (Initial commit with updated source code)

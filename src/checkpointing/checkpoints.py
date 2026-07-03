@@ -1,14 +1,10 @@
 from __future__ import annotations
 
 import logging
-<<<<<<< HEAD
-from dataclasses import dataclass
-=======
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
->>>>>>> ea28efe (Initial commit with updated source code)
 from pathlib import Path
 from typing import Any
 
@@ -20,8 +16,6 @@ from src.agents.agent import Agent
 
 logger = logging.getLogger(__name__)
 
-<<<<<<< HEAD
-=======
 VALIDATION_PREFIXES = ("val/", "validation/")
 VALIDATION_COMPONENTS = (
     "val/macro_f1",
@@ -34,7 +28,6 @@ VALIDATION_COMPONENTS = (
     "validation/open_set/unknown_f1",
 )
 
->>>>>>> ea28efe (Initial commit with updated source code)
 
 @dataclass
 class CheckpointState:
@@ -81,8 +74,6 @@ def build_agent_checkpoint(
     return payload
 
 
-<<<<<<< HEAD
-=======
 def _config_payload(cfg: DictConfig) -> dict[str, Any]:
     return OmegaConf.to_container(cfg, resolve=True)  # type: ignore[return-value]
 
@@ -193,25 +184,19 @@ def write_checkpoint_metadata(
         )
 
 
->>>>>>> ea28efe (Initial commit with updated source code)
 def save_agent_checkpoint(
     agent: Agent,
     cfg: DictConfig,
     path: str | Path,
     state: CheckpointState,
-<<<<<<< HEAD
-=======
     *,
     selected_metric_name: str | None = None,
     selected_metric_value: float | None = None,
     is_best: bool = False,
->>>>>>> ea28efe (Initial commit with updated source code)
 ) -> Path:
     checkpoint_path = Path(path)
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(build_agent_checkpoint(agent, cfg, state), checkpoint_path)
-<<<<<<< HEAD
-=======
     write_checkpoint_metadata(
         cfg,
         checkpoint_path,
@@ -220,7 +205,6 @@ def save_agent_checkpoint(
         selected_metric_value=selected_metric_value,
         is_best=is_best,
     )
->>>>>>> ea28efe (Initial commit with updated source code)
     logger.info("Saved checkpoint to %s", checkpoint_path)
     return checkpoint_path
 

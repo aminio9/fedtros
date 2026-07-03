@@ -6,11 +6,8 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-<<<<<<< HEAD
-=======
 from src.utils.imbalance import class_weights_from_config, sample_weights_from_class_weights
 
->>>>>>> ea28efe (Initial commit with updated source code)
 logger = logging.getLogger("Environment")
 
 
@@ -47,14 +44,11 @@ class BlockchainIntrusionEnv(gym.Env):
         num_clients: int | None = None,
         # NON-IID FIX: Accept global number of actions
         global_num_actions: int | None = None,
-<<<<<<< HEAD
-=======
         reward_correct: float = 1.0,
         reward_incorrect: float = -1.0,
         class_balanced_rewards: bool = False,
         class_balance_power: float = 1.0,
         imbalance_cfg: object | None = None,
->>>>>>> ea28efe (Initial commit with updated source code)
     ) -> None:
         super().__init__()
 
@@ -120,8 +114,6 @@ class BlockchainIntrusionEnv(gym.Env):
             # non-IID shards.
             self.num_actions_nt = int(self.all_labels_a_t.max().item()) + 1
 
-<<<<<<< HEAD
-=======
         self.reward_correct = float(reward_correct)
         self.reward_incorrect = float(reward_incorrect)
         self.class_balanced_rewards = bool(class_balanced_rewards)
@@ -134,7 +126,6 @@ class BlockchainIntrusionEnv(gym.Env):
         )
         self._class_reward_weights = self._build_class_reward_weights()
 
->>>>>>> ea28efe (Initial commit with updated source code)
         # ------------------------------------------------------------------
         # Determine which indices belong to THIS env/agent
         # ------------------------------------------------------------------
@@ -173,11 +164,8 @@ class BlockchainIntrusionEnv(gym.Env):
         if self._available_indices.size == 0:
             raise ValueError("No samples available for this environment/agent.")
 
-<<<<<<< HEAD
-=======
         self._sampling_probabilities = self._build_sampling_probabilities()
 
->>>>>>> ea28efe (Initial commit with updated source code)
         # RNG for episode sampling (decoupled from Gym's own RNG)
         self._rng = np.random.default_rng()
 
@@ -241,9 +229,6 @@ class BlockchainIntrusionEnv(gym.Env):
         """
         # 1. Reward from current state
         true_label_a_t = self._get_current_true_label()
-<<<<<<< HEAD
-        reward_r: float = 1.0 if int(action_a_t) == int(true_label_a_t) else -1.0
-=======
         class_weight = float(self._class_reward_weights[int(true_label_a_t)].item())
         if int(action_a_t) == int(true_label_a_t):
             reward_r = self.reward_correct * class_weight
@@ -252,7 +237,6 @@ class BlockchainIntrusionEnv(gym.Env):
                 reward_r = self.reward_incorrect * class_weight
             else:
                 reward_r = self.reward_incorrect
->>>>>>> ea28efe (Initial commit with updated source code)
 
         # 2. Info about *current* transition
         current_index = int(self.episode_indices[self.current_step])
@@ -294,10 +278,6 @@ class BlockchainIntrusionEnv(gym.Env):
             self._available_indices,
             size=self.steps_per_episode,
             replace=True,
-<<<<<<< HEAD
-        )
-
-=======
             p=self._sampling_probabilities,
         )
 
@@ -362,7 +342,6 @@ class BlockchainIntrusionEnv(gym.Env):
         self.logger.info("Class-balanced environment sampling enabled.")
         return probabilities
 
->>>>>>> ea28efe (Initial commit with updated source code)
     def _get_current_state(self) -> np.ndarray:
         """Return feature vector for the current step as a NumPy array."""
         idx = int(self.episode_indices[self.current_step])

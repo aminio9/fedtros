@@ -9,13 +9,6 @@ from scipy.stats import genpareto
 logger = logging.getLogger("EVT")
 
 
-<<<<<<< HEAD
-class EVTModel:
-    """EVT wrapper that supports fixed thresholds for robust tail fitting."""
-
-    def __init__(self, tail_size_percent: float):
-        self.tail_size_percent = min(max(float(tail_size_percent), 1e-6), 1.0)
-=======
 def _cfg_value(cfg, key: str, default=None):
     return getattr(cfg, key, default) if cfg is not None else default
 
@@ -87,7 +80,6 @@ class EVTModel:
             raise ValueError("EVTModel tail_fraction must be in (0, 1].")
         self.tail_fraction = float(tail_fraction)
         self.tail_size_percent = self.tail_fraction
->>>>>>> ea28efe (Initial commit with updated source code)
         self.threshold_u: float | None = None
         self.gpd_params: tuple[float, float, float] | None = None
 
@@ -113,11 +105,7 @@ class EVTModel:
                 self.threshold_u = float(sorted_errors[0]) - 1e-9
                 idx = 0
             else:
-<<<<<<< HEAD
-                idx = int(sorted_errors.size * (1.0 - self.tail_size_percent))
-=======
                 idx = int(sorted_errors.size * (1.0 - self.tail_fraction))
->>>>>>> ea28efe (Initial commit with updated source code)
                 idx = min(max(idx, 0), sorted_errors.size - 2)
                 self.threshold_u = float(sorted_errors[idx])
 
@@ -129,11 +117,7 @@ class EVTModel:
             if fixed_threshold is None:
                 # Heuristic fallback if we aren't using a fixed threshold
                 sorted_errors = np.sort(reconstruction_errors)
-<<<<<<< HEAD
-                idx = int(sorted_errors.size * (1.0 - self.tail_size_percent * 0.5))
-=======
                 idx = int(sorted_errors.size * (1.0 - self.tail_fraction * 0.5))
->>>>>>> ea28efe (Initial commit with updated source code)
                 self.threshold_u = float(sorted_errors[idx])
                 tail = (
                     reconstruction_errors[reconstruction_errors > self.threshold_u]
@@ -169,20 +153,13 @@ class EVTModel:
         return {
             "threshold_u": self.threshold_u,
             "gpd_params": self.gpd_params,
-<<<<<<< HEAD
-=======
             "tail_fraction": self.tail_fraction,
->>>>>>> ea28efe (Initial commit with updated source code)
             "tail_size_percent": self.tail_size_percent,
         }
 
     @classmethod
     def from_payload(cls, payload: dict) -> "EVTModel":
-<<<<<<< HEAD
-        model = cls(payload["tail_size_percent"])
-=======
         model = cls(tail_fraction=float(payload.get("tail_fraction", payload["tail_size_percent"])))
->>>>>>> ea28efe (Initial commit with updated source code)
         model.threshold_u = float(payload["threshold_u"])
         model.gpd_params = tuple(payload["gpd_params"])
         return model
