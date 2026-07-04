@@ -20,3 +20,8 @@ def test_training_default_contextual_bandit_contract():
     assert cfg["imbalance"]["weighted_reward"] is True
     assert cfg["epsilon_start"] <= 0.30
     assert cfg["epsilon_end"] == 0.02
+
+
+def test_training_default_has_missing_class_q_absent_mode():
+    cfg = yaml.safe_load(Path("src/configs/training/default.yaml").read_text())
+    assert cfg["missing_class_gradient"]["q_absent_mode"] in {"ignore", "weak_negative", "off"}

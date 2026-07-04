@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from src.agents.agent import Agent
 from src.artifacts.embeddings import export_latent_embeddings
@@ -28,6 +28,25 @@ logger = logging.getLogger(__name__)
 
 def build_agent(cfg: DictConfig, device: torch.device) -> Agent:
     return Agent(OpenSetQChainModelFactory(cfg.model), cfg.training, device=device)
+
+
+def _resolve_evaluation_checkpoint(cfg: DictConfig, project_root: Path) -> Path:
+    """Prefer the best validation checkpoint for final evaluation when configured."""
+    use_best = bool(OmegaConf.select(cfg, "evaluation.use_best_checkpoint", default=True))
+    explicit_path = resolve_path(project_root, cfg.evaluation.checkpoint_path)
+    if not use_best:
+        logger.info("Evaluation checkpoint selected: %s", explicit_path)
+        return explicit_path
+
+    best_raw = OmegaConf.select(cfg, "checkpointing.best_model_path", default=None)
+    if best_raw is not None:
+        best_path = resolve_path(project_root, best_raw)
+        if best_path.exists():
+            logger.info("Evaluation checkpoint selected: %s", best_path)
+            return best_path
+
+    logger.info("Evaluation checkpoint selected: %s", explicit_path)
+    return explicit_path
 
 
 def _latent_export_tensor(
@@ -59,7 +78,7 @@ def run_evaluation(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     agent = build_agent(cfg, device)
-    checkpoint_path = resolve_path(project_root, cfg.evaluation.checkpoint_path)
+    checkpoint_path = _resolve_evaluation_checkpoint(cfg, project_root)
     load_agent_checkpoint(
         agent,
         checkpoint_path,

@@ -250,3 +250,37 @@ def test_fmrl_ava_method_overlay_uses_glow_safe_defaults():
     assert cfg.federated.strategy.profile_min_multiplier == 1.0
     assert cfg.federated.strategy.drift_penalty_strength > 0.0
     assert cfg.federated.strategy.server_optimizer == "none"
+
+
+def test_fmrl_ava_caps_dominant_aggregation_weight():
+    strategy = _bare_fmrl_strategy()
+    strategy.max_client_weight_fraction = 0.40
+    records = [
+        {"cid": "giant", "aggregation_weight": 1000.0},
+        {"cid": "small_a", "aggregation_weight": 100.0},
+        {"cid": "small_b", "aggregation_weight": 50.0},
+        {"cid": "small_c", "aggregation_weight": 50.0},
+    ]
+
+    original_total = sum(record["aggregation_weight"] for record in records)
+    strategy._cap_aggregation_weights(records)
+    new_total = sum(record["aggregation_weight"] for record in records)
+
+    assert np.isclose(new_total, original_total)
+    assert max(record["aggregation_weight_fraction"] for record in records) <= 0.400001
+    assert records[0]["aggregation_weight_capped"] == 1.0
+
+
+def test_fmrl_ava_cap_noop_when_disabled():
+    strategy = _bare_fmrl_strategy()
+    strategy.max_client_weight_fraction = 1.0
+    records = [
+        {"cid": "a", "aggregation_weight": 10.0},
+        {"cid": "b", "aggregation_weight": 1.0},
+    ]
+
+    strategy._cap_aggregation_weights(records)
+
+    assert records[0]["aggregation_weight"] == 10.0
+    assert records[1]["aggregation_weight"] == 1.0
+    assert records[0]["aggregation_weight_capped"] == 0.0

@@ -156,6 +156,12 @@ class Agent:
         self.missing_class_mask_value = _cfg_float(
             train_cfg, "missing_class_gradient.mask_value", -20.0
         )
+        self.missing_class_q_absent_mode = _cfg_str(
+            train_cfg, "missing_class_gradient.q_absent_mode", "ignore"
+        ).lower()
+        self.missing_class_q_absent_weight = _cfg_float(
+            train_cfg, "missing_class_gradient.q_absent_weight", 0.05
+        )
         self.kl_free_nats = _cfg_float(train_cfg, "kl.free_nats", 0.25)
         self.kl_warmup_steps = _cfg_int(train_cfg, "kl.warmup_steps", 100)
         self.classification_loss_name = _cfg_str(
@@ -463,24 +469,42 @@ class Agent:
         with torch.no_grad():
             mu_p_bandit, _ = self.prior_net(states_s)
         q_bandit_all = self.value_net_main(mu_p_bandit.detach(), states_s)
-        if self.local_class_mask is not None and self.missing_class_mask_enabled:
+        all_class_mask = torch.ones(self.action_dim, dtype=torch.bool, device=self.device)
+        use_missing_mask = (
+            self.local_class_mask is not None
+            and self.missing_class_mask_enabled
+            and self.missing_class_q_absent_mode != "off"
+        )
+        if use_missing_mask:
             present_mask = self.local_class_mask.to(device=self.device, dtype=torch.bool)
         else:
-            present_mask = torch.ones(self.action_dim, dtype=torch.bool, device=self.device)
+            present_mask = all_class_mask
         if not bool(present_mask.any()):
-            present_mask = torch.ones(self.action_dim, dtype=torch.bool, device=self.device)
+            present_mask = all_class_mask
 
         reward_correct = _cfg_float(self.train_cfg, "reward.correct", 1.0)
         reward_incorrect = _cfg_float(self.train_cfg, "reward.incorrect", -1.0)
-        bandit_targets = torch.zeros_like(q_bandit_all)
-        bandit_targets[:, present_mask] = float(reward_incorrect)
+        bandit_targets = torch.full_like(q_bandit_all, float(reward_incorrect))
         bandit_targets.scatter_(1, labels.view(-1, 1), float(reward_correct))
         bandit_loss_matrix = F.smooth_l1_loss(
             q_bandit_all,
             bandit_targets,
             reduction="none",
         )
-        bandit_loss = bandit_loss_matrix[:, present_mask].mean()
+        if use_missing_mask and self.missing_class_q_absent_mode == "ignore":
+            bandit_loss = bandit_loss_matrix[:, present_mask].mean()
+        elif use_missing_mask and self.missing_class_q_absent_mode == "weak_negative":
+            class_loss_weights = torch.full(
+                (self.action_dim,),
+                float(self.missing_class_q_absent_weight),
+                dtype=bandit_loss_matrix.dtype,
+                device=self.device,
+            )
+            class_loss_weights[present_mask] = 1.0
+            denom = class_loss_weights.sum().clamp_min(1.0)
+            bandit_loss = (bandit_loss_matrix * class_loss_weights.view(1, -1)).sum(dim=1).mean() / denom
+        else:
+            bandit_loss = bandit_loss_matrix.mean()
 
         # Calculate TD Loss (Eq. 11)
         td_loss = self.td_loss_fn(q_pred, y_t)
@@ -514,6 +538,18 @@ class Agent:
         q_values_detached = q_values_all.detach()
         self.train_step_index = step_index
         loss_total = kl_objective.detach() + td_objective.detach()
+        kl_mean_value = float(kl_per_sample.mean().detach().item())
+        prior_grad_norm_value = float(prior_grad_norm.detach().item())
+        q_grad_norm_value = float(q_grad_norm.detach().item())
+        if kl_mean_value > 1.0e4:
+            self.logger.warning("KL mean is very large in train_step: %.3f", kl_mean_value)
+        if prior_grad_norm_value > 1.0e5 or q_grad_norm_value > 1.0e5:
+            self.logger.warning(
+                "Gradient norm explosion risk | prior=%.3f | q=%.3f",
+                prior_grad_norm_value,
+                q_grad_norm_value,
+            )
+        self._warn_if_non_finite_parameters()
         return {
             "loss/total": float(loss_total.item()),
             "loss/prior_kl": float(kl_loss.item()),
@@ -535,10 +571,15 @@ class Agent:
                 (self.loss_weights["classification"] * cls_loss).item()
             ),
             "loss/proximal": float(prox_loss_total.item()),
-            "gradient/prior_norm": float(prior_grad_norm.item()),
-            "gradient/q_norm": float(q_grad_norm.item()),
-            "kl/mean": float(kl_per_sample.mean().item()),
+            "gradient/prior_norm": prior_grad_norm_value,
+            "gradient/q_norm": q_grad_norm_value,
+            "prior_grad_norm": prior_grad_norm_value,
+            "q_grad_norm": q_grad_norm_value,
+            "kl/mean": kl_mean_value,
             "kl/std": float(kl_per_sample.std(unbiased=False).item()),
+            "train_step/kl/mean": kl_mean_value,
+            "train_step/kl/std": float(kl_per_sample.std(unbiased=False).item()),
+            "train_step/kl/weighted": float((self.loss_weights["prior_kl"] * kl_warmup * kl_loss).item()),
             "q/pred_mean": float(q_pred_detached.mean().item()),
             "q/pred_std": float(q_pred_detached.std(unbiased=False).item()),
             "q/value_mean": float(q_values_detached.mean().item()),
@@ -551,7 +592,28 @@ class Agent:
             "lr/q_rl": self._optimizer_lr(self.optimizer_q_rl),
             "local_class_coverage_count": float(present_mask.sum().item()),
             "missing_class_mask_enabled": float(self.missing_class_mask_enabled),
+            "missing_class_q_absent_mode_ignore": float(
+                self.missing_class_q_absent_mode == "ignore"
+            ),
         }
+
+
+    def _warn_if_non_finite_parameters(self) -> None:
+        """Log a loud warning if a trainable global/local module contains NaN/Inf."""
+        modules = {
+            "prior_net": self.prior_net,
+            "recognition_net": self.recognition_net,
+            "value_net_main": self.value_net_main,
+        }
+        for module_name, module in modules.items():
+            for name, param in module.named_parameters():
+                if not torch.isfinite(param).all():
+                    self.logger.warning(
+                        "Non-finite parameter detected | module=%s | parameter=%s",
+                        module_name,
+                        name,
+                    )
+                    return
 
     def update_target_network(self, tau: float):
         """Soft update the target network (Eq. 10)."""

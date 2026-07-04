@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +21,49 @@ from src.tracking import attach_to_existing_run, initialize_run
 from src.training import run_smoke_test, run_training
 from src.utils.config import resolve_path, validate_config
 from src.utils.entrypoints import prepare_run_context
+
+
+logger = logging.getLogger(__name__)
+
+
+def _log_checkpoint_evaluation_summary(cfg: DictConfig, project_root: Path) -> None:
+    best_metrics_path = resolve_path(project_root, Path(str(cfg.checkpointing.dir)) / "best_metrics.json")
+    latest_path = resolve_path(project_root, cfg.checkpointing.latest_checkpoint_path)
+    best_path = resolve_path(project_root, cfg.checkpointing.best_model_path)
+    checkpoint_used = best_path if bool(OmegaConf.select(cfg, "evaluation.use_best_checkpoint", default=True)) and best_path.exists() else resolve_path(project_root, cfg.evaluation.checkpoint_path)
+
+    best_round = None
+    best_value = None
+    latest_value = None
+    if best_metrics_path.exists():
+        try:
+            payload = json.loads(best_metrics_path.read_text(encoding="utf-8"))
+            metrics = payload.get("metrics", {}) or {}
+            metadata = payload.get("metadata", {}) or {}
+            best_round = metadata.get("round")
+            best_value = payload.get("selected_metric_value")
+            latest_value = metrics.get("val/macro_f1")
+        except Exception:
+            logger.exception("Failed to read best checkpoint metadata from %s", best_metrics_path)
+
+    logger.info(
+        "Checkpoint summary before evaluation | best_round=%s | best_validation_metric=%s | "
+        "latest_checkpoint=%s | evaluation_checkpoint=%s",
+        best_round,
+        best_value,
+        latest_path,
+        checkpoint_used,
+    )
+    if best_value is not None and latest_value is not None:
+        try:
+            if float(best_value) - float(latest_value) > 0.05:
+                logger.warning(
+                    "Latest validation macro-F1 appears worse than best by >0.05 | best=%s | latest=%s",
+                    best_value,
+                    latest_value,
+                )
+        except (TypeError, ValueError):
+            pass
 
 
 def _pipeline(cfg: DictConfig) -> str:
@@ -143,6 +188,7 @@ def main(cfg: DictConfig) -> None:
             project_root=context.project_root,
             tracker=context.tracker,
         )
+        _log_checkpoint_evaluation_summary(cfg, context.project_root)
         run_evaluation(
             cfg,
             project_root=context.project_root,

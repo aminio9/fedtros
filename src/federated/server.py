@@ -592,6 +592,28 @@ class FedMADEClassAwareAggregationStrategy(FedAvg):
                 return float(np.clip(self._float_metric(metrics, key), 0.0, 1.0))
         return 1.0
 
+    @staticmethod
+    def _record_average(records: list[dict[str, Any]], key: str, default: float = 0.0) -> float:
+        values = []
+        for record in records:
+            try:
+                values.append(float(record.get(key, default)))
+            except (TypeError, ValueError):
+                continue
+        return float(np.mean(values)) if values else float(default)
+
+    @staticmethod
+    def _record_minmax(records: list[dict[str, Any]], key: str) -> tuple[float, float]:
+        values = []
+        for record in records:
+            try:
+                values.append(float(record.get(key, 0.0)))
+            except (TypeError, ValueError):
+                continue
+        if not values:
+            return 0.0, 0.0
+        return float(np.min(values)), float(np.max(values))
+
     def _write_monitor_event(self, event: dict[str, Any]) -> None:
         try:
             with open(self.monitor_path, "a", encoding="utf-8") as handle:
@@ -652,6 +674,12 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
         self.utility_threshold = float(cfg.strategy.utility_threshold)
         self.utility_temperature = max(float(cfg.strategy.utility_temperature), EPS)
         self.aggregation_lr = float(cfg.strategy.aggregation_lr)
+        self.sample_power = float(
+            OmegaConf.select(cfg, "strategy.sample_power", default=1.0)
+        )
+        self.max_client_weight_fraction = float(
+            OmegaConf.select(cfg, "strategy.max_client_weight_fraction", default=1.0)
+        )
         self.min_selected_clients = int(cfg.strategy.min_selected_clients)
         self.max_selected_fraction = float(cfg.strategy.max_selected_fraction)
         self.max_utility = float(cfg.strategy.max_utility)
@@ -997,7 +1025,8 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
                 utility = 1.0
             utility = max(utility, EPS)
             num_examples = max(float(fit_res.num_examples), 1.0)
-            base_aggregation_weight = num_examples * utility
+            effective_examples = num_examples ** float(np.clip(self.sample_power, 0.0, 1.0))
+            base_aggregation_weight = effective_examples * utility
             deltas = [
                 client_layer - base_layer
                 for client_layer, base_layer in zip(client_weights, base_weights, strict=True)
@@ -1009,6 +1038,8 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
                     "cid": client.cid,
                     "utility": utility,
                     "utility_weighted_examples": base_aggregation_weight,
+                    "effective_examples": effective_examples,
+                    "sample_power": float(self.sample_power),
                     "delta_norm": delta_norm,
                     "num_examples": num_examples,
                     "recent_reward": float(fit_res.metrics.get("recent_reward", 0.0)),
@@ -1038,6 +1069,23 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
                     "generator_correct_frac": float(
                         fit_res.metrics.get("generator_correct_frac", 0.0)
                     ),
+                    "avg_kl": float(
+                        fit_res.metrics.get(
+                            "train_step/kl/mean",
+                            fit_res.metrics.get("kl/mean", fit_res.metrics.get("loss/prior_kl", 0.0)),
+                        )
+                    ),
+                    "avg_bandit_q_loss": float(fit_res.metrics.get("loss/bandit_q", 0.0)),
+                    "avg_classification_loss": float(
+                        fit_res.metrics.get(
+                            "loss/classification_weighted",
+                            fit_res.metrics.get("loss/classification", 0.0),
+                        )
+                    ),
+                    "avg_q_mean": float(fit_res.metrics.get("q/value_mean", 0.0)),
+                    "avg_q_std": float(fit_res.metrics.get("q/value_std", 0.0)),
+                    "avg_reward_mean": float(fit_res.metrics.get("reward/mean", fit_res.metrics.get("avg_reward_per_episode", 0.0))),
+                    "avg_reward_std": float(fit_res.metrics.get("reward/std", 0.0)),
                     "quality": self._client_quality(fit_res.metrics),
                     "label_histogram": fit_res.metrics.get(
                         "full_label_histogram",
@@ -1077,20 +1125,28 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
             return self.saved_global_parameters, {"fmrl_ava_selected_clients": 0.0}
 
         for record in pending_uploads:
-            deltas = record.pop("_deltas")
+            deltas = record["_deltas"]
             alignment_cosine = self._delta_cosine(deltas, reference_delta)
             alignment_multiplier = self._alignment_multiplier(alignment_cosine)
             aggregation_weight = float(record["base_aggregation_weight"]) * alignment_multiplier
-            for idx, delta in enumerate(deltas):
-                weighted_deltas[idx] += delta * aggregation_weight
             record["alignment_cosine"] = alignment_cosine
             record["alignment_multiplier"] = alignment_multiplier
             record["aggregation_weight"] = aggregation_weight
             upload_records.append(record)
-            total_aggregation_weight += aggregation_weight
+
+        self._cap_aggregation_weights(upload_records)
+        total_aggregation_weight = float(
+            sum(max(float(record.get("aggregation_weight", 0.0)), EPS) for record in upload_records)
+        )
 
         if total_aggregation_weight <= EPS:
             return self.saved_global_parameters, {"fmrl_ava_selected_clients": 0.0}
+
+        for record in upload_records:
+            deltas = record.pop("_deltas")
+            aggregation_weight = max(float(record.get("aggregation_weight", 0.0)), EPS)
+            for idx, delta in enumerate(deltas):
+                weighted_deltas[idx] += delta * aggregation_weight
 
         normalized_delta = [delta / total_aggregation_weight for delta in weighted_deltas]
         new_weights = [
@@ -1105,19 +1161,40 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
         system_utility = self._compute_system_utility(upload_records, selected_fraction)
         train_metrics = self._train_server_models(system_utility)
 
+        agg_min, agg_max = self._record_minmax(upload_records, "aggregation_weight")
+        delta_norm_total = self._record_average(upload_records, "delta_norm")
         self._write_monitor_event(
             {
                 "event": "phase_b_aggregation",
                 "server_round": server_round,
                 "logical_round": self._logical_round(server_round),
+                "selected_clients": len(upload_records),
+                "available_clients": max(len(self.selection_records), 1),
                 "selected_fraction": selected_fraction,
+                "validation_accuracy": float(self.last_validation_metrics.get("val/accuracy", 0.0)),
+                "validation_macro_f1": float(self.last_validation_metrics.get("val/macro_f1", 0.0)),
+                "validation_balanced_accuracy": float(self.last_validation_metrics.get("val/balanced_accuracy", 0.0)),
                 "system_utility": system_utility,
                 "validation_team_reward": float(self.validation_team_reward_ema or 0.0),
                 "validation_team_reward_raw": float(self.last_validation_team_reward or 0.0),
                 "support_reward": float(self.last_support_reward),
+                "aggregation_weight_min": agg_min,
+                "aggregation_weight_max": agg_max,
+                "aggregation_weight_max_fraction": (agg_max / max(total_aggregation_weight, EPS)),
+                "max_client_weight_fraction": float(self.max_client_weight_fraction),
+                "sample_power": float(self.sample_power),
+                "total_delta_norm": delta_norm_total,
                 "total_base_aggregation_weight": total_base_aggregation_weight,
                 "total_utility": total_aggregation_weight,
                 "total_aggregation_weight": total_aggregation_weight,
+                "avg_kl": self._record_average(upload_records, "avg_kl"),
+                "avg_bandit_q_loss": self._record_average(upload_records, "avg_bandit_q_loss"),
+                "avg_classification_loss": self._record_average(upload_records, "avg_classification_loss"),
+                "avg_q_mean": self._record_average(upload_records, "avg_q_mean"),
+                "avg_q_std": self._record_average(upload_records, "avg_q_std"),
+                "avg_reward_mean": self._record_average(upload_records, "avg_reward_mean"),
+                "avg_reward_std": self._record_average(upload_records, "avg_reward_std"),
+                "local_proximal_mu": float(OmegaConf.select(self.cfg, "strategy.local_proximal_mu", default=0.0)),
                 "uploads": upload_records,
                 **train_metrics,
             }
@@ -1168,10 +1245,20 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
         local_acc = self._float_metric(
             metrics, "local_accuracy", self._float_metric(metrics, "policy_accuracy")
         )
+        balanced_accuracy = self._float_metric(
+            metrics,
+            "local_balanced_accuracy",
+            self._float_metric(metrics, "balanced_accuracy", local_acc),
+        )
         td_error = self._float_metric(
             metrics, "td_error", self._float_metric(metrics, "avg_td_loss")
         )
-        kl_div = self._float_metric(metrics, "kl_div")
+        kl_div = self._float_metric(
+            metrics,
+            "train_step/kl/mean",
+            self._float_metric(metrics, "kl/mean", self._float_metric(metrics, "kl_div")),
+        )
+        kl_stability = float(1.0 / (1.0 + np.log1p(max(kl_div, 0.0))))
         total_steps = self._float_metric(metrics, "total_steps")
         generator_frac = self._float_metric(metrics, "generator_correct_frac", 0.5)
 
@@ -1184,7 +1271,9 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
             "f1_macro": float(np.clip(local_f1, 0.0, 1.0)),
             "accuracy": float(np.clip(local_acc, 0.0, 1.0)),
             "td_stability": float(1.0 / (1.0 + max(td_error, 0.0))),
-            "novelty": float(np.tanh(max(kl_div, 0.0))),
+            # High KL was empirically a collapse signal in GLOW runs, not useful novelty.
+            # Keep the legacy scalar key name for model compatibility, but feed stability.
+            "novelty": float(np.clip(kl_stability, 0.0, 1.0)),
             "class_entropy": float(np.clip(self._float_metric(metrics, "class_entropy"), 0.0, 1.0)),
             "label_coverage": float(
                 np.clip(self._float_metric(metrics, "label_coverage"), 0.0, 1.0)
@@ -1193,13 +1282,13 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
             "steps_norm": float(np.clip(total_steps / max_round_reward, 0.0, 1.0)),
         }
         audit_score = float(
-            (0.25 * scalar_values["f1_macro"])
-            + (0.20 * scalar_values["accuracy"])
-            + (0.20 * scalar_values["td_stability"])
-            + (0.15 * coverage_quality)
-            + (0.10 * scalar_values["reward_norm"])
+            (0.30 * scalar_values["f1_macro"])
+            + (0.20 * float(np.clip(balanced_accuracy, 0.0, 1.0)))
+            + (0.15 * scalar_values["td_stability"])
+            + (0.15 * float(np.clip(kl_stability, 0.0, 1.0)))
+            + (0.10 * coverage_quality)
+            + (0.05 * scalar_values["reward_norm"])
             + (0.05 * scalar_values["history_reward_norm"])
-            + (0.05 * scalar_values["generator_correct_frac"])
         )
         scalar_tensor = torch.tensor(
             [[scalar_values[key] for key in AUDIT_SCALAR_KEYS]],
@@ -1220,6 +1309,8 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
                 "kl_div": kl_div,
                 "local_f1_macro": local_f1,
                 "local_accuracy": local_acc,
+                "local_balanced_accuracy": balanced_accuracy,
+                "kl_stability": kl_stability,
                 "class_entropy": scalar_values["class_entropy"],
                 "label_coverage": scalar_values["label_coverage"],
                 "local_num_examples": self._float_metric(metrics, "local_num_examples"),
@@ -1543,6 +1634,72 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
             multiplier = float(np.exp(-self.drift_penalty_strength * relative_excess))
             record["drift_multiplier"] = float(np.clip(multiplier, lower, 1.0))
 
+    def _cap_aggregation_weights(self, records: list[dict[str, Any]]) -> None:
+        """Cap any single client's normalized aggregation share and renormalize.
+
+        Non-IID alpha=0.1 can leave one large, majority-class client with most
+        samples. Plain sample-count weighting then lets that client dominate the
+        global delta. The cap is deliberately class-agnostic: it limits dominance
+        without reintroducing the class-aware aggregation multipliers that hurt
+        earlier ablations.
+        """
+        if not records:
+            return
+
+        cap = float(np.clip(self.max_client_weight_fraction, 0.0, 1.0))
+        if cap <= EPS or cap >= 1.0:
+            for record in records:
+                record["aggregation_weight_uncapped"] = float(record.get("aggregation_weight", 0.0))
+                record["aggregation_weight_capped"] = 0.0
+            return
+
+        weights = np.asarray(
+            [max(float(record.get("aggregation_weight", 0.0)), EPS) for record in records],
+            dtype=np.float64,
+        )
+        total = float(weights.sum())
+        if total <= EPS:
+            return
+
+        # A cap below 1/N is mathematically impossible while preserving total mass.
+        feasible_cap = max(cap, (1.0 / float(len(records))) + EPS)
+        normalized = weights / total
+        capped = np.zeros_like(normalized, dtype=bool)
+
+        for _ in range(len(normalized)):
+            over = normalized > feasible_cap
+            new_over = over & ~capped
+            if not np.any(new_over):
+                break
+
+            capped |= new_over
+            normalized[new_over] = feasible_cap
+
+            remaining = ~capped
+            remaining_mass = 1.0 - float(normalized[capped].sum())
+            if remaining_mass <= EPS or not np.any(remaining):
+                break
+
+            remaining_weights = weights[remaining]
+            remaining_weight_sum = float(remaining_weights.sum())
+            if remaining_weight_sum <= EPS:
+                normalized[remaining] = remaining_mass / float(remaining.sum())
+            else:
+                normalized[remaining] = (
+                    remaining_mass * remaining_weights / remaining_weight_sum
+                )
+
+        new_weights = normalized * total
+        for record, new_weight, old_weight, norm_share in zip(
+            records, new_weights, weights, normalized, strict=True
+        ):
+            was_capped = float(abs(float(new_weight) - float(old_weight)) > 1e-8)
+            record["aggregation_weight_uncapped"] = float(old_weight)
+            record["aggregation_weight"] = float(new_weight)
+            record["aggregation_weight_fraction"] = float(norm_share)
+            record["aggregation_weight_capped"] = was_capped
+            record["max_client_weight_fraction_effective"] = float(feasible_cap)
+
     def _server_optimized_delta(self, normalized_delta: list[np.ndarray]) -> list[np.ndarray]:
         optimizer_name = self.server_optimizer_name
         if optimizer_name in {"", "none", "fedavg"}:
@@ -1614,6 +1771,28 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
             )
         logger.info("FMRL-AVA selection round=%d", server_round)
         logger.info("-" * 112)
+
+    @staticmethod
+    def _record_average(records: list[dict[str, Any]], key: str, default: float = 0.0) -> float:
+        values = []
+        for record in records:
+            try:
+                values.append(float(record.get(key, default)))
+            except (TypeError, ValueError):
+                continue
+        return float(np.mean(values)) if values else float(default)
+
+    @staticmethod
+    def _record_minmax(records: list[dict[str, Any]], key: str) -> tuple[float, float]:
+        values = []
+        for record in records:
+            try:
+                values.append(float(record.get(key, 0.0)))
+            except (TypeError, ValueError):
+                continue
+        if not values:
+            return 0.0, 0.0
+        return float(np.min(values)), float(np.max(values))
 
     def _write_monitor_event(self, event: dict[str, Any]) -> None:
         try:

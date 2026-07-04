@@ -1,14 +1,16 @@
+# @package _global_
 experiment:
-  method: FMRL_AVA_GLOW
+  method: FMRL_AVA_GLOW_TWA
+
 training:
   rl_mode: contextual_bandit
   gamma: 0.0
-  epsilon_start: 0.2
+  epsilon_start: 0.20
   epsilon_end: 0.02
   epsilon_decay_rate: 0.98
   loss_weights:
-    prior_kl: 0.1
-    q_td: 0.1
+    prior_kl: 0.10
+    q_td: 0.10
     bandit_q: 0.75
     classification: 3.0
     generator_reconstruction: 1.0
@@ -41,42 +43,55 @@ training:
     q_absent_weight: 0.05
   prior_grad_clip_norm: 1.0
   q_grad_clip_norm: 1.0
+
 federated:
   strategy:
     name: fmrl_ava
     aggregation_strategy: fmrl_ava
+
+    # Performance mode: keep every client, but stop any single giant shard
+    # from controlling the global delta under Dirichlet alpha=0.1.
     warmup_rounds: 20
     min_selected_clients: ${federated.num_clients}
     max_selected_fraction: 1.0
     utility_threshold: 0.0
+
+    sample_power: 0.75
+    max_client_weight_fraction: 0.40
+
     critic_blend: 0.0
     critic_activation_round: 999999
     critic_active_blend: 0.0
     fmrl_lr: 0.001
-    sample_power: 0.75
-    max_client_weight_fraction: 0.40
+
     utility_strength: 0.15
     min_utility: 0.85
     max_utility: 1.15
+
     profile_balance_strength: 0.0
     profile_quality_blend: 0.0
     profile_cluster_strength: 0.0
     profile_min_multiplier: 1.0
     profile_max_multiplier: 1.0
+
     alignment_strength: 0.03
     min_alignment_multiplier: 0.98
     max_alignment_multiplier: 1.02
+
     drift_penalty_strength: 0.05
     drift_min_multiplier: 0.90
+
     server_optimizer: none
     aggregation_lr: 1.0
     local_proximal_mu: 0.001
-    validation_reward_blend: 0.9
-    validation_reward_ema_decay: 0.8
+
+    validation_reward_blend: 0.90
+    validation_reward_ema_decay: 0.80
+
     support_reward_weights:
       local_f1_macro: 0.35
       balanced_accuracy: 0.25
       td_stability: 0.15
-      coverage_quality: 0.1
-      generator_correct_frac: 0.0
-      communication: 0.0
+      coverage_quality: 0.10
+      generator_correct_frac: 0.00
+      communication: 0.00

@@ -234,6 +234,8 @@ class FlowerClient(fl.client.NumPyClient):
             proximal_mu = float(getattr(self.cfg.strategy, "local_proximal_mu", 0.0))
         else:
             proximal_mu = 0.0
+        if strategy_name == "fmrl_ava" and phase in {"standard", "train"}:
+            self.logger.info("Client %s FMRL local proximal_mu=%.6f", self.cid, proximal_mu)
 
         execution_device, switched = self._enter_execution_device()
         try:

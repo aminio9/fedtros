@@ -159,3 +159,32 @@ python run.py experiment=exp3 +method=fedavg seed=42 dataset.preprocessing.alpha
 - Lin, T.-Y., Goyal, P., Girshick, R., He, K., Dollar, P. “Focal Loss for Dense Object Detection.” ICCV, 2017. DOI: 10.1109/ICCV.2017.324.
 - Cui, Y., Jia, M., Lin, T.-Y., Song, Y., Belongie, S. “Class-Balanced Loss Based on Effective Number of Samples.” CVPR, 2019. DOI: 10.1109/CVPR.2019.00949.
 - Hou, W., Chen, T., Wang, F., Wu, T., Zheng, Z., Tang, S., Lim, W. Y. B. “FedAdamom: Adaptive Momentum for Improved Generalization in Federated Optimization.” CVPR, 2026. Use the official CVPR OpenAccess URL if no DOI is available; do not invent one.
+
+## FMRL-AVA-GLOW stabilization notes
+
+The stabilized GLOW implementation follows a strict debugging order. First, `fmrl_ava_glow_stable` must reproduce FedAvg-like behavior through the FMRL two-phase path. Only after that should contextual-bandit RL, local proximal regularization, weak vector alignment, or any server critic influence be evaluated.
+
+Key implementation choices:
+
+- Closed-set evaluation uses the best validation checkpoint by default through `evaluation.use_best_checkpoint: true`.
+- Local proximal regularization is active for FMRL-AVA via `federated.strategy.local_proximal_mu: 0.001` and is passed into Phase-A local training.
+- Prior KL is regularization only, not the main learning signal. GLOW reduces KL weight to `0.10`, increases `free_nats` to `1.0`, and warms it over `1000` steps.
+- The local RL formulation is contextual bandit: `gamma=0.0`, weaker TD, bounded Q diagnostics, and stronger supervised focal classification.
+- Missing-class handling is configurable with `training.missing_class_gradient.q_absent_mode` in `{ignore, weak_negative, off}` and affects local training only.
+- The server mixer output is passed through a sigmoid and compared against normalized system utility in `[0,1]`.
+- Server critic selection influence is disabled in the stable method until separate ablation proves it improves validation macro-F1.
+- Class-aware aggregation multipliers and server Adam remain disabled for the first stable non-IID method.
+
+The monitoring file `fmrl_ava_monitoring.jsonl` now records selected-client count, validation metrics, support/system utility, aggregation weight range, delta norm, local KL, bandit-Q loss, classification loss, Q statistics, reward statistics, and proximal coefficient per aggregation event.
+
+## FMRL-AVA-GLOW-TWA: tempered server aggregation
+
+The TWA variant addresses a failure mode seen in the alpha=0.1 logs: sample-count weighting can allow a single large client to dominate most of the global update. Instead of reintroducing class-aware aggregation, TWA uses a class-agnostic tempered FedAvg prior:
+
+```text
+w_i = (n_i ** rho) * u_i * d_i * a_i
+```
+
+where `rho = sample_power`, `u_i` is bounded utility, `d_i` is a mild drift multiplier, and `a_i` is weak FedAvg-anchored alignment. After weights are computed, any single client is capped by `max_client_weight_fraction` and the remaining mass is redistributed. This keeps FedAvg stability while reducing majority-client dominance under severe non-IID splits.
+
+Recommended starting values are `sample_power=0.75`, `max_client_weight_fraction=0.40`, `utility_strength=0.15`, `alignment_strength=0.03`, and `server_optimizer=none`.

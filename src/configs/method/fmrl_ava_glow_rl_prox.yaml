@@ -1,82 +1,66 @@
+# @package _global_
 experiment:
-  method: FMRL_AVA_GLOW
+  method: FMRL_AVA_GLOW_RL_PROX
+
 training:
   rl_mode: contextual_bandit
   gamma: 0.0
-  epsilon_start: 0.2
+  epsilon_start: 0.20
   epsilon_end: 0.02
   epsilon_decay_rate: 0.98
   loss_weights:
-    prior_kl: 0.1
-    q_td: 0.1
+    prior_kl: 0.10
+    q_td: 0.10
     bandit_q: 0.75
     classification: 3.0
     generator_reconstruction: 1.0
     proximal: 1.0
-  imbalance:
-    enabled: true
-    weight_mode: effective_number
-    effective_number_beta: 0.999
-    min_weight: 0.3
-    max_weight: 3.0
-    normalize: mean
-    class_balanced_sampling: true
-    weighted_reward: true
-    weight_negative_reward: false
   classification_loss:
     name: focal
     focal_gamma: 1.0
     use_class_weights: true
-  auxiliary_losses:
-    supervised_contrastive_lambda: 0.02
-    supervised_contrastive_temperature: 0.1
-    center_loss_lambda: 0.01
   kl:
     free_nats: 1.0
     warmup_steps: 1000
+  prior_grad_clip_norm: 1.0
+  q_grad_clip_norm: 1.0
   missing_class_gradient:
     enabled: true
     mask_value: -20.0
     q_absent_mode: ignore
     q_absent_weight: 0.05
-  prior_grad_clip_norm: 1.0
-  q_grad_clip_norm: 1.0
+
 federated:
   strategy:
     name: fmrl_ava
     aggregation_strategy: fmrl_ava
-    warmup_rounds: 20
+    warmup_rounds: 100000
     min_selected_clients: ${federated.num_clients}
     max_selected_fraction: 1.0
     utility_threshold: 0.0
     critic_blend: 0.0
     critic_activation_round: 999999
     critic_active_blend: 0.0
-    fmrl_lr: 0.001
-    sample_power: 0.75
-    max_client_weight_fraction: 0.40
-    utility_strength: 0.15
-    min_utility: 0.85
-    max_utility: 1.15
+    utility_strength: 0.0
+    min_utility: 1.0
+    max_utility: 1.0
     profile_balance_strength: 0.0
     profile_quality_blend: 0.0
     profile_cluster_strength: 0.0
     profile_min_multiplier: 1.0
     profile_max_multiplier: 1.0
-    alignment_strength: 0.03
-    min_alignment_multiplier: 0.98
-    max_alignment_multiplier: 1.02
-    drift_penalty_strength: 0.05
-    drift_min_multiplier: 0.90
+    alignment_strength: 0.0
+    min_alignment_multiplier: 1.0
+    max_alignment_multiplier: 1.0
+    drift_penalty_strength: 0.0
+    drift_min_multiplier: 1.0
     server_optimizer: none
     aggregation_lr: 1.0
     local_proximal_mu: 0.001
-    validation_reward_blend: 0.9
-    validation_reward_ema_decay: 0.8
     support_reward_weights:
       local_f1_macro: 0.35
       balanced_accuracy: 0.25
       td_stability: 0.15
-      coverage_quality: 0.1
-      generator_correct_frac: 0.0
-      communication: 0.0
+      coverage_quality: 0.10
+      generator_correct_frac: 0.00
+      communication: 0.00

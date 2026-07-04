@@ -113,4 +113,8 @@ class CentralizedAggregator(nn.Module):
         w2 = torch.abs(self.hyper_w2(global_state)).view(batch_size, self.hidden_dim, 1)
         b2 = self.hyper_b2(global_state).view(batch_size, 1, 1)
         q_total = torch.bmm(hidden, w2) + b2
-        return q_total.view(batch_size, 1)
+        # System utility targets are normalized to [0, 1].  Returning an
+        # unbounded QMIX score made the server mixer loss explode in FMRL-AVA-GLOW
+        # runs, so the auxiliary prediction is bounded before it is compared with
+        # validation/support reward.
+        return torch.sigmoid(q_total.view(batch_size, 1))

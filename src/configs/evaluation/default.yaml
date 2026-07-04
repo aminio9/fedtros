@@ -7,20 +7,21 @@ class_names: ${paths.class_names}
 output_dir: ${tracking.run_dir}
 metrics:
   primary_closed_set:
-    - accuracy
-    - balanced_accuracy
-    - macro_precision
-    - macro_recall
-    - macro_f1
+  - accuracy
+  - balanced_accuracy
+  - macro_precision
+  - macro_recall
+  - macro_f1
   primary_open_set:
-    - auroc
-    - auprc
-    - fpr95
-    - unknown_detection_rate
-    - unknown_f1
+  - auroc
+  - auprc
+  - fpr95
+  - unknown_detection_rate
+  - unknown_f1
 save_predictions: true
 report_to_stdout: true
 export_latent_embeddings: true
 latent_embeddings_output: ${evaluation.output_dir}/latent_embeddings.csv
 latent_embeddings_batch_size: ${evaluation.batch_size}
 latent_embeddings_max_points: 5000
+use_best_checkpoint: true

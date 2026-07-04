@@ -165,3 +165,53 @@ python run.py experiment=exp3 +method=fedavg seed=42 dataset.preprocessing.alpha
 - Lin, T.-Y., Goyal, P., Girshick, R., He, K., Dollar, P. “Focal Loss for Dense Object Detection.” ICCV, 2017. DOI: 10.1109/ICCV.2017.324.
 - Cui, Y., Jia, M., Lin, T.-Y., Song, Y., Belongie, S. “Class-Balanced Loss Based on Effective Number of Samples.” CVPR, 2019. DOI: 10.1109/CVPR.2019.00949.
 - Hou, W., Chen, T., Wang, F., Wu, T., Zheng, Z., Tang, S., Lim, W. Y. B. “FedAdamom: Adaptive Momentum for Improved Generalization in Federated Optimization.” CVPR, 2026. Use the official CVPR OpenAccess URL if no DOI is available; do not invent one.
+
+## 2026-07 FMRL-AVA-GLOW stability patch
+
+The uploaded alpha=0.1 GLOW run was incomplete and must not be treated as a final test. It stopped before producing final `test_metrics.json`. The observed collapse starts during continued local training plus aggregation, not in AVA/open-set rejection, because open-set evaluation was disabled for that run.
+
+The first fixed target is `fmrl_ava_glow_stable`: it executes the FMRL two-phase path but behaves like sample-count FedAvg. It selects all clients through a long warmup, disables utility/profile/drift/alignment multipliers, disables critic selection, disables server Adam, and uses `aggregation_lr: 1.0`. If this config does not come close to FedAvg, the bug is in the FMRL codepath rather than the adaptive algorithm.
+
+`fmrl_ava_glow` now uses safer local training defaults: `gamma: 0.0`, lower KL pressure (`prior_kl: 0.10`, `free_nats: 1.0`, `warmup_steps: 1000`), stronger supervised classification (`classification: 3.0`), weaker TD/bandit contribution, focal gamma `1.0`, and `local_proximal_mu: 0.001`. The server critic is not allowed to affect selection by default: `critic_blend: 0.0`, `critic_activation_round: 999999`, and `critic_active_blend: 0.0`. The mixer output is bounded to `[0,1]`, so the auxiliary server loss cannot explode into fake utility values in the tens of thousands. Small mercy, finally.
+
+Final evaluation now prefers `best_model.pt` when `evaluation.use_best_checkpoint: true`, falling back to the configured checkpoint only when no best checkpoint exists or the setting is disabled. This prevents a collapsed final round from silently overwriting a much stronger validation checkpoint.
+
+Recommended ablation commands:
+
+```bash
+python run.py experiment=exp3 +method=fedavg seed=42 dataset.preprocessing.alpha=0.1
+python run.py experiment=exp3 +method=fmrl_ava_glow_stable seed=42 dataset.preprocessing.alpha=0.1
+python run.py experiment=exp3 +method=fmrl_ava_glow_rl seed=42 dataset.preprocessing.alpha=0.1
+python run.py experiment=exp3 +method=fmrl_ava_glow_rl_prox seed=42 dataset.preprocessing.alpha=0.1
+python run.py experiment=exp3 +method=fmrl_ava_glow_rl_prox_align seed=42 dataset.preprocessing.alpha=0.1
+```
+
+Primary selection/reporting metrics remain validation/test macro-F1, balanced accuracy, worst-class F1, and per-class recall. Accuracy is secondary because Normal-class dominance can make a bad minority-class model look annoyingly competent.
+
+## FMRL-AVA-GLOW-TWA server aggregation ablation
+
+Use this after confirming `fmrl_ava_glow_stable` is close to FedAvg. TWA keeps all clients in performance mode but changes the server weighting so a giant majority-class shard cannot dominate the global delta.
+
+```bash
+python run.py experiment=exp3 +method=fmrl_ava_glow_twa seed=42 dataset.preprocessing.alpha=0.1
+```
+
+Core server settings:
+
+```yaml
+sample_power: 0.75
+max_client_weight_fraction: 0.40
+utility_strength: 0.15
+alignment_strength: 0.03
+drift_penalty_strength: 0.05
+critic_blend: 0.0
+server_optimizer: none
+```
+
+Interpretation:
+
+- `sample_power < 1.0` tempers sample-count dominance.
+- `max_client_weight_fraction` caps the final normalized update share of any single client.
+- The cap is class-agnostic and does not re-enable class-aware aggregation multipliers.
+- Utility now treats very high KL as instability rather than novelty.
+- Primary comparison metrics are macro-F1, balanced accuracy, worst-class F1, and per-class recall. Accuracy remains secondary under alpha=0.1.

@@ -21,7 +21,7 @@ target_update_freq: 100
 use_double_dqn: ${agent.use_double_dqn}
 prior_grad_clip_norm: 1.0
 q_grad_clip_norm: 1.0
-epsilon_start: 0.30
+epsilon_start: 0.3
 epsilon_end: 0.02
 epsilon_decay_rate: 0.97
 prior_kl_raw: false
@@ -40,6 +40,8 @@ reward:
 missing_class_gradient:
   enabled: true
   mask_value: -20.0
+  q_absent_mode: ignore
+  q_absent_weight: 0.05
 imbalance:
   enabled: true
   weight_mode: effective_number
