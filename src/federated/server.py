@@ -643,7 +643,6 @@ class DKDFedOSStrategy(FedAvg):
         avg_local_norm = self._weight_list_norm(avg_weights)
 
         self.global_student_parameters = ndarrays_to_parameters(new_weights)
-        self._save_student_checkpoint(new_weights, server_round)
 
         fit_metrics = [(int(record["num_examples"]), record["metrics"]) for record in reliable_records]
         metrics = aggregate_fit_metrics(fit_metrics)
@@ -665,6 +664,7 @@ class DKDFedOSStrategy(FedAvg):
                 "dkd_fedos_avg_local_norm": float(avg_local_norm),
             }
         )
+        self._save_student_checkpoint(new_weights, server_round, metrics)
         self._write_monitor_event(
             {
                 "event": "dkd_fedos_aggregation",
@@ -720,7 +720,12 @@ class DKDFedOSStrategy(FedAvg):
         weight = sample_factor * coverage_factor * entropy_factor
         return float(np.clip(weight, self.reliability_min_weight, 1.0))
 
-    def _save_student_checkpoint(self, weights: list[np.ndarray], round_num: int) -> None:
+    def _save_student_checkpoint(
+        self,
+        weights: list[np.ndarray],
+        round_num: int,
+        metrics: dict[str, Any] | None = None,
+    ) -> None:
         model_dir = _resolve_path(self.cfg.checkpointing.dir)
         model_dir.mkdir(parents=True, exist_ok=True)
         if GLOBAL_AGENT_REF is None:
@@ -1403,7 +1408,7 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
                 validation_reward,
                 self.validation_team_reward_ema,
             )
-            self._write_monitor_event(
+        self._write_monitor_event(
                 {
                     "event": "validation_reward",
                     "server_round": server_round,

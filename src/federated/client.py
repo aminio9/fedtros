@@ -342,13 +342,6 @@ class FlowerClient(fl.client.NumPyClient):
                 round_index = int(round_num) if str(round_num).isdigit() else 0
 
                 metrics: dict[str, Any] = {}
-                if bool(getattr(self.cfg.training, "evaluate_before_local_fit", False)):
-                    self._run_standard_eval_logic(
-                        metrics,
-                        round_index=round_index,
-                        report_prefix="LOCAL_BEFORE_TRAIN",
-                        metric_namespace="local_before",
-                    )
 
                 reset_metrics = self._prepare_clean_federated_baseline_round(round_num)
                 num_steps_trained, train_metrics = self._perform_training_loop(

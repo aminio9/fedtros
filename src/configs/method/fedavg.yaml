@@ -23,7 +23,7 @@ training:
   reset_epsilon_each_round: true
   round_aware_seed: true
   evaluate_after_local_fit: true
-  evaluate_before_local_fit: true
+  evaluate_before_local_fit: false
   aux_ce_weight: 0.0
   generator:
     enabled: false
