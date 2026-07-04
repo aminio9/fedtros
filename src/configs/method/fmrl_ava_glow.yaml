@@ -1,19 +1,23 @@
 # @package _global_
+
 experiment:
   method: FMRL_AVA_GLOW
+
 training:
   rl_mode: contextual_bandit
   gamma: 0.0
   epsilon_start: 0.30
   epsilon_end: 0.02
   epsilon_decay_rate: 0.97
+
   loss_weights:
     prior_kl: 0.5
     q_td: 0.25
     bandit_q: 1.0
     classification: 2.0
     generator_reconstruction: 1.0
-    proximal: 1.0
+    proximal: 0.0
+
   imbalance:
     enabled: true
     weight_mode: effective_number
@@ -24,50 +28,72 @@ training:
     class_balanced_sampling: true
     weighted_reward: true
     weight_negative_reward: false
+
   classification_loss:
     name: focal
     focal_gamma: 1.5
     use_class_weights: true
+
   auxiliary_losses:
     supervised_contrastive_lambda: 0.02
     supervised_contrastive_temperature: 0.1
     center_loss_lambda: 0.01
+
   kl:
     free_nats: 0.25
     warmup_steps: 200
+
   missing_class_gradient:
     enabled: true
     mask_value: -20.0
+
 federated:
   strategy:
     name: fmrl_ava
     aggregation_strategy: fmrl_ava
-    warmup_rounds: 20
-    min_selected_clients: 9
+
+    # E1 uses 3 clients, so these must not inherit 10-client defaults.
+    max_agents: 3
+    min_selected_clients: 3
     max_selected_fraction: 1.0
     utility_threshold: 0.0
+
+    warmup_rounds: 20
+
     critic_blend: 0.05
     critic_activation_round: 40
     critic_active_blend: 0.05
     fmrl_lr: 0.001
+
     utility_strength: 0.20
     min_utility: 0.85
     max_utility: 1.15
+
+    # Disabled because class-aware aggregation multipliers hurt your previous runs.
     profile_balance_strength: 0.0
     profile_quality_blend: 0.0
     profile_cluster_strength: 0.0
     profile_min_multiplier: 1.0
     profile_max_multiplier: 1.0
+
+    # Weak FedAvg-anchored alignment only.
     alignment_strength: 0.05
     min_alignment_multiplier: 0.95
     max_alignment_multiplier: 1.05
+
     drift_penalty_strength: 0.03
     drift_min_multiplier: 0.95
+
+    # Keep server optimizer disabled for stable first method.
     server_optimizer: none
     aggregation_lr: 1.0
-    local_proximal_mu: 0.000
+
+    # Disabled for E1 because proximal is not helping.
+    local_proximal_mu: 0.0
+
     validation_reward_blend: 0.90
     validation_reward_ema_decay: 0.80
+
     support_reward_weights:
       local_f1_macro: 0.35
       balanced_accuracy: 0.25
