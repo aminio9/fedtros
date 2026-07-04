@@ -284,3 +284,40 @@ def test_fmrl_ava_cap_noop_when_disabled():
     assert records[0]["aggregation_weight"] == 10.0
     assert records[1]["aggregation_weight"] == 1.0
     assert records[0]["aggregation_weight_capped"] == 0.0
+
+
+def test_fmrl_ava_module_delta_scaling_slows_latent_modules(monkeypatch):
+    import src.federated.server as server_module
+
+    class _DummyModule:
+        def __init__(self, n: int):
+            self._n = n
+
+        def state_dict(self):
+            return {f"p{i}": torch.tensor(float(i)) for i in range(self._n)}
+
+    class _DummyAgent:
+        prior_net = _DummyModule(2)
+        recognition_net = _DummyModule(1)
+        value_net_main = _DummyModule(2)
+        generation_net = _DummyModule(1)
+
+    monkeypatch.setattr(server_module, "GLOBAL_AGENT_REF", _DummyAgent())
+
+    strategy = object.__new__(FMRLAdaptiveVectorAlignedAggregationStrategy)
+    strategy.module_delta_scales = {
+        "prior_net": 0.25,
+        "recognition_net": 0.10,
+        "value_net_main": 1.0,
+        "generation_net": 0.0,
+    }
+
+    deltas = [np.ones((1,), dtype=np.float32) for _ in range(6)]
+    scaled = strategy._scale_module_deltas(deltas)
+
+    assert float(scaled[0][0]) == 0.25
+    assert float(scaled[1][0]) == 0.25
+    assert abs(float(scaled[2][0]) - 0.10) < 1e-7
+    assert float(scaled[3][0]) == 1.0
+    assert float(scaled[4][0]) == 1.0
+    assert float(scaled[5][0]) == 0.0

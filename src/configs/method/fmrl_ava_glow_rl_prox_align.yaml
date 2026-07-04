@@ -37,6 +37,11 @@ federated:
     warmup_rounds: 20
     min_selected_clients: 9
     max_selected_fraction: 1.0
+    module_delta_scales:
+      prior_net: 0.25
+      recognition_net: 0.10
+      value_net_main: 1.0
+      generation_net: 0.0
     utility_threshold: 0.0
     critic_blend: 0.0
     critic_activation_round: 999999

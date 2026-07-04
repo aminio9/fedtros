@@ -1,138 +1,47 @@
 # @package _global_
-
 experiment:
   id: E1
   name: exp1_closed_set
   family: closed_set
-  method: FMRL_AVA_GLOW
+  method: FMRL_AVA
   pipeline: full
-  description: Closed-set federated validation on all B-NAT labels using 3 clients under Dirichlet non-IID alpha=0.1.
-  objective: Evaluate contextual-bandit FMRL-AVA-GLOW under the same 3-client non-IID setting used by the base paper.
-
+  description: Closed-set validation on all B-NAT labels.
+  objective: Preserve classification quality across the full B-NAT label set.
   primary_metrics:
-    - test/macro_f1
-    - test/balanced_accuracy
-    - test/worst_class_f1
-    - test/minority_recall
     - test/accuracy
-
+    - test/balanced_accuracy
+    - test/macro_f1
   dependencies:
     - preprocessing
     - federated_training
     - closed_set_evaluation
-
   expected_artifacts:
     - evaluation_metrics.json
     - test_metrics.json
     - test_confusion_matrix.csv
     - federated_history.csv
     - communication_metrics.csv
-
 federated:
-  num_clients: 3
+  num_clients: 10
   num_rounds: 100
-
-  server:
-    min_fit_clients: 3
-    min_evaluate_clients: 3
-    min_available_clients: 3
-
-  strategy:
-    # Keep the internal strategy name from the method config as fmrl_ava.
-    # fmrl_ava_glow is the Hydra method preset, not a new server class.
-    name: fmrl_ava
-    aggregation_strategy: fmrl_ava
-
-    # 3-client E1 safety.
-    max_agents: 3
-    min_selected_clients: 3
-    max_selected_fraction: 1.0
-    utility_threshold: 0.0
-
-    # Disable local proximal for E1 because it is not helping this setting.
-    local_proximal_mu: 0.0
-
-    # FMRL-AVA-GLOW should not use class-aware aggregation multipliers.
-    profile_balance_strength: 0.0
-    profile_quality_blend: 0.0
-    profile_cluster_strength: 0.0
-    profile_min_multiplier: 1.0
-    profile_max_multiplier: 1.0
-
-    # Keep alignment weak and bounded.
-    alignment_strength: 0.05
-    min_alignment_multiplier: 0.95
-    max_alignment_multiplier: 1.05
-
-    # Keep server optimizer disabled for the first stable method.
-    server_optimizer: none
-    aggregation_lr: 1.0
-
 model:
   num_actions: 5
-
 dataset:
   known_labels: ${dataset.source_labels}
-
   preprocessing:
     output_dir: ${tracking.run_dir}/processed
     closed_set_test_size: 0.1
     validation_split: 0.0
-
-    # Base-paper-compatible 3-client non-IID setting.
     alpha: 1.0
     iid: true
-
 open_set:
   evt:
     enabled: false
-
 training:
-  rl_mode: contextual_bandit
-  gamma: 0.0
-  epsilon_start: 0.30
-  epsilon_end: 0.02
-  epsilon_decay_rate: 0.97
-
   generator:
     enabled: false
-
-  loss_weights:
-    prior_kl: 0.5
-    q_td: 0.25
-    bandit_q: 1.0
-    classification: 2.0
-    generator_reconstruction: 1.0
-    proximal: 0.0
-
-  classification_loss:
-    name: focal
-    focal_gamma: 1.5
-    use_class_weights: true
-
-  imbalance:
-    enabled: true
-    weight_mode: effective_number
-    effective_number_beta: 0.999
-    min_weight: 0.3
-    max_weight: 3.0
-    normalize: mean
-    class_balanced_sampling: true
-    weighted_reward: true
-    weight_negative_reward: false
-
-  auxiliary_losses:
-    supervised_contrastive_lambda: 0.02
-    supervised_contrastive_temperature: 0.1
-    center_loss_lambda: 0.01
-
-  kl:
-    free_nats: 0.25
-    warmup_steps: 200
-
 evaluation:
   mode: closed_set
   export_latent_embeddings: false
-
 tracking:
-  run_id: e1_${experiment.method}_3clients_alpha0.1_seed${seed}
+  run_id: e1_${experiment.method}_iid_seed${seed}

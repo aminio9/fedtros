@@ -9,4 +9,4 @@ client_num_cpus: 1
 client_num_gpus: 1.0
 simulation_gpu_batches:
   enabled: true
-  batch_size: 10
+  batch_size: 5

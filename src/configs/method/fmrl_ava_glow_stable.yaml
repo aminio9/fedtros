@@ -39,6 +39,11 @@ federated:
     max_selected_fraction: 1.0
     sample_power: 1.0
     max_client_weight_fraction: 1.0
+    module_delta_scales:
+      prior_net: 1.0
+      recognition_net: 1.0
+      value_net_main: 1.0
+      generation_net: 1.0
     utility_threshold: 0.0
     critic_blend: 0.0
     critic_activation_round: 999999

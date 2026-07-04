@@ -188,3 +188,42 @@ w_i = (n_i ** rho) * u_i * d_i * a_i
 where `rho = sample_power`, `u_i` is bounded utility, `d_i` is a mild drift multiplier, and `a_i` is weak FedAvg-anchored alignment. After weights are computed, any single client is capped by `max_client_weight_fraction` and the remaining mass is redistributed. This keeps FedAvg stability while reducing majority-client dominance under severe non-IID splits.
 
 Recommended starting values are `sample_power=0.75`, `max_client_weight_fraction=0.40`, `utility_strength=0.15`, `alignment_strength=0.03`, and `server_optimizer=none`.
+
+## 2026-07 selective latent aggregation fix
+
+The E1 IID 3-client log showed a different failure from the non-IID alpha=0.1 run. Local client models reached strong pre-aggregation metrics, but the global post-aggregation model repeatedly collapsed FoT after averaging. This points to full CVAE-DQN parameter averaging, especially prior/recognition/generator latent modules, rather than client selection or proximal regularization.
+
+FMRL-AVA-GLOW-TWA now supports module-wise delta scaling:
+
+```yaml
+federated:
+  strategy:
+    module_delta_scales:
+      prior_net: 0.25
+      recognition_net: 0.10
+      value_net_main: 1.0
+      generation_net: 0.0
+```
+
+The global delta is still computed from all selected clients, but before applying the update the server scales each module group. The Main Q/classification network aggregates normally. Prior and recognition move slowly, acting like an EMA-style latent update. The generator is frozen by default in closed-set GLOW configs because it is not needed when generator training is disabled. This is not class-aware aggregation and does not privilege any label or client; it only prevents incompatible local latent spaces from being fully averaged.
+
+For a pure FedAvg-equivalent diagnosis, `fmrl_ava_glow_stable.yaml` keeps all module scales at `1.0`. For the repaired method, use `fmrl_ava_glow_twa.yaml`.
+
+Suggested IID 3-client rerun:
+
+```bash
+python run.py experiment=exp1 +method=fmrl_ava_glow_twa seed=42 \
+  federated.num_clients=3 \
+  dataset.preprocessing.num_clients=3 \
+  dataset.preprocessing.iid=true \
+  dataset.preprocessing.alpha=1.0 \
+  federated.strategy.local_proximal_mu=0.0 \
+  tracking.run_id=e1_FMRL_AVA_GLOW_TWA_iid_c3_selective_seed42
+```
+
+If FoT still collapses after aggregation, sweep:
+
+```bash
+python run.py experiment=exp1 +method=fmrl_ava_glow_twa seed=42 federated.strategy.module_delta_scales.prior_net=0.10 federated.strategy.module_delta_scales.recognition_net=0.00
+python run.py experiment=exp1 +method=fmrl_ava_glow_twa seed=42 federated.strategy.module_delta_scales.prior_net=0.50 federated.strategy.module_delta_scales.recognition_net=0.25
+```

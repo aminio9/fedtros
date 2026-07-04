@@ -680,6 +680,20 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
         self.max_client_weight_fraction = float(
             OmegaConf.select(cfg, "strategy.max_client_weight_fraction", default=1.0)
         )
+        self.module_delta_scales = {
+            "prior_net": float(
+                OmegaConf.select(cfg, "strategy.module_delta_scales.prior_net", default=1.0)
+            ),
+            "recognition_net": float(
+                OmegaConf.select(cfg, "strategy.module_delta_scales.recognition_net", default=1.0)
+            ),
+            "value_net_main": float(
+                OmegaConf.select(cfg, "strategy.module_delta_scales.value_net_main", default=1.0)
+            ),
+            "generation_net": float(
+                OmegaConf.select(cfg, "strategy.module_delta_scales.generation_net", default=1.0)
+            ),
+        }
         self.min_selected_clients = int(cfg.strategy.min_selected_clients)
         self.max_selected_fraction = float(cfg.strategy.max_selected_fraction)
         self.max_utility = float(cfg.strategy.max_utility)
@@ -803,6 +817,13 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
             self.aggregation_lr,
             self.profile_balance_strength,
             self.server_optimizer_name,
+        )
+        logger.info(
+            "FMRL-AVA module delta scales | prior=%.3f recognition=%.3f main_q=%.3f generation=%.3f",
+            self.module_delta_scales["prior_net"],
+            self.module_delta_scales["recognition_net"],
+            self.module_delta_scales["value_net_main"],
+            self.module_delta_scales["generation_net"],
         )
 
     def _get_critic(self, cid: str) -> torch.nn.Module:
@@ -1149,6 +1170,7 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
                 weighted_deltas[idx] += delta * aggregation_weight
 
         normalized_delta = [delta / total_aggregation_weight for delta in weighted_deltas]
+        normalized_delta = self._scale_module_deltas(normalized_delta)
         new_weights = [
             base_layer + delta
             for base_layer, delta in zip(
@@ -1183,6 +1205,7 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
                 "aggregation_weight_max_fraction": (agg_max / max(total_aggregation_weight, EPS)),
                 "max_client_weight_fraction": float(self.max_client_weight_fraction),
                 "sample_power": float(self.sample_power),
+                "module_delta_scales": dict(self.module_delta_scales),
                 "total_delta_norm": delta_norm_total,
                 "total_base_aggregation_weight": total_base_aggregation_weight,
                 "total_utility": total_aggregation_weight,
@@ -1699,6 +1722,73 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
             record["aggregation_weight_fraction"] = float(norm_share)
             record["aggregation_weight_capped"] = was_capped
             record["max_client_weight_fraction_effective"] = float(feasible_cap)
+
+    def _federated_module_slices(self, num_params: int) -> dict[str, slice]:
+        """Return flat-parameter slices for each federated module.
+
+        The federated parameter list is produced by Agent.get_federated_parameters()
+        in this order: prior_net, recognition_net, value_net_main, generation_net.
+        CVAE-style latent modules can learn locally useful but globally
+        incompatible parameterizations; scaling their global delta lets the Q head
+        adapt normally while the latent space moves with a safer EMA-like step.
+        """
+        if GLOBAL_AGENT_REF is None:
+            return {}
+
+        start = 0
+        slices: dict[str, slice] = {}
+        modules = (
+            ("prior_net", GLOBAL_AGENT_REF.prior_net),
+            ("recognition_net", GLOBAL_AGENT_REF.recognition_net),
+            ("value_net_main", GLOBAL_AGENT_REF.value_net_main),
+        )
+        for name, module in modules:
+            length = len(module.state_dict())
+            end = start + length
+            slices[name] = slice(start, end)
+            start = end
+
+        if GLOBAL_AGENT_REF.generation_net is not None and start < num_params:
+            length = len(GLOBAL_AGENT_REF.generation_net.state_dict())
+            end = min(start + length, num_params)
+            slices["generation_net"] = slice(start, end)
+            start = end
+
+        if start != num_params:
+            logger.warning(
+                "Federated module slice count mismatch | expected=%d actual=%d; "
+                "unmapped trailing parameters will keep scale=1.0",
+                start,
+                num_params,
+            )
+        return slices
+
+    def _scale_module_deltas(self, normalized_delta: list[np.ndarray]) -> list[np.ndarray]:
+        """Apply module-wise delta scaling before the server update.
+
+        This is intentionally different from class-aware aggregation. It does not
+        privilege any class or client. It only slows unstable latent modules
+        (prior/recognition/generator) whose full averaging caused IID FoT collapse
+        in the observed E1 log, while keeping value_net_main aggregation at full
+        strength by default.
+        """
+        if not normalized_delta:
+            return normalized_delta
+
+        slices = self._federated_module_slices(len(normalized_delta))
+        if not slices:
+            return normalized_delta
+
+        scaled = [delta.copy() for delta in normalized_delta]
+        for module_name, module_slice in slices.items():
+            scale = float(self.module_delta_scales.get(module_name, 1.0))
+            scale = float(np.clip(scale, 0.0, 1.0))
+            if abs(scale - 1.0) <= 1e-12:
+                continue
+            for idx in range(module_slice.start, module_slice.stop):
+                if 0 <= idx < len(scaled):
+                    scaled[idx] = scaled[idx] * scale
+        return scaled
 
     def _server_optimized_delta(self, normalized_delta: list[np.ndarray]) -> list[np.ndarray]:
         optimizer_name = self.server_optimizer_name

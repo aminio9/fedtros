@@ -54,3 +54,25 @@ def test_fmrl_ava_glow_twa_config_contract():
     assert strategy["server_optimizer"] == "none"
     assert strategy["critic_blend"] == 0.0
     assert strategy["profile_balance_strength"] == 0.0
+
+
+def test_fmrl_ava_glow_twa_uses_selective_latent_delta_scales():
+    cfg = yaml.safe_load(Path("src/configs/method/fmrl_ava_glow_twa.yaml").read_text())
+    scales = cfg["federated"]["strategy"]["module_delta_scales"]
+
+    assert scales["prior_net"] == 0.25
+    assert scales["recognition_net"] == 0.10
+    assert scales["value_net_main"] == 1.0
+    assert scales["generation_net"] == 0.0
+
+
+def test_fmrl_ava_glow_stable_keeps_full_module_averaging_for_diagnosis():
+    cfg = yaml.safe_load(Path("src/configs/method/fmrl_ava_glow_stable.yaml").read_text())
+    scales = cfg["federated"]["strategy"]["module_delta_scales"]
+
+    assert scales == {
+        "prior_net": 1.0,
+        "recognition_net": 1.0,
+        "value_net_main": 1.0,
+        "generation_net": 1.0,
+    }

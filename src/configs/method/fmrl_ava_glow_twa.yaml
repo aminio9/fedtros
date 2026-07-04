@@ -59,6 +59,14 @@ federated:
     sample_power: 0.75
     max_client_weight_fraction: 0.40
 
+    # Slow latent-module aggregation to avoid averaging incompatible CVAE
+    # latent spaces. Main Q/classification head still aggregates normally.
+    module_delta_scales:
+      prior_net: 0.25
+      recognition_net: 0.10
+      value_net_main: 1.0
+      generation_net: 0.0
+
     critic_blend: 0.0
     critic_activation_round: 999999
     critic_active_blend: 0.0
