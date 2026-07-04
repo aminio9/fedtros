@@ -662,10 +662,10 @@ class FlowerClient(fl.client.NumPyClient):
         try:
             if str(self.cfg.federated.strategy.name).lower() == "dkd_fedos":
                 _, _, teacher_metrics = self._evaluate_closed_set(
-                    0, prefix="TEACHER_LOCAL_PRE_AGG", model_kind="teacher"
+                    0, prefix="TEACHER_AFTER_LOCAL_TRAIN", model_kind="teacher"
                 )
                 _, _, student_metrics = self._evaluate_closed_set(
-                    0, prefix="STUDENT_LOCAL_PRE_AGG", model_kind="student"
+                    0, prefix="LOCAL_STUDENT_AFTER_LOCAL_TRAIN", model_kind="student"
                 )
                 metrics.update({f"local_teacher_{k}": v for k, v in teacher_metrics.items()})
                 metrics.update({f"local_student_{k}": v for k, v in student_metrics.items()})
@@ -710,14 +710,10 @@ class FlowerClient(fl.client.NumPyClient):
                 return 0.0, 0, {}
 
             if str(config.get("phase", "")).lower() == "dkd_fedos":
-                loss, num_examples, teacher_metrics = self._evaluate_closed_set(
-                    round_index, prefix="TEACHER_GLOBAL_POST_AGG", model_kind="teacher"
+                loss, num_examples, student_metrics = self._evaluate_closed_set(
+                    round_index, prefix="GLOBAL_STUDENT_AFTER_SERVER_AGG", model_kind="student"
                 )
-                _, _, student_metrics = self._evaluate_closed_set(
-                    round_index, prefix="STUDENT_GLOBAL_POST_AGG", model_kind="student"
-                )
-                metrics.update(teacher_metrics)
-                metrics.update({f"teacher_{k}": v for k, v in teacher_metrics.items()})
+                metrics.update(student_metrics)
                 metrics.update({f"student_{k}": v for k, v in student_metrics.items()})
             else:
                 loss, num_examples, cs_metrics = self._evaluate_closed_set(
@@ -913,6 +909,21 @@ class FlowerClient(fl.client.NumPyClient):
             }
 
         labels = list(range(len(self.eval_class_names)))
+        pred_counts = {str(i): int((y_pred == i).sum()) for i in labels}
+        true_counts = {str(i): int((y_true == i).sum()) for i in labels}
+        max_pred_count = max(pred_counts.values()) if pred_counts else 0
+        max_prediction_ratio = float(max_pred_count / max(num_examples, 1))
+        if max_prediction_ratio >= 0.95:
+            collapsed_class = max(pred_counts, key=lambda k: pred_counts[k]) if pred_counts else "?"
+            self.logger.warning(
+                "Client %s | %s | %s prediction collapse: class=%s ratio=%.4f histogram=%s",
+                self.cid,
+                prefix,
+                model_kind,
+                collapsed_class,
+                max_prediction_ratio,
+                json.dumps(pred_counts, sort_keys=True),
+            )
         report = classification_report(
             y_true,
             y_pred,
@@ -934,6 +945,9 @@ class FlowerClient(fl.client.NumPyClient):
                 "balanced_accuracy": balanced_accuracy,
                 "f1_macro": f1,
                 "num_examples": num_examples,
+                "prediction_max_ratio": max_prediction_ratio,
+                "prediction_histogram": json.dumps(pred_counts, sort_keys=True),
+                "true_label_histogram": json.dumps(true_counts, sort_keys=True),
             },
         )
 

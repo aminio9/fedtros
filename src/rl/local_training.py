@@ -70,6 +70,7 @@ def run_local_training_round(
             minlength=int(getattr(env, "num_actions_nt", 1)),
         )[: int(getattr(env, "num_actions_nt", 1))]
         dkd_present_classes = (counts > 0).to(device)
+    dkd_dataset_training = bool(getattr(cfg_training, "dkd_dataset_training", True))
 
     # Optional deterministic seeding if cfg_training.seed exists
     base_seed = getattr(cfg_training, "seed", None)
@@ -189,7 +190,7 @@ def run_local_training_round(
                     aux_ce_weight=aux_ce_weight,
                     aux_ce_label_smoothing=aux_ce_label_smoothing,
                     class_weights=reward_class_weights,
-                    dkd_enabled=dkd_enabled,
+                    dkd_enabled=(dkd_enabled and not dkd_dataset_training),
                     dkd_round=dkd_round,
                     dkd_class_weights=dkd_class_weights,
                     dkd_present_classes=dkd_present_classes,
@@ -373,6 +374,32 @@ def run_local_training_round(
         "per_class_policy_accuracy": json.dumps(per_class_accuracy, sort_keys=True),
         "mean_reward_weight": reward_weight_sum / total_steps if total_steps else 1.0,
     }
+
+    if dkd_enabled and dkd_dataset_training:
+        try:
+            buffer_size_before_dkd = len(buffer)
+            dkd_dataset_metrics = agent.train_dkd_fedos_dataset(
+                features=env.all_features_s,
+                labels=env.all_labels_a_t,
+                cfg_training=cfg_training,
+                round_num=int(dkd_round),
+                class_weights=dkd_class_weights,
+                present_classes=dkd_present_classes,
+                device=device,
+                logger=active_logger,
+            )
+            buffer_size_after_dkd = len(buffer)
+            dkd_dataset_metrics.update(
+                {
+                    "dkd_replay_buffer_size_before": float(buffer_size_before_dkd),
+                    "dkd_replay_buffer_size_after": float(buffer_size_after_dkd),
+                    "dkd_replay_buffer_delta": float(buffer_size_after_dkd - buffer_size_before_dkd),
+                }
+            )
+            metrics.update(dkd_dataset_metrics)
+        except Exception:
+            active_logger.exception("DKD-FedOS dataset mini-batch training failed.")
+            raise
 
     active_logger.info("Local training finished. Ran %s steps.", total_steps)
     active_logger.info("Round Metrics: %s", metrics)

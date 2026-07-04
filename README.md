@@ -216,3 +216,29 @@ poetry run python run.py experiment=exp3 +method=dkd_fedos seed=42 \
 ```
 
 See `docs/dkd-fedos-implementation.md` for the full method mapping and logging checklist.
+
+### DKD-FedOS v3 smoke command
+
+```bash
+poetry run python run.py experiment=exp1 +method=dkd_fedos seed=42 \
+  federated.num_clients=3 federated.num_rounds=8 \
+  training.local_episodes_per_round=10 dataset.preprocessing.iid=true \
+  dataset.preprocessing.validation_split=0.1
+```
+
+In the log, check that `GLOBAL_STUDENT_AFTER_SERVER_AGG` is not stuck at `0.0714` accuracy and that `prediction_max_ratio` is not `1.0`.
+
+### DKD-FedOS v4 RL-safe dataset DKD
+
+The DKD dataset mini-batch phase is now student-only by default. It reads `env.all_features_s` and `env.all_labels_a_t` but does not step the environment, does not add to replay buffer, and does not update the CVAE-DQN teacher unless explicitly enabled.
+
+Safe defaults:
+
+```yaml
+training.dkd_dataset_update_teacher=false
+training.dkd_update_teacher_from_student=false
+training.dkd_teacher_task_weight=0.0
+training.dkd_student_to_teacher_start_round=999
+```
+
+So the RL teacher is still trained by the normal replay-buffer path, while the dataset DKD phase trains only the shared student and aligner from a frozen teacher.

@@ -592,6 +592,7 @@ class Agent:
         present_classes: torch.Tensor | None,
         round_num: int,
         label_smoothing: float,
+        allow_student_to_teacher: bool | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, dict[str, float], float, float, bool, bool]:
         """Run Sentinel-style student update and gated global-to-teacher KD.
 
@@ -657,19 +658,28 @@ class Agent:
             student_objective = student_objective + self.dkd_lambda_kd * t2s_component
         if align_enabled:
             student_objective = student_objective + self.dkd_lambda_align * align_loss
-        student_objective.backward()
-        torch.nn.utils.clip_grad_norm_(
-            list(self.student_model.parameters()) + list(self.teacher_to_student_aligner.parameters()),
-            max_norm=float(getattr(self.train_cfg, "dkd_grad_clip_norm", 1.0)),
-        )
-        self.optimizer_dkd.step()
+        if student_objective.requires_grad:
+            student_objective.backward()
+            torch.nn.utils.clip_grad_norm_(
+                list(self.student_model.parameters()) + list(self.teacher_to_student_aligner.parameters()),
+                max_norm=float(getattr(self.train_cfg, "dkd_grad_clip_norm", 1.0)),
+            )
+            self.optimizer_dkd.step()
 
         # Stage C: global student -> teacher.  Crucially, this pass is not
         # protected against absent classes; it is the only path that can teach
         # missing output rows on clients with label holes.
-        s2t_start = int(getattr(self.train_cfg, "dkd_student_to_teacher_start_round", 6))
+        if allow_student_to_teacher is None:
+            allow_student_to_teacher = bool(
+                getattr(self.train_cfg, "dkd_update_teacher_from_student", False)
+            )
+        s2t_start = int(getattr(self.train_cfg, "dkd_student_to_teacher_start_round", 999))
         min_student_conf = float(getattr(self.train_cfg, "dkd_min_student_confidence", 0.0))
-        s2t_enabled = int(round_num) >= s2t_start and stats.get("student_confidence", 0.0) >= min_student_conf
+        s2t_enabled = (
+            bool(allow_student_to_teacher)
+            and int(round_num) >= s2t_start
+            and stats.get("student_confidence", 0.0) >= min_student_conf
+        )
         s2t_loss = torch.zeros((), device=self.device)
         if s2t_enabled:
             with torch.no_grad():
@@ -707,6 +717,202 @@ class Agent:
             bool(t2s_enabled),
             bool(s2t_enabled),
         )
+
+    def train_dkd_fedos_dataset(
+        self,
+        features: torch.Tensor,
+        labels: torch.Tensor,
+        cfg_training: DictConfig,
+        *,
+        round_num: int,
+        class_weights: torch.Tensor | None,
+        present_classes: torch.Tensor | None,
+        device: torch.device,
+        logger: logging.Logger | None = None,
+    ) -> dict[str, float]:
+        """Run Sentinel Algorithm-1-style DKD training on local dataset batches.
+
+        This is intentionally separate from replay-buffer RL.  The RL loop keeps
+        the CVAE-DQN teacher stable, while this supervised loop implements the
+        paper's mini-batch teacher/student distillation objective on D_i.
+        """
+        active_logger = logger or self.logger
+        local_epochs = int(getattr(cfg_training, "dkd_local_epochs", 1))
+        if local_epochs <= 0:
+            return {}
+        batch_size = int(getattr(cfg_training, "dkd_batch_size", getattr(cfg_training, "batch_size", 64)))
+        label_smoothing = float(getattr(cfg_training, "dkd_label_smoothing", getattr(cfg_training, "aux_ce_label_smoothing", 0.0)))
+        features = features.detach().float().to(device)
+        labels = labels.detach().long().view(-1).to(device).clamp(0, self.action_dim - 1)
+        dataset = TensorDataset(features, labels)
+        if len(dataset) == 0:
+            return {"dkd_dataset_train_steps": 0.0}
+        loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=False)
+        if class_weights is not None:
+            class_weights = class_weights.to(device)
+        if present_classes is not None:
+            present_classes = present_classes.to(device)
+
+        totals = {
+            "teacher_task": 0.0,
+            "student_task": 0.0,
+            "t2s": 0.0,
+            "s2t": 0.0,
+            "align": 0.0,
+            "agreement": 0.0,
+            "correct_agreement": 0.0,
+            "teacher_acc": 0.0,
+            "student_acc": 0.0,
+            "teacher_conf": 0.0,
+            "student_conf": 0.0,
+            "t2s_enabled": 0.0,
+            "s2t_enabled": 0.0,
+        }
+        train_steps = 0
+        for _epoch in range(local_epochs):
+            for batch_features, batch_labels in loader:
+                batch_features = batch_features.to(device)
+                batch_labels = batch_labels.to(device).long().view(-1).clamp(0, self.action_dim - 1)
+
+                # Stage A (safe default): measure teacher CE on the inference path,
+                # but DO NOT update the CVAE-DQN teacher from dataset mini-batches.
+                # RL/replay remains the owner of prior_net, recognition_net, and Q-head
+                # updates.  This prevents Sentinel-style supervised DKD from breaking
+                # the RL dynamics.  Set dkd_dataset_update_teacher=true only for an
+                # ablation after the global student is known to be stable.
+                update_teacher_from_dataset = bool(
+                    getattr(cfg_training, "dkd_dataset_update_teacher", False)
+                )
+                self.prior_net.train(update_teacher_from_dataset)
+                self.value_net_main.train(update_teacher_from_dataset)
+                if update_teacher_from_dataset:
+                    self.optimizer_prior.zero_grad()
+                    self.optimizer_q_rl.zero_grad()
+                    mu_p, _ = self.prior_net(batch_features)
+                    teacher_logits = self.value_net_main(mu_p, batch_features)
+                    teacher_task_loss = self._masked_class_balanced_ce(
+                        teacher_logits,
+                        batch_labels,
+                        class_weights,
+                        present_classes,
+                        label_smoothing=label_smoothing,
+                    )
+                    teacher_objective = (
+                        float(getattr(cfg_training, "dkd_teacher_task_weight", 0.0))
+                        * teacher_task_loss
+                    )
+                    if teacher_objective.requires_grad:
+                        teacher_objective.backward()
+                        if present_classes is not None:
+                            self._protect_absent_class_rows(present_classes, target="teacher")
+                        torch.nn.utils.clip_grad_norm_(
+                            list(self.prior_net.parameters()) + list(self.value_net_main.parameters()),
+                            max_norm=float(getattr(cfg_training, "dkd_grad_clip_norm", 1.0)),
+                        )
+                        self.optimizer_prior.step()
+                        self.optimizer_q_rl.step()
+                else:
+                    self.prior_net.eval()
+                    self.value_net_main.eval()
+                    with torch.no_grad():
+                        mu_p, _ = self.prior_net(batch_features)
+                        teacher_logits = self.value_net_main(mu_p, batch_features)
+                        teacher_task_loss = self._masked_class_balanced_ce(
+                            teacher_logits,
+                            batch_labels,
+                            class_weights,
+                            present_classes,
+                            label_smoothing=label_smoothing,
+                        )
+
+                # Stage B/C: student update and optional gated global-student -> teacher transfer.
+                (
+                    student_task_loss,
+                    t2s_loss,
+                    s2t_loss,
+                    align_loss,
+                    stats,
+                    align_score,
+                    temperature,
+                    t2s_enabled,
+                    s2t_enabled,
+                ) = self._run_dkd_teacher_student_updates(
+                    states_s=batch_features,
+                    labels=batch_labels,
+                    class_weights=class_weights,
+                    present_classes=present_classes,
+                    round_num=int(round_num),
+                    label_smoothing=label_smoothing,
+                    allow_student_to_teacher=bool(
+                        getattr(cfg_training, "dkd_update_teacher_from_student", False)
+                    ),
+                )
+                self._update_dkd_lambdas(
+                    agreement=stats.get("agreement", 0.0),
+                    align_score=align_score,
+                    round_num=int(round_num),
+                )
+
+                totals["teacher_task"] += float(teacher_task_loss.detach().item())
+                totals["student_task"] += float(student_task_loss.detach().item())
+                totals["t2s"] += float(t2s_loss.detach().item())
+                totals["s2t"] += float(s2t_loss.detach().item())
+                totals["align"] += float(align_loss.detach().item())
+                totals["agreement"] += float(stats.get("agreement", 0.0))
+                totals["correct_agreement"] += float(stats.get("correct_agreement", 0.0))
+                totals["teacher_acc"] += float(stats.get("teacher_batch_accuracy", 0.0))
+                totals["student_acc"] += float(stats.get("student_batch_accuracy", 0.0))
+                totals["teacher_conf"] += float(stats.get("teacher_confidence", 0.0))
+                totals["student_conf"] += float(stats.get("student_confidence", 0.0))
+                totals["t2s_enabled"] += float(bool(t2s_enabled))
+                totals["s2t_enabled"] += float(bool(s2t_enabled))
+                train_steps += 1
+
+        denom = max(train_steps, 1)
+        metrics = {
+            "dkd_dataset_train_steps": float(train_steps),
+            "avg_dkd_teacher_task_loss": totals["teacher_task"] / denom,
+            "avg_dkd_student_task_loss": totals["student_task"] / denom,
+            "avg_dkd_t2s_loss": totals["t2s"] / denom,
+            "avg_dkd_s2t_loss": totals["s2t"] / denom,
+            "avg_dkd_align_loss": totals["align"] / denom,
+            "dkd_agreement": totals["agreement"] / denom,
+            "dkd_correct_agreement": totals["correct_agreement"] / denom,
+            "dkd_teacher_batch_accuracy": totals["teacher_acc"] / denom,
+            "dkd_student_batch_accuracy": totals["student_acc"] / denom,
+            "dkd_teacher_confidence": totals["teacher_conf"] / denom,
+            "dkd_student_confidence": totals["student_conf"] / denom,
+            "dkd_t2s_enabled_rate": totals["t2s_enabled"] / denom,
+            "dkd_s2t_enabled_rate": totals["s2t_enabled"] / denom,
+            "dkd_lambda_kd": float(self.dkd_lambda_kd),
+            "dkd_lambda_align": float(self.dkd_lambda_align),
+            "dkd_temperature": float(temperature if train_steps else 1.0),
+            "dkd_dataset_updates_teacher": float(
+                bool(getattr(cfg_training, "dkd_dataset_update_teacher", False))
+            ),
+            "dkd_update_teacher_from_student": float(
+                bool(getattr(cfg_training, "dkd_update_teacher_from_student", False))
+            ),
+        }
+        self.last_dkd_teacher_task_loss = metrics["avg_dkd_teacher_task_loss"]
+        self.last_dkd_student_task_loss = metrics["avg_dkd_student_task_loss"]
+        self.last_dkd_t2s_loss = metrics["avg_dkd_t2s_loss"]
+        self.last_dkd_s2t_loss = metrics["avg_dkd_s2t_loss"]
+        self.last_dkd_kd_loss = metrics["avg_dkd_t2s_loss"] + metrics["avg_dkd_s2t_loss"]
+        self.last_dkd_align_loss = metrics["avg_dkd_align_loss"]
+        self.last_dkd_task_loss = 0.5 * (
+            metrics["avg_dkd_teacher_task_loss"] + metrics["avg_dkd_student_task_loss"]
+        )
+        active_logger.info(
+            "DKD-FedOS dataset training | steps=%d teacher_ce=%.4f student_ce=%.4f t2s=%.4f s2t=%.4f align=%.4f",
+            train_steps,
+            metrics["avg_dkd_teacher_task_loss"],
+            metrics["avg_dkd_student_task_loss"],
+            metrics["avg_dkd_t2s_loss"],
+            metrics["avg_dkd_s2t_loss"],
+            metrics["avg_dkd_align_loss"],
+        )
+        return metrics
 
     def _teacher_distillation_features(self, latent: torch.Tensor, q_values: torch.Tensor) -> torch.Tensor:
         return torch.cat([F.normalize(latent, dim=1), F.normalize(q_values, dim=1)], dim=1)

@@ -131,3 +131,121 @@ poetry run python run.py experiment=exp3 +method=dkd_fedos seed=42 \
 ```
 
 For open-set experiments, ensure the unknown class is not part of known training.  If FoT is the unknown class, the known classifier should train on Normal, BP, DoS, and MitM only.
+
+## v3 correction: dataset DKD + warm student aggregation
+
+After inspecting the IID smoke-test logs, the local student was learning but the aggregated global student collapsed to a single class.  DKD-FedOS v3 fixes the two root causes.
+
+### 1. DKD no longer depends only on replay-buffer batches
+
+Sentinel Algorithm 1 trains teacher and student on local dataset mini-batches `(X, Y) in D_i`.  v3 adds a dataset-based DKD loop after the RL teacher loop:
+
+```text
+run RL CVAE-DQN teacher training
+then run DKD mini-batch training over env.all_features_s / env.all_labels_a_t
+```
+
+This keeps the RL model behavior while making the teacher/student distillation closer to the paper.  Config controls:
+
+```yaml
+dkd_dataset_training: true
+dkd_local_epochs: 1
+dkd_batch_size: 256
+```
+
+### 2. Early global student aggregation uses equal averaging
+
+The normalized-gradient server update from Sentinel can be unstable when the global student is random and local students move far from it.  v3 therefore uses equal averaging during warm-up, then switches to normalized-gradient aggregation:
+
+```yaml
+student_aggregation_mode: warm_avg_then_normalized
+student_avg_warmup_rounds: 3
+normalized_server_momentum: 0.9
+```
+
+Expected behavior in IID smoke tests:
+
+```text
+LOCAL_STUDENT_AFTER_LOCAL_TRAIN: high and improving
+GLOBAL_STUDENT_AFTER_SERVER_AGG: should not collapse to 7.14%
+```
+
+If the global student still collapses, inspect:
+
+```text
+prediction_max_ratio
+dkd_fedos_distance_to_avg_before
+dkd_fedos_distance_to_avg_after
+dkd_fedos_global_norm_before
+dkd_fedos_global_norm_after
+```
+
+### 3. Evaluation names are now method-correct
+
+DKD-FedOS uses:
+
+```text
+TEACHER_AFTER_LOCAL_TRAIN
+LOCAL_STUDENT_AFTER_LOCAL_TRAIN
+GLOBAL_STUDENT_AFTER_SERVER_AGG
+```
+
+The old `TEACHER_GLOBAL_POST_AGG` naming was removed because the teacher is not globally aggregated in Sentinel-style training.
+
+## DKD-FedOS v4 safety update: dataset DKD does not break RL
+
+Dataset mini-batch DKD now uses `env.all_features_s` and `env.all_labels_a_t` only as a supervised local dataset for the student.  It does **not** push samples into the environment, does **not** step the environment, and does **not** change the replay buffer.
+
+The safe default is:
+
+```yaml
+training:
+  dkd_dataset_training: true
+  dkd_dataset_update_teacher: false
+  dkd_update_teacher_from_student: false
+  dkd_teacher_task_weight: 0.0
+  dkd_student_to_teacher_start_round: 999
+```
+
+With this setup, RL remains the owner of teacher updates:
+
+```text
+Replay/RL path updates:
+  prior_net
+  recognition_net
+  value_net_main
+  target_q
+
+Dataset DKD path updates:
+  student_model
+  teacher_to_student_aligner
+```
+
+The teacher is used as a frozen guide during dataset DKD:
+
+```text
+with no_grad:
+  teacher_logits, teacher_features = CVAE-DQN teacher(X)
+
+student_loss = student_CBCE + teacher_to_student_KD + feature_alignment
+```
+
+Student-to-teacher KD is disabled by default because a weak global student can poison the RL teacher.  Enable it only as a later ablation after `GLOBAL_STUDENT_AFTER_SERVER_AGG` is stable and non-collapsed.
+
+The training log now includes:
+
+```text
+dkd_dataset_updates_teacher
+dkd_update_teacher_from_student
+dkd_replay_buffer_size_before
+dkd_replay_buffer_size_after
+dkd_replay_buffer_delta
+```
+
+For the safe default, expected values are:
+
+```text
+dkd_dataset_updates_teacher = 0
+dkd_update_teacher_from_student = 0
+dkd_replay_buffer_delta = 0
+```

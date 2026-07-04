@@ -256,14 +256,25 @@ class DKDFedOSStrategy(FedAvg):
         self.min_reliable_samples = float(
             OmegaConf.select(cfg, "strategy.min_reliable_samples", default=0.0)
         )
+        self.student_aggregation_mode = str(
+            OmegaConf.select(cfg, "strategy.student_aggregation_mode", default="warm_avg_then_normalized")
+        ).lower()
+        self.student_avg_warmup_rounds = int(
+            OmegaConf.select(cfg, "strategy.student_avg_warmup_rounds", default=3)
+        )
+        self.normalized_momentum_beta = float(
+            OmegaConf.select(cfg, "strategy.normalized_server_momentum", default=self.momentum_beta)
+        )
         self.global_student_parameters = ndarrays_to_parameters(GLOBAL_AGENT_REF.get_student_parameters())
         self.momentum: list[np.ndarray] | None = None
         logger.info(
-            "DKD-FedOS configured | student_layers=%d server_lr=%.3f momentum=%.3f min_reliable_samples=%.1f",
+            "DKD-FedOS configured | student_layers=%d server_lr=%.3f momentum=%.3f min_reliable_samples=%.1f mode=%s warmup=%d",
             len(GLOBAL_AGENT_REF.get_student_parameters()),
             self.server_lr,
             self.momentum_beta,
             self.min_reliable_samples,
+            self.student_aggregation_mode,
+            self.student_avg_warmup_rounds,
         )
 
     def configure_fit(self, server_round: int, parameters: Parameters, client_manager):
@@ -331,35 +342,67 @@ class DKDFedOSStrategy(FedAvg):
             excluded_records = []
 
         base = parameters_to_ndarrays(self.global_student_parameters)
+        avg_weights = []
+        for layer_idx in range(len(base)):
+            layer_sum = np.zeros_like(base[layer_idx])
+            for record in reliable_records:
+                layer_sum += record["weights"][layer_idx]
+            avg_weights.append(layer_sum / max(len(reliable_records), 1))
+
+        distance_to_avg_before = self._weight_list_norm(
+            [base_layer - avg_layer for base_layer, avg_layer in zip(base, avg_weights, strict=True)]
+        )
+        use_warm_average = self.student_aggregation_mode in {"equal_average", "avg", "average"} or (
+            self.student_aggregation_mode == "warm_avg_then_normalized"
+            and int(server_round) <= int(self.student_avg_warmup_rounds)
+        )
+
         pseudo_gradients = []
         grad_norms = []
         normalized_grad_norms = []
-        for record in reliable_records:
-            grad = [base_layer - local_layer for base_layer, local_layer in zip(base, record["weights"], strict=True)]
-            norm = self._weight_list_norm(grad)
-            grad_norms.append(norm)
-            normalized = [layer / max(norm, EPS) for layer in grad]
-            normalized_grad_norms.append(self._weight_list_norm(normalized))
-            pseudo_gradients.append(normalized)
+        if use_warm_average:
+            new_weights = avg_weights
+            self.momentum = None
+            aggregation_mode_used = "equal_average_warmup"
+        else:
+            for record in reliable_records:
+                grad = [
+                    base_layer - local_layer
+                    for base_layer, local_layer in zip(base, record["weights"], strict=True)
+                ]
+                norm = self._weight_list_norm(grad)
+                grad_norms.append(norm)
+                normalized = [layer / max(norm, EPS) for layer in grad]
+                normalized_grad_norms.append(self._weight_list_norm(normalized))
+                pseudo_gradients.append(normalized)
 
-        mean_grad = []
-        for layer_idx in range(len(base)):
-            layer_sum = np.zeros_like(base[layer_idx])
-            for grad in pseudo_gradients:
-                layer_sum += grad[layer_idx]
-            mean_grad.append(layer_sum / max(len(pseudo_gradients), 1))
+            mean_grad = []
+            for layer_idx in range(len(base)):
+                layer_sum = np.zeros_like(base[layer_idx])
+                for grad in pseudo_gradients:
+                    layer_sum += grad[layer_idx]
+                mean_grad.append(layer_sum / max(len(pseudo_gradients), 1))
 
-        if self.momentum is None:
-            self.momentum = [np.zeros_like(layer) for layer in mean_grad]
-        beta = float(np.clip(self.momentum_beta, 0.0, 0.999))
-        self.momentum = [
-            (beta * old) + ((1.0 - beta) * grad)
-            for old, grad in zip(self.momentum, mean_grad, strict=True)
-        ]
-        new_weights = [
-            base_layer - (self.server_lr * mom_layer)
-            for base_layer, mom_layer in zip(base, self.momentum, strict=True)
-        ]
+            if self.momentum is None:
+                self.momentum = [np.zeros_like(layer) for layer in mean_grad]
+            beta = float(np.clip(self.normalized_momentum_beta, 0.0, 0.999))
+            self.momentum = [
+                (beta * old) + ((1.0 - beta) * grad)
+                for old, grad in zip(self.momentum, mean_grad, strict=True)
+            ]
+            new_weights = [
+                base_layer - (self.server_lr * mom_layer)
+                for base_layer, mom_layer in zip(base, self.momentum, strict=True)
+            ]
+            aggregation_mode_used = "normalized_gradient"
+
+        distance_to_avg_after = self._weight_list_norm(
+            [new_layer - avg_layer for new_layer, avg_layer in zip(new_weights, avg_weights, strict=True)]
+        )
+        global_norm_before = self._weight_list_norm(base)
+        global_norm_after = self._weight_list_norm(new_weights)
+        avg_local_norm = self._weight_list_norm(avg_weights)
+
         self.global_student_parameters = ndarrays_to_parameters(new_weights)
         self._save_student_checkpoint(new_weights, server_round)
 
@@ -373,6 +416,11 @@ class DKDFedOSStrategy(FedAvg):
                 "dkd_fedos_mean_student_grad_norm": float(np.mean(grad_norms) if grad_norms else 0.0),
                 "dkd_fedos_max_student_grad_norm": float(np.max(grad_norms) if grad_norms else 0.0),
                 "dkd_fedos_mean_normalized_grad_norm": float(np.mean(normalized_grad_norms) if normalized_grad_norms else 0.0),
+                "dkd_fedos_distance_to_avg_before": float(distance_to_avg_before),
+                "dkd_fedos_distance_to_avg_after": float(distance_to_avg_after),
+                "dkd_fedos_global_norm_before": float(global_norm_before),
+                "dkd_fedos_global_norm_after": float(global_norm_after),
+                "dkd_fedos_avg_local_norm": float(avg_local_norm),
             }
         )
         self._write_monitor_event(
@@ -384,16 +432,24 @@ class DKDFedOSStrategy(FedAvg):
                 "excluded_clients": [record["cid"] for record in excluded_records],
                 "grad_norms": grad_norms,
                 "normalized_grad_norms": normalized_grad_norms,
+                "aggregation_mode": aggregation_mode_used,
+                "distance_to_avg_before": distance_to_avg_before,
+                "distance_to_avg_after": distance_to_avg_after,
+                "global_norm_before": global_norm_before,
+                "global_norm_after": global_norm_after,
+                "avg_local_norm": avg_local_norm,
                 "metrics": metrics,
             }
         )
         logger.info(
-            "DKD-FedOS aggregation | round=%d clients=%d included=%d excluded=%d mean_grad_norm=%.4f",
+            "DKD-FedOS aggregation | round=%d mode=%s clients=%d included=%d excluded=%d dist_to_avg %.4f->%.4f",
             server_round,
+            aggregation_mode_used,
             len(records),
             len(reliable_records),
             len(excluded_records),
-            metrics["dkd_fedos_mean_student_grad_norm"],
+            distance_to_avg_before,
+            distance_to_avg_after,
         )
         return self.global_student_parameters, metrics
 

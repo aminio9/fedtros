@@ -49,3 +49,28 @@ New logs distinguish teacher and student evaluation:
 - `STUDENT_GLOBAL_POST_AGG`
 
 The server also reports included/excluded clients, reliability filtering, raw gradient norms, normalized gradient norms, and student aggregation statistics.
+
+## DKD-FedOS v3 logging checklist
+
+For DKD-FedOS, trust the run only if these logs are present:
+
+- `TEACHER_AFTER_LOCAL_TRAIN`: local personalized CVAE-DQN teacher after local training.
+- `LOCAL_STUDENT_AFTER_LOCAL_TRAIN`: local student before upload.
+- `GLOBAL_STUDENT_AFTER_SERVER_AGG`: received aggregated global student.
+- `prediction_max_ratio`: warns if a model collapses to one class.
+- `dkd_dataset_train_steps`: proves Sentinel-style dataset mini-batch DKD ran.
+- `dkd_fedos_distance_to_avg_before` and `dkd_fedos_distance_to_avg_after`: proves global student moved toward the client average during warm-up.
+
+## DKD-FedOS v4 safety logs
+
+DKD-FedOS reports whether the dataset mini-batch phase touched the teacher or replay buffer:
+
+```text
+dkd_dataset_updates_teacher
+dkd_update_teacher_from_student
+dkd_replay_buffer_size_before
+dkd_replay_buffer_size_after
+dkd_replay_buffer_delta
+```
+
+For the RL-safe default, `dkd_dataset_updates_teacher=0`, `dkd_update_teacher_from_student=0`, and `dkd_replay_buffer_delta=0`.
