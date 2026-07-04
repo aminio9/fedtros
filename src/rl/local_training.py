@@ -24,6 +24,10 @@ def run_local_training_round(
     cfg_training: DictConfig,
     device: torch.device,
     proximal_mu: float = 0.0,
+    global_prototypes: torch.Tensor | None = None,
+    global_prototype_mask: torch.Tensor | None = None,
+    prototype_lambda: float = 0.0,
+    prototype_feature: str = "latent_q",
     logger: logging.Logger | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """
@@ -52,6 +56,7 @@ def run_local_training_round(
     total_td_loss = 0.0
     total_kl_loss = 0.0
     total_prox_loss = 0.0
+    total_proto_loss = 0.0
     total_avg_q = 0.0
     total_correct = 0
     action_counts: dict[int, int] = {}
@@ -73,6 +78,7 @@ def run_local_training_round(
         episode_td_loss = 0.0
         episode_kl_loss = 0.0
         episode_prox_loss = 0.0
+        episode_proto_loss = 0.0
         episode_q_value = 0.0
         episode_train_steps = 0
 
@@ -120,19 +126,27 @@ def run_local_training_round(
                     started_training = True
                 batch = buffer.sample(batch_size, device)
                 td_loss, kl_loss, prox_loss, avg_q = agent.train_step(
-                    batch, proximal_mu=proximal_mu
+                    batch,
+                    proximal_mu=proximal_mu,
+                    global_prototypes=global_prototypes,
+                    global_prototype_mask=global_prototype_mask,
+                    prototype_lambda=prototype_lambda,
+                    prototype_feature=prototype_feature,
                 )
+                proto_loss = float(getattr(agent, "last_prototype_loss", 0.0))
 
                 episode_train_steps += 1
                 episode_td_loss += td_loss
                 episode_kl_loss += kl_loss
                 episode_prox_loss += prox_loss
+                episode_proto_loss += proto_loss
                 episode_q_value += avg_q
 
                 total_train_steps += 1
                 total_td_loss += td_loss
                 total_kl_loss += kl_loss
                 total_prox_loss += prox_loss
+                total_proto_loss += proto_loss
                 total_avg_q += avg_q
 
                 # Soft-update the target network periodically
@@ -149,15 +163,17 @@ def run_local_training_round(
         avg_ep_td = episode_td_loss / episode_train_steps if episode_train_steps else 0.0
         avg_ep_kl = episode_kl_loss / episode_train_steps if episode_train_steps else 0.0
         avg_ep_prox = episode_prox_loss / episode_train_steps if episode_train_steps else 0.0
+        avg_ep_proto = episode_proto_loss / episode_train_steps if episode_train_steps else 0.0
 
         active_logger.info(
             "Episode %02d | Reward: %7.2f | Avg TD Loss: %6.4f | Avg KL Loss: %6.4f | "
-            "Avg Prox Loss: %6.4f | Epsilon: %.4f",
+            "Avg Prox Loss: %6.4f | Avg Proto Loss: %6.4f | Epsilon: %.4f",
             ep_idx + 1,
             episode_reward,
             avg_ep_td,
             avg_ep_kl,
             avg_ep_prox,
+            avg_ep_proto,
             epsilon_scheduler.get_epsilon(),
         )
 
@@ -174,6 +190,7 @@ def run_local_training_round(
     avg_round_td = total_td_loss / total_train_steps if total_train_steps else 0.0
     avg_round_kl = total_kl_loss / total_train_steps if total_train_steps else 0.0
     avg_round_prox = total_prox_loss / total_train_steps if total_train_steps else 0.0
+    avg_round_proto = total_proto_loss / total_train_steps if total_train_steps else 0.0
     avg_round_q = total_avg_q / total_train_steps if total_train_steps else 0.0
 
     metrics = {
@@ -184,6 +201,8 @@ def run_local_training_round(
         "avg_td_loss": avg_round_td,
         "avg_kl_loss": avg_round_kl,
         "avg_prox_loss": avg_round_prox,
+        "avg_proto_loss": avg_round_proto,
+        "prototype_lambda": float(prototype_lambda),
         "avg_q_value": avg_round_q,
         "train_steps": float(total_train_steps),
         "total_steps": float(total_steps),

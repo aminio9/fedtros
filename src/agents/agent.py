@@ -4,6 +4,7 @@ from collections import OrderedDict
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader, TensorDataset
@@ -150,6 +151,7 @@ class Agent:
             self.optimizer_q_rl = adam_cls(rl_params, lr=train_cfg.lr_q_rl)
 
         self.td_loss_fn = nn.SmoothL1Loss()
+        self.last_prototype_loss = 0.0
         self._capture_proximal_reference()
         self.logger.debug("Agent initialized with Double-DQN: %s", self.use_double_dqn)
 
@@ -212,6 +214,10 @@ class Agent:
         batch: tuple[torch.Tensor, ...],
         *,
         proximal_mu: float = 0.0,
+        global_prototypes: torch.Tensor | None = None,
+        global_prototype_mask: torch.Tensor | None = None,
+        prototype_lambda: float = 0.0,
+        prototype_feature: str = "latent_q",
     ) -> tuple[float, float, float, float]:
         """
         Performs one full training step (Prior update + RL update).
@@ -223,7 +229,10 @@ class Agent:
         actions_a_t = _ensure_action_index(actions_a_t, self.action_dim)
         true_actions_a_t = _ensure_action_index(true_actions_a_t, self.action_dim)
         proximal_mu = float(proximal_mu)
+        prototype_lambda = float(prototype_lambda)
         prox_loss_total = torch.zeros((), device=self.device)
+        proto_loss_total = torch.zeros((), device=self.device)
+        self.last_prototype_loss = 0.0
 
         # ========== 1) PRIOR update: KL(q||p) using TRUE labels (Eq. 5) ==========
         self.prior_net.train()
@@ -237,6 +246,24 @@ class Agent:
 
         kl_loss = self._prior_kl_fn(mu_q_T, log_var_q_T, mu_p, log_var_p)
         kl_objective = kl_loss
+        if prototype_lambda > 0.0 and global_prototypes is not None:
+            feature_name = str(prototype_feature).lower()
+            if feature_name in {"latent_q", "mu_q", "latent+q", "prior_q"}:
+                prior_features = F.normalize(mu_p, dim=1)
+                prior_targets = global_prototypes[:, : mu_p.shape[1]].to(self.device)
+            elif feature_name in {"latent", "prior", "prior_mu", "mu"}:
+                prior_features = mu_p
+                prior_targets = global_prototypes[:, : mu_p.shape[1]].to(self.device)
+            else:
+                prior_features = None
+                prior_targets = None
+            if prior_features is not None and prior_targets is not None:
+                prior_proto_loss = self._prototype_alignment_loss(
+                    prior_features, true_actions_a_t, prior_targets, global_prototype_mask
+                )
+                if prior_proto_loss is not None:
+                    kl_objective = kl_objective + prototype_lambda * prior_proto_loss
+                    proto_loss_total = proto_loss_total + prototype_lambda * prior_proto_loss.detach()
         if proximal_mu > 0.0:
             prior_prox = self._proximal_penalty("prior_net")
             prox_loss_total = prox_loss_total + 0.5 * proximal_mu * prior_prox
@@ -269,6 +296,17 @@ class Agent:
         # Calculate TD Loss (Eq. 11)
         td_loss = self.td_loss_fn(q_pred, y_t)
         td_objective = td_loss
+        if prototype_lambda > 0.0 and global_prototypes is not None:
+            proto_features = self._build_prototype_features(
+                z_now, q_values_all, prototype_feature=prototype_feature
+            )
+            proto_targets = global_prototypes[:, : proto_features.shape[1]].to(self.device)
+            rl_proto_loss = self._prototype_alignment_loss(
+                proto_features, true_actions_a_t, proto_targets, global_prototype_mask
+            )
+            if rl_proto_loss is not None:
+                td_objective = td_objective + prototype_lambda * rl_proto_loss
+                proto_loss_total = proto_loss_total + prototype_lambda * rl_proto_loss.detach()
         if proximal_mu > 0.0:
             rl_prox = self._proximal_penalty("recognition_net") + self._proximal_penalty(
                 "value_net_main"
@@ -286,7 +324,68 @@ class Agent:
         self.optimizer_q_rl.step()
 
         avg_q = q_pred.mean().item()
+        self.last_prototype_loss = float(proto_loss_total.item())
         return td_loss.item(), kl_loss.item(), prox_loss_total.item(), avg_q
+
+    def _build_prototype_features(
+        self,
+        latent: torch.Tensor,
+        q_values: torch.Tensor,
+        *,
+        prototype_feature: str,
+    ) -> torch.Tensor:
+        feature_name = str(prototype_feature).lower()
+        if feature_name in {"latent", "prior", "prior_mu", "mu"}:
+            return latent
+        if feature_name in {"q", "q_values", "logits"}:
+            return q_values
+        if feature_name in {"latent_q", "mu_q", "latent+q", "prior_q"}:
+            return torch.cat(
+                [
+                    F.normalize(latent, dim=1),
+                    F.normalize(q_values, dim=1),
+                ],
+                dim=1,
+            )
+        self.logger.warning("Unknown prototype_feature=%s; falling back to latent_q", prototype_feature)
+        return torch.cat([F.normalize(latent, dim=1), F.normalize(q_values, dim=1)], dim=1)
+
+    def _prototype_alignment_loss(
+        self,
+        features: torch.Tensor,
+        labels: torch.Tensor,
+        global_prototypes: torch.Tensor,
+        global_prototype_mask: torch.Tensor | None,
+    ) -> torch.Tensor | None:
+        if features.numel() == 0 or global_prototypes.numel() == 0:
+            return None
+
+        labels = labels.view(-1).long().to(features.device)
+        targets = global_prototypes.to(features.device, dtype=features.dtype)
+        if targets.shape[1] != features.shape[1]:
+            target_dim = min(targets.shape[1], features.shape[1])
+            targets = targets[:, :target_dim]
+            features = features[:, :target_dim]
+
+        if global_prototype_mask is not None:
+            mask = global_prototype_mask.to(features.device).bool().view(-1)
+        else:
+            mask = torch.ones(targets.shape[0], device=features.device, dtype=torch.bool)
+
+        losses: list[torch.Tensor] = []
+        for class_idx in labels.unique(sorted=True):
+            class_int = int(class_idx.item())
+            if class_int < 0 or class_int >= targets.shape[0] or not bool(mask[class_int].item()):
+                continue
+            class_mask = labels == class_int
+            if not bool(class_mask.any().item()):
+                continue
+            local_proto = features[class_mask].mean(dim=0)
+            losses.append(F.mse_loss(local_proto, targets[class_int], reduction="mean"))
+
+        if not losses:
+            return None
+        return torch.stack(losses).mean()
 
     def update_target_network(self, tau: float):
         """Soft update the target network (Eq. 10)."""

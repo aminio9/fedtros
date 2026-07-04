@@ -205,6 +205,32 @@ class FlowerClient(fl.client.NumPyClient):
         execution_device, switched = self._enter_execution_device()
         try:
             # =========================================================
+            # FedGPA: personalized model + prototype alignment
+            # =========================================================
+            if phase == "fedgpa":
+                self.logger.info(f"Client {self.cid} [FedGPA]: Round {round_num}")
+
+                param_list = (
+                    parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
+                )
+                self.set_parameters(param_list)
+                proto_tensor, proto_mask = self._parse_fedgpa_global_prototypes(config)
+                proto_lambda = float(config.get("fedgpa_lambda", 0.0))
+                proto_feature = str(config.get("fedgpa_feature", "latent_q"))
+                num_steps_trained, metrics = self._perform_training_loop(
+                    proximal_mu=0.0,
+                    global_prototypes=proto_tensor,
+                    global_prototype_mask=proto_mask,
+                    prototype_lambda=proto_lambda,
+                    prototype_feature=proto_feature,
+                )
+                metrics.setdefault("total_steps", float(num_steps_trained))
+                metrics.update(self._build_fedgpa_prototypes(prototype_feature=proto_feature))
+                updated_params = self.agent.get_federated_parameters()
+                num_examples = int(self.local_data_profile["local_num_examples"])
+                return updated_params, num_examples, metrics
+
+            # =========================================================
             # STANDARD FIT (FedAvg / FedProx)
             # =========================================================
             if phase == "standard":
@@ -320,8 +346,111 @@ class FlowerClient(fl.client.NumPyClient):
             ),
         }
 
-    def _perform_training_loop(self, proximal_mu: float = 0.0) -> tuple[int, dict[str, Any]]:
-        """Shared training logic for both Standard and FMRL modes."""
+    def _parse_fedgpa_global_prototypes(
+        self, config: dict[str, Any]
+    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+        raw = config.get("fedgpa_global_prototypes", "{}")
+        try:
+            parsed = json.loads(str(raw))
+        except json.JSONDecodeError:
+            self.logger.warning("Client %s: invalid FedGPA global prototype payload", self.cid)
+            return None, None
+        if not isinstance(parsed, dict) or not parsed:
+            return None, None
+
+        num_actions = int(self.cfg.model.num_actions)
+        first_vec = next((v for v in parsed.values() if isinstance(v, list) and v), None)
+        if first_vec is None:
+            return None, None
+        proto_dim = len(first_vec)
+        prototypes = torch.zeros(num_actions, proto_dim, device=self.device, dtype=torch.float32)
+        mask = torch.zeros(num_actions, device=self.device, dtype=torch.bool)
+        for key, value in parsed.items():
+            try:
+                class_idx = int(key)
+            except (TypeError, ValueError):
+                continue
+            if class_idx < 0 or class_idx >= num_actions:
+                continue
+            vector = torch.tensor(value, device=self.device, dtype=torch.float32).view(-1)
+            if vector.numel() != proto_dim:
+                continue
+            prototypes[class_idx] = vector
+            mask[class_idx] = True
+        if not bool(mask.any().item()):
+            return None, None
+        return prototypes, mask
+
+    def _build_fedgpa_prototypes(self, *, prototype_feature: str = "latent_q") -> dict[str, Any]:
+        # Keep the full local dataset on its current storage device and move only
+        # mini-batches to the execution device.
+        features = self.env.all_features_s.detach().float()
+        labels = self.env.all_labels_a_t.detach().long()
+        if features.numel() == 0 or labels.numel() == 0:
+            return {}
+
+        batch_size = max(1, int(self.cfg.training.batch_size))
+        loader = DataLoader(TensorDataset(features, labels), batch_size=batch_size, shuffle=False)
+        feature_parts: list[torch.Tensor] = []
+        label_parts: list[torch.Tensor] = []
+
+        self.agent.prior_net.eval()
+        self.agent.value_net_main.eval()
+        with torch.no_grad():
+            for batch_features, batch_labels in loader:
+                batch_features = batch_features.to(self.device)
+                batch_labels = batch_labels.to(self.device)
+                mu_p, _ = self.agent.prior_net(batch_features)
+                q_values = self.agent.value_net_main(mu_p, batch_features)
+                proto_features = self.agent._build_prototype_features(
+                    mu_p, q_values, prototype_feature=prototype_feature
+                )
+                feature_parts.append(proto_features.detach().cpu())
+                label_parts.append(batch_labels.detach().cpu())
+
+        if not feature_parts:
+            return {}
+
+        all_proto_features = torch.cat(feature_parts, dim=0).float()
+        all_labels = torch.cat(label_parts, dim=0).long()
+        num_actions = int(self.cfg.model.num_actions)
+        prototypes: dict[str, list[float]] = {}
+        counts: dict[str, int] = {}
+        variance_weighted_sum = 0.0
+        total_count = int(all_labels.numel())
+
+        for class_idx in range(num_actions):
+            class_mask = all_labels == class_idx
+            count = int(class_mask.sum().item())
+            if count <= 0:
+                continue
+            class_features = all_proto_features[class_mask]
+            proto = class_features.mean(dim=0)
+            prototypes[str(class_idx)] = [float(x) for x in proto.tolist()]
+            counts[str(class_idx)] = count
+            class_var = float(((class_features - proto).pow(2).sum(dim=1)).mean().item())
+            variance_weighted_sum += class_var * count
+
+        if not prototypes:
+            return {}
+        variance = variance_weighted_sum / max(total_count, 1)
+        return {
+            "fedgpa_prototypes": json.dumps(prototypes, sort_keys=True),
+            "fedgpa_counts": json.dumps(counts, sort_keys=True),
+            "fedgpa_variance": float(variance),
+            "fedgpa_proto_dim": float(len(next(iter(prototypes.values())))),
+            "fedgpa_num_classes": float(len(prototypes)),
+        }
+
+    def _perform_training_loop(
+        self,
+        proximal_mu: float = 0.0,
+        global_prototypes: torch.Tensor | None = None,
+        global_prototype_mask: torch.Tensor | None = None,
+        prototype_lambda: float = 0.0,
+        prototype_feature: str = "latent_q",
+    ) -> tuple[int, dict[str, Any]]:
+        """Shared training logic for Standard, FMRL, and FedGPA modes."""
         num_steps_trained, metrics = run_local_training_round(
             agent=self.agent,
             env=self.env,
@@ -331,6 +460,10 @@ class FlowerClient(fl.client.NumPyClient):
             cfg_training=self.cfg.training,
             device=self.device,
             proximal_mu=proximal_mu,
+            global_prototypes=global_prototypes,
+            global_prototype_mask=global_prototype_mask,
+            prototype_lambda=prototype_lambda,
+            prototype_feature=prototype_feature,
             logger=self.logger,
         )
 

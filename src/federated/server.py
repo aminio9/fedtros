@@ -11,6 +11,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 from flwr.common import (
+    EvaluateIns,
     FitIns,
     Parameters,
     Scalar,
@@ -230,6 +231,443 @@ class SaveModelFedProx(FedProx):
             save_global_model(aggregated_parameters, server_round, self.cfg)
 
         return aggregated_parameters, aggregated_metrics
+
+
+class FedGPAStrategy(FedAvg):
+    """
+    FedGPA for the CVAE-DQN/open-set stack.
+
+    Paper mapping:
+    - FedGPA local-global prototype alignment -> latent/Q prototype regularization on clients.
+    - FedGPA personalized aggregation -> per-client server models with separate weights for
+      representation modules and Q/classifier modules.
+
+    Model-stack mapping:
+    - prior_net: slowly aggregated feature extractor.
+    - recognition_net: frozen/slowly aggregated personalized latent module.
+    - value_net_main: strongly aggregated Q classifier/head.
+    - generation_net: frozen by default because open-set generator averaging was damaging logs.
+    """
+
+    def __init__(self, cfg: DictConfig, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cfg = cfg
+        self.device = torch.device("cpu")
+        if GLOBAL_AGENT_REF is None:
+            init_global_agent_ref(cfg, self.device)
+        if GLOBAL_AGENT_REF is None:
+            raise RuntimeError("FedGPA needs a server Agent reference for module slicing.")
+
+        self.module_slices = self._build_module_slices()
+        self.global_prototypes: dict[str, list[float]] = {}
+        self.personalized_weights: dict[str, list[np.ndarray]] = {}
+        self.reference_weights: list[np.ndarray] | None = None
+        self.monitor_path = _resolve_path(
+            OmegaConf.select(cfg, "strategy.monitor_path", default="runs/fedgpa_monitoring.jsonl")
+        )
+        self.monitor_path.parent.mkdir(parents=True, exist_ok=True)
+
+        self.prototype_lambda = float(OmegaConf.select(cfg, "strategy.prototype_lambda", default=0.05))
+        self.prototype_mu = float(OmegaConf.select(cfg, "strategy.prototype_mu", default=0.50))
+        self.prototype_feature = str(
+            OmegaConf.select(cfg, "strategy.prototype_feature", default="latent_q")
+        )
+        self.prior_mix = float(OmegaConf.select(cfg, "strategy.prior_mix", default=0.25))
+        self.recognition_mix = float(
+            OmegaConf.select(cfg, "strategy.recognition_mix", default=0.05)
+        )
+        self.value_mix = float(OmegaConf.select(cfg, "strategy.value_mix", default=1.0))
+        self.generation_mix = float(OmegaConf.select(cfg, "strategy.generation_mix", default=0.0))
+        self.classifier_self_weight = float(
+            OmegaConf.select(cfg, "strategy.classifier_self_weight", default=0.25)
+        )
+        self.distance_temperature = max(
+            float(OmegaConf.select(cfg, "strategy.distance_temperature", default=1.0)), EPS
+        )
+
+        logger.info(
+            "FedGPA configured | lambda=%.4f mu=%.3f feature=%s mixes(prior=%.2f recog=%.2f value=%.2f gen=%.2f)",
+            self.prototype_lambda,
+            self.prototype_mu,
+            self.prototype_feature,
+            self.prior_mix,
+            self.recognition_mix,
+            self.value_mix,
+            self.generation_mix,
+        )
+
+    def configure_fit(self, server_round: int, parameters: Parameters, client_manager):
+        reference = self._parameters_to_weights(parameters)
+        if self.reference_weights is None:
+            self.reference_weights = reference
+        sample_size, min_num_clients = self.num_fit_clients(client_manager.num_available())
+        clients = client_manager.sample(num_clients=sample_size, min_num_clients=min_num_clients)
+        config = dict(self.on_fit_config_fn(server_round) if self.on_fit_config_fn else {})
+        config.update(
+            {
+                "phase": "fedgpa",
+                "fedgpa_lambda": float(self.prototype_lambda),
+                "fedgpa_feature": self.prototype_feature,
+                "fedgpa_global_prototypes": json.dumps(self.global_prototypes, sort_keys=True),
+            }
+        )
+        fit_pairs = []
+        for client in clients:
+            client_weights = self.personalized_weights.get(client.cid, self.reference_weights)
+            if client_weights is None:
+                client_weights = reference
+            fit_pairs.append((client, FitIns(ndarrays_to_parameters(client_weights), config)))
+        logger.info("FedGPA round=%d sampled=%d", server_round, len(fit_pairs))
+        return fit_pairs
+
+    def configure_evaluate(self, server_round: int, parameters: Parameters, client_manager):
+        if self.fraction_evaluate == 0.0:
+            return []
+        reference = self._parameters_to_weights(parameters)
+        sample_size, min_num_clients = self.num_evaluation_clients(client_manager.num_available())
+        if sample_size == 0:
+            return []
+        clients = client_manager.sample(num_clients=sample_size, min_num_clients=min_num_clients)
+        config = dict(self.on_evaluate_config_fn(server_round) if self.on_evaluate_config_fn else {})
+        config.setdefault("server_round", server_round)
+        evaluate_pairs = []
+        for client in clients:
+            client_weights = self.personalized_weights.get(client.cid, self.reference_weights)
+            if client_weights is None:
+                client_weights = reference
+            evaluate_pairs.append((client, EvaluateIns(ndarrays_to_parameters(client_weights), config)))
+        logger.info("FedGPA evaluation round=%d clients=%d", server_round, len(evaluate_pairs))
+        return evaluate_pairs
+
+    def aggregate_fit(self, server_round: int, results, failures):
+        if failures:
+            self._log_failures("FedGPA", failures)
+        if not results:
+            return (
+                ndarrays_to_parameters(self.reference_weights) if self.reference_weights is not None else None,
+                {"fedgpa_clients": 0.0},
+            )
+
+        records = []
+        for client, fit_res in sorted(results, key=lambda item: item[0].cid):
+            weights = parameters_to_ndarrays(fit_res.parameters)
+            if not weights:
+                logger.warning("FedGPA client %s returned empty weights; skipping", client.cid)
+                continue
+            prototypes, counts = self._parse_prototype_metrics(fit_res.metrics)
+            variance = self._float_metric(fit_res.metrics, "fedgpa_variance", 1.0)
+            records.append(
+                {
+                    "cid": client.cid,
+                    "weights": weights,
+                    "num_examples": max(float(fit_res.num_examples), 1.0),
+                    "prototypes": prototypes,
+                    "counts": counts,
+                    "variance": max(float(variance), EPS),
+                    "metrics": dict(fit_res.metrics),
+                }
+            )
+
+        if not records:
+            return (
+                ndarrays_to_parameters(self.reference_weights) if self.reference_weights is not None else None,
+                {"fedgpa_clients": 0.0},
+            )
+
+        self.global_prototypes = self._aggregate_global_prototypes(records)
+        distance_matrix = self._client_distance_matrix(records)
+        alpha = self._feature_weights(distance_matrix, records)
+        beta = self._classifier_weights(distance_matrix, records)
+        self._update_personalized_weights(records, alpha, beta)
+        reference_weights = self._weighted_average_weight_lists(
+            [self.personalized_weights[record["cid"]] for record in records],
+            [record["num_examples"] for record in records],
+        )
+        self.reference_weights = reference_weights
+        reference_params = ndarrays_to_parameters(reference_weights)
+        save_global_model(reference_params, server_round, self.cfg)
+
+        alpha_diag = float(np.mean(np.diag(alpha))) if alpha.size else 0.0
+        beta_diag = float(np.mean(np.diag(beta))) if beta.size else 0.0
+        metrics = {
+            "fedgpa_clients": float(len(records)),
+            "fedgpa_global_proto_classes": float(len(self.global_prototypes)),
+            "fedgpa_alpha_self_mean": alpha_diag,
+            "fedgpa_beta_self_mean": beta_diag,
+            "fedgpa_distance_mean": float(distance_matrix.mean()) if distance_matrix.size else 0.0,
+            "fedgpa_prior_mix": float(self.prior_mix),
+            "fedgpa_recognition_mix": float(self.recognition_mix),
+            "fedgpa_value_mix": float(self.value_mix),
+            "fedgpa_generation_mix": float(self.generation_mix),
+        }
+        metrics.update(aggregate_fit_metrics([(int(r["num_examples"]), r["metrics"]) for r in records]))
+        self._write_monitor_event(
+            {
+                "event": "fedgpa_aggregation",
+                "server_round": server_round,
+                "clients": [record["cid"] for record in records],
+                "prototype_classes": sorted(self.global_prototypes.keys(), key=lambda x: int(x)),
+                "alpha": alpha.tolist(),
+                "beta": beta.tolist(),
+                "distance_matrix": distance_matrix.tolist(),
+                "metrics": metrics,
+            }
+        )
+        logger.info(
+            "FedGPA aggregation | round=%d clients=%d proto_classes=%d alpha_self=%.3f beta_self=%.3f",
+            server_round,
+            len(records),
+            len(self.global_prototypes),
+            alpha_diag,
+            beta_diag,
+        )
+        return reference_params, metrics
+
+    def _update_personalized_weights(
+        self, records: list[dict[str, Any]], alpha: np.ndarray, beta: np.ndarray
+    ) -> None:
+        client_weights = [record["weights"] for record in records]
+        for i, record in enumerate(records):
+            own = record["weights"]
+            new_weights = [np.array(layer, copy=True) for layer in own]
+            self._blend_module(new_weights, own, client_weights, alpha[i], "prior_net", self.prior_mix)
+            self._blend_module(
+                new_weights, own, client_weights, alpha[i], "recognition_net", self.recognition_mix
+            )
+            self._blend_module(
+                new_weights, own, client_weights, beta[i], "value_net_main", self.value_mix
+            )
+            self._blend_module(
+                new_weights, own, client_weights, beta[i], "generation_net", self.generation_mix
+            )
+            self.personalized_weights[record["cid"]] = new_weights
+
+    def _blend_module(
+        self,
+        target_weights: list[np.ndarray],
+        own_weights: list[np.ndarray],
+        client_weights: list[list[np.ndarray]],
+        coefficients: np.ndarray,
+        module_name: str,
+        mix: float,
+    ) -> None:
+        indices = self.module_slices.get(module_name, [])
+        if not indices:
+            return
+        mix = float(np.clip(mix, 0.0, 1.0))
+        if mix <= 0.0:
+            for idx in indices:
+                target_weights[idx] = np.array(own_weights[idx], copy=True)
+            return
+        coeffs = np.asarray(coefficients, dtype=np.float64)
+        coeffs = coeffs / max(float(coeffs.sum()), EPS)
+        for idx in indices:
+            aggregate = np.zeros_like(own_weights[idx])
+            for coeff, weights in zip(coeffs, client_weights, strict=True):
+                aggregate += weights[idx] * float(coeff)
+            target_weights[idx] = ((1.0 - mix) * own_weights[idx]) + (mix * aggregate)
+
+    def _aggregate_global_prototypes(self, records: list[dict[str, Any]]) -> dict[str, list[float]]:
+        sums: dict[str, np.ndarray] = {}
+        counts: dict[str, float] = {}
+        for record in records:
+            for class_key, proto in record["prototypes"].items():
+                count = float(record["counts"].get(class_key, 0.0))
+                if count <= 0:
+                    continue
+                vector = np.asarray(proto, dtype=np.float64)
+                if vector.ndim != 1:
+                    continue
+                if class_key not in sums:
+                    sums[class_key] = np.zeros_like(vector, dtype=np.float64)
+                    counts[class_key] = 0.0
+                if sums[class_key].shape != vector.shape:
+                    continue
+                sums[class_key] += count * vector
+                counts[class_key] += count
+        global_prototypes = {}
+        for class_key, vector_sum in sums.items():
+            denom = max(counts.get(class_key, 0.0), EPS)
+            global_prototypes[class_key] = [float(x) for x in (vector_sum / denom).tolist()]
+        return global_prototypes
+
+    def _client_distance_matrix(self, records: list[dict[str, Any]]) -> np.ndarray:
+        num_clients = len(records)
+        distances = np.zeros((num_clients, num_clients), dtype=np.float64)
+        for i, rec_i in enumerate(records):
+            total_i = max(sum(float(v) for v in rec_i["counts"].values()), 1.0)
+            for j, rec_j in enumerate(records):
+                if i == j:
+                    distances[i, j] = 0.0
+                    continue
+                weighted_distance = 0.0
+                weight_sum = 0.0
+                for class_key, proto_i in rec_i["prototypes"].items():
+                    if class_key not in rec_j["prototypes"]:
+                        continue
+                    weight = float(rec_i["counts"].get(class_key, 0.0)) / total_i
+                    vec_i = np.asarray(proto_i, dtype=np.float64)
+                    vec_j = np.asarray(rec_j["prototypes"][class_key], dtype=np.float64)
+                    if vec_i.shape != vec_j.shape:
+                        continue
+                    weighted_distance += weight * float(np.linalg.norm(vec_i - vec_j))
+                    weight_sum += weight
+                if weight_sum <= EPS:
+                    distances[i, j] = 1.0 / EPS
+                else:
+                    distances[i, j] = weighted_distance / max(weight_sum, EPS)
+        finite = distances[np.isfinite(distances)]
+        if finite.size:
+            cap = max(float(np.percentile(finite, 95)), EPS)
+            distances = np.where(np.isfinite(distances), distances, cap)
+            distances = np.minimum(distances, cap)
+        return distances
+
+    def _feature_weights(self, distances: np.ndarray, records: list[dict[str, Any]]) -> np.ndarray:
+        if distances.size == 0:
+            return distances
+        positive = distances[distances > EPS]
+        scale = float(np.median(positive)) if positive.size else 1.0
+        scale = max(scale * self.distance_temperature, EPS)
+        # Feature extractors should remain fairly global. A bounded exponential
+        # similarity avoids the self-client infinity that raw 1 / P would create.
+        sim = np.exp(-distances / scale)
+        row_sums = sim.sum(axis=1, keepdims=True)
+        sim_weights = sim / np.maximum(row_sums, EPS)
+        sample_counts = np.asarray([record["num_examples"] for record in records], dtype=np.float64)
+        sample_weights = sample_counts / max(float(sample_counts.sum()), EPS)
+        mu = float(np.clip(self.prototype_mu, 0.0, 1.0))
+        alpha = (mu * sim_weights) + ((1.0 - mu) * sample_weights.reshape(1, -1))
+        alpha = alpha / np.maximum(alpha.sum(axis=1, keepdims=True), EPS)
+        return alpha
+
+    def _classifier_weights(self, distances: np.ndarray, records: list[dict[str, Any]]) -> np.ndarray:
+        num_clients = len(records)
+        if num_clients == 0:
+            return np.zeros((0, 0), dtype=np.float64)
+        variances = np.asarray([record["variance"] for record in records], dtype=np.float64)
+        beta_rows = []
+        for i in range(num_clients):
+            # Practical diagonal-Q simplex solution: beta_j proportional to 1 / Q_j.
+            q_diag = variances + (distances[i] / self.distance_temperature) + EPS
+            raw = 1.0 / np.maximum(q_diag, EPS)
+            raw = raw / max(float(raw.sum()), EPS)
+            local_prior = np.zeros(num_clients, dtype=np.float64)
+            local_prior[i] = 1.0
+            self_weight = float(np.clip(self.classifier_self_weight, 0.0, 1.0))
+            beta = ((1.0 - self_weight) * raw) + (self_weight * local_prior)
+            beta = beta / max(float(beta.sum()), EPS)
+            beta_rows.append(beta)
+        return np.stack(beta_rows, axis=0)
+
+    def _weighted_average_weight_lists(
+        self, weight_lists: list[list[np.ndarray]], weights: list[float]
+    ) -> list[np.ndarray]:
+        coeffs = np.asarray(weights, dtype=np.float64)
+        coeffs = coeffs / max(float(coeffs.sum()), EPS)
+        averaged = []
+        for layer_idx in range(len(weight_lists[0])):
+            layer = np.zeros_like(weight_lists[0][layer_idx])
+            for coeff, weight_list in zip(coeffs, weight_lists, strict=True):
+                layer += weight_list[layer_idx] * float(coeff)
+            averaged.append(layer)
+        return averaged
+
+    def _parse_prototype_metrics(
+        self, metrics: dict[str, Scalar]
+    ) -> tuple[dict[str, list[float]], dict[str, int]]:
+        try:
+            prototypes_raw = json.loads(str(metrics.get("fedgpa_prototypes", "{}")))
+        except json.JSONDecodeError:
+            prototypes_raw = {}
+        try:
+            counts_raw = json.loads(str(metrics.get("fedgpa_counts", "{}")))
+        except json.JSONDecodeError:
+            counts_raw = {}
+        prototypes: dict[str, list[float]] = {}
+        counts: dict[str, int] = {}
+        if isinstance(prototypes_raw, dict):
+            for key, value in prototypes_raw.items():
+                if not isinstance(value, list):
+                    continue
+                try:
+                    class_key = str(int(key))
+                    vector = [float(v) for v in value]
+                except (TypeError, ValueError):
+                    continue
+                if vector:
+                    prototypes[class_key] = vector
+        if isinstance(counts_raw, dict):
+            for key, value in counts_raw.items():
+                try:
+                    counts[str(int(key))] = int(value)
+                except (TypeError, ValueError):
+                    continue
+        return prototypes, counts
+
+    def _build_module_slices(self) -> dict[str, list[int]]:
+        assert GLOBAL_AGENT_REF is not None
+        prior_len = len(GLOBAL_AGENT_REF.prior_net.state_dict())
+        recog_len = len(GLOBAL_AGENT_REF.recognition_net.state_dict())
+        value_len = len(GLOBAL_AGENT_REF.value_net_main.state_dict())
+        gen_len = (
+            len(GLOBAL_AGENT_REF.generation_net.state_dict())
+            if GLOBAL_AGENT_REF.generation_net is not None
+            else 0
+        )
+        cursor = 0
+        slices: dict[str, list[int]] = {}
+        slices["prior_net"] = list(range(cursor, cursor + prior_len))
+        cursor += prior_len
+        slices["recognition_net"] = list(range(cursor, cursor + recog_len))
+        cursor += recog_len
+        slices["value_net_main"] = list(range(cursor, cursor + value_len))
+        cursor += value_len
+        slices["generation_net"] = list(range(cursor, cursor + gen_len))
+        logger.info(
+            "FedGPA module slices | prior=%d recognition=%d value=%d generation=%d total=%d",
+            prior_len,
+            recog_len,
+            value_len,
+            gen_len,
+            cursor + gen_len,
+        )
+        return slices
+
+    def _parameters_to_weights(self, parameters: Parameters | list[np.ndarray]) -> list[np.ndarray]:
+        return parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
+
+    def _write_monitor_event(self, event: dict[str, Any]) -> None:
+        try:
+            with open(self.monitor_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(event, sort_keys=True, default=str) + "\n")
+        except Exception as exc:
+            logger.warning("Failed to write FedGPA monitor event: %s", exc)
+
+    @staticmethod
+    def _float_metric(metrics: dict[str, Scalar], key: str, default: float = 0.0) -> float:
+        value = metrics.get(key, default)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
+
+    @staticmethod
+    def _log_failures(context: str, failures) -> None:
+        for idx, failure in enumerate(failures, start=1):
+            if isinstance(failure, BaseException):
+                logger.warning("%s failure %d: %r", context, idx, failure)
+            elif isinstance(failure, tuple) and len(failure) == 2:
+                client, result = failure
+                logger.warning(
+                    "%s failure %d | client=%s | result=%r",
+                    context,
+                    idx,
+                    getattr(client, "cid", "?"),
+                    result,
+                )
+            else:
+                logger.warning("%s failure %d: %r", context, idx, failure)
 
 
 class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
@@ -1062,6 +1500,14 @@ def get_strategy(cfg: DictConfig) -> Strategy:
             "--- Strategy: FMRL-AVA (Adaptive Vector-Aligned Aggregation) with Model Saving ---"
         )
         return FMRLAdaptiveVectorAlignedAggregationStrategy(cfg=cfg, **args)
+
+    if strat_name == "fedgpa":
+        logger.info("--- Strategy: FedGPA (prototype-personalized aggregation) with Model Saving ---")
+        return FedGPAStrategy(
+            cfg=cfg,
+            fit_metrics_aggregation_fn=aggregate_fit_metrics,
+            **args,
+        )
 
     if strat_name == "fedprox":
         proximal_mu = float(cfg.server.proximal_mu)
