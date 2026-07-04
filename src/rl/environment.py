@@ -42,6 +42,13 @@ class BlockchainIntrusionEnv(gym.Env):
         num_clients: int | None = None,
         # NON-IID FIX: Accept global number of actions
         global_num_actions: int | None = None,
+        reward_mode: str = "symmetric",
+        reward_correct: float = 1.0,
+        reward_wrong: float = -1.0,
+        reward_weight_power: float = 0.5,
+        reward_min_weight: float = 0.5,
+        reward_max_weight: float = 3.0,
+        reward_normalize_mean: bool = True,
     ) -> None:
         super().__init__()
 
@@ -84,6 +91,14 @@ class BlockchainIntrusionEnv(gym.Env):
         self.num_total_samples = self.all_features_s.shape[0]
         self.feature_dim = self.all_features_s.shape[1]
         self.steps_per_episode = int(steps_per_episode)
+        self.reward_mode = str(reward_mode).lower()
+        self.reward_correct = float(reward_correct)
+        self.reward_wrong = float(reward_wrong)
+        self.reward_weight_power = float(reward_weight_power)
+        self.reward_min_weight = float(reward_min_weight)
+        self.reward_max_weight = float(reward_max_weight)
+        self.reward_normalize_mean = bool(reward_normalize_mean)
+        self._reward_class_weights = torch.ones(1, dtype=torch.float32)
         if self.num_total_samples == 0:
             raise ValueError(f"No samples found in {processed_data_path}.")
 
@@ -145,6 +160,8 @@ class BlockchainIntrusionEnv(gym.Env):
         if self._available_indices.size == 0:
             raise ValueError("No samples available for this environment/agent.")
 
+        self._configure_reward_weights()
+
         # RNG for episode sampling (decoupled from Gym's own RNG)
         self._rng = np.random.default_rng()
 
@@ -162,15 +179,65 @@ class BlockchainIntrusionEnv(gym.Env):
         )
 
         self.logger.info(
-            "Initialized BlockchainIntrusionEnv from %s | total=%d | client=%d | dim=%d | actions=%d",
+            "Initialized BlockchainIntrusionEnv from %s | total=%d | client=%d | dim=%d | actions=%d | reward_mode=%s",
             os.path.basename(processed_data_path),
             self.num_total_samples,
             self._available_indices.size,
             self.feature_dim,
             self.num_actions_nt,
+            self.reward_mode,
         )
         if move_data_to_device:
             self.logger.info("Environment tensors pinned to %s", target_device)
+
+
+    def _configure_reward_weights(self) -> None:
+        """Compute local class reward weights from the client's available data.
+
+        The environment is a sampled classification bandit.  With an imbalanced
+        label distribution, a plain +1/-1 reward makes the agent optimize mostly
+        for the majority class.  The class-balanced reward keeps the average
+        weight near one while giving rare labels a larger TD signal.
+        """
+        num_actions = max(int(self.num_actions_nt), 1)
+        weights = torch.ones(num_actions, dtype=torch.float32)
+        if self.reward_mode not in {"balanced", "class_balanced", "inverse_frequency"}:
+            self._reward_class_weights = weights
+            return
+
+        labels_cpu = self.all_labels_a_t.detach().cpu()
+        available = torch.as_tensor(self._available_indices, dtype=torch.long)
+        local_labels = labels_cpu[available]
+        counts = torch.bincount(local_labels.clamp_min(0), minlength=num_actions).float()[:num_actions]
+        present = counts > 0
+        if not bool(present.any().item()):
+            self._reward_class_weights = weights
+            return
+
+        mean_present_count = counts[present].mean().clamp_min(1.0)
+        raw = torch.ones_like(counts)
+        raw[present] = (mean_present_count / counts[present].clamp_min(1.0)).pow(
+            max(self.reward_weight_power, 0.0)
+        )
+        raw = torch.clamp(raw, min=self.reward_min_weight, max=self.reward_max_weight)
+        if self.reward_normalize_mean:
+            weighted_mean = (raw[present] * counts[present]).sum() / counts[present].sum().clamp_min(1.0)
+            raw = raw / weighted_mean.clamp_min(1e-8)
+            raw = torch.clamp(raw, min=self.reward_min_weight, max=self.reward_max_weight)
+
+        self._reward_class_weights = raw
+        weights_str = ", ".join(f"{idx}:{raw[idx].item():.3f}" for idx in range(num_actions))
+        self.logger.info("Class-balanced reward weights | %s", weights_str)
+
+    def _class_reward_weight(self, label: int) -> float:
+        if label < 0 or label >= int(self._reward_class_weights.numel()):
+            return 1.0
+        return float(self._reward_class_weights[label].item())
+
+    def get_reward_class_weights(self, device: torch.device | str | None = None) -> torch.Tensor:
+        """Return class weights for reward-aware supervised auxiliary loss."""
+        target_device = torch.device(device) if device is not None else self.device
+        return self._reward_class_weights.to(target_device, dtype=torch.float32)
 
     # ------------------------------------------------------------------
     # Gym API
@@ -206,15 +273,23 @@ class BlockchainIntrusionEnv(gym.Env):
         Executes one environment step.
         Returns: (next_state, reward, terminated, truncated, info)
         """
-        # 1. Reward from current state
+        # 1. Reward from current state.  In class-balanced mode the reward is
+        # scaled by the inverse local class frequency so minority intrusion
+        # classes are not drowned by the Normal class during Q-learning.
         true_label_a_t = self._get_current_true_label()
-        reward_r: float = 1.0 if int(action_a_t) == int(true_label_a_t) else -1.0
+        true_label_int = int(true_label_a_t)
+        action_int = int(action_a_t)
+        class_weight = self._class_reward_weight(true_label_int)
+        base_reward = self.reward_correct if action_int == true_label_int else self.reward_wrong
+        reward_r: float = float(base_reward * class_weight)
 
         # 2. Info about *current* transition
         current_index = int(self.episode_indices[self.current_step])
         info: dict[str, Any] = {
-            "true_label": int(true_label_a_t),
+            "true_label": true_label_int,
             "index": current_index,
+            "reward_weight": float(class_weight),
+            "reward_mode": self.reward_mode,
         }
 
         # 3. Advance time

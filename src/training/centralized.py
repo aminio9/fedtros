@@ -53,6 +53,13 @@ def run_training(
         device=device,
         move_data_to_device=bool(cfg.device.move_data_to_device),
         global_num_actions=int(cfg.model.num_actions),
+        reward_mode=str(getattr(cfg.training, "reward_mode", "symmetric")),
+        reward_correct=float(getattr(cfg.training, "reward_correct", 1.0)),
+        reward_wrong=float(getattr(cfg.training, "reward_wrong", -1.0)),
+        reward_weight_power=float(getattr(cfg.training, "reward_weight_power", 0.5)),
+        reward_min_weight=float(getattr(cfg.training, "reward_min_weight", 0.5)),
+        reward_max_weight=float(getattr(cfg.training, "reward_max_weight", 3.0)),
+        reward_normalize_mean=bool(getattr(cfg.training, "reward_normalize_mean", True)),
     )
     agent = Agent(OpenSetQChainModelFactory(cfg.model), cfg.training, device=device)
     if cfg.training.resume_from is not None:
@@ -102,9 +109,11 @@ def run_training(
             "global_step": total_steps,
             "train/loss": float(train_metrics.get("avg_td_loss", 0.0)),
             "train/accuracy": float(train_metrics.get("policy_accuracy", 0.0)),
+            "train/balanced_accuracy": float(train_metrics.get("balanced_policy_accuracy", 0.0)),
             "train/reward": float(train_metrics.get("avg_reward_per_episode", 0.0)),
             "train/double_q_loss": float(train_metrics.get("avg_td_loss", 0.0)),
             "train/kl_loss": float(train_metrics.get("avg_kl_loss", 0.0)),
+            "train/aux_ce_loss": float(train_metrics.get("avg_aux_ce_loss", 0.0)),
             "train/prox_loss": float(train_metrics.get("avg_prox_loss", 0.0)),
             "train/epsilon": float(train_metrics.get("epsilon", 0.0)),
         }

@@ -54,6 +54,16 @@ poetry run python run.py experiment=all
 
 Proposed aggregation method: `FMRL-AVA` (`Federated Multi-Agent Reinforcement Learning with Adaptive Vector-Aligned Aggregation`); Hydra alias: `+method=fmrl_ava`.
 
+FedGPA baseline/adaptation: `+method=fedgpa` adds prototype-personalized aggregation plus RL stabilizers for non-IID clients: class-balanced reward, slower epsilon decay, and a small auxiliary CE loss on Q-values. See `docs/fedgpa-implementation.md` and `docs/rl-stability-fixes.md`.
+
+Example FedGPA non-IID run:
+
+```bash
+poetry run python run.py experiment=exp3 +method=fedgpa seed=42 \
+  federated.num_clients=3 federated.num_rounds=10 training.local_episodes_per_round=10 \
+  dataset.preprocessing.alpha=0.1
+```
+
 Federated simulation:
 
 ```bash

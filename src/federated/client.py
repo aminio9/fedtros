@@ -88,6 +88,13 @@ class FlowerClient(fl.client.NumPyClient):
             logger=self.logger,
             move_data_to_device=self._move_data_to_device,
             global_num_actions=cfg.model.num_actions,
+            reward_mode=str(getattr(cfg.training, "reward_mode", "symmetric")),
+            reward_correct=float(getattr(cfg.training, "reward_correct", 1.0)),
+            reward_wrong=float(getattr(cfg.training, "reward_wrong", -1.0)),
+            reward_weight_power=float(getattr(cfg.training, "reward_weight_power", 0.5)),
+            reward_min_weight=float(getattr(cfg.training, "reward_min_weight", 0.5)),
+            reward_max_weight=float(getattr(cfg.training, "reward_max_weight", 3.0)),
+            reward_normalize_mean=bool(getattr(cfg.training, "reward_normalize_mean", True)),
         )
 
         # -----------------------------------------------------------

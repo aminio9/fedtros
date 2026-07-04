@@ -50,6 +50,13 @@ def run_smoke_test(
         int(smoke_training.steps_per_episode),
         device=device,
         global_num_actions=num_actions,
+        reward_mode=str(getattr(smoke_training, "reward_mode", "symmetric")),
+        reward_correct=float(getattr(smoke_training, "reward_correct", 1.0)),
+        reward_wrong=float(getattr(smoke_training, "reward_wrong", -1.0)),
+        reward_weight_power=float(getattr(smoke_training, "reward_weight_power", 0.5)),
+        reward_min_weight=float(getattr(smoke_training, "reward_min_weight", 0.5)),
+        reward_max_weight=float(getattr(smoke_training, "reward_max_weight", 3.0)),
+        reward_normalize_mean=bool(getattr(smoke_training, "reward_normalize_mean", True)),
     )
     buffer = ExperienceReplayBuffer(int(smoke_training.replay_buffer_size))
     policy = EpsilonGreedyPolicy(agent.prior_net, agent.value_net_main, num_actions, device)

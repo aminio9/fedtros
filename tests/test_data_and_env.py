@@ -42,3 +42,28 @@ def test_environment_uses_max_label_for_non_contiguous_local_labels(tmp_path):
     assert "true_label" in info
     assert "true_label" in step_info
     assert isinstance(terminated, bool)
+
+
+def test_environment_class_balanced_reward_weights_minority_classes(tmp_path):
+    path = tmp_path / "imbalanced_client.pt"
+    torch.save(
+        {
+            "features": torch.randn(10, 3),
+            "labels": torch.tensor([0, 0, 0, 0, 0, 0, 0, 0, 1, 1]),
+        },
+        path,
+    )
+
+    env = BlockchainIntrusionEnv(
+        str(path),
+        steps_per_episode=2,
+        global_num_actions=2,
+        reward_mode="class_balanced",
+        reward_weight_power=0.5,
+        reward_normalize_mean=True,
+    )
+    weights = env.get_reward_class_weights()
+
+    assert weights.shape[0] == 2
+    assert weights[1] > weights[0]
+    assert torch.isfinite(weights).all()

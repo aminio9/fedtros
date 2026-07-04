@@ -395,7 +395,7 @@ Write class_names.json, partition_manifest.jsonl, client_class_distribution.csv,
 
 **Outputs:** state observations, reward, termination flags, sample metadata.
 
-**Procedure:** sample episode indices with replacement, expose the current feature vector as the state, compute `+1` or `-1` reward from the predicted action, and advance to the next sampled record.
+**Procedure:** sample episode indices with replacement, expose the current feature vector as the state, compute configurable symmetric or class-balanced reward from the predicted action, and advance to the next sampled record.
 
 **Pseudocode:**
 
@@ -403,7 +403,7 @@ Write class_names.json, partition_manifest.jsonl, client_class_distribution.csv,
 Algorithm EnvStep
 Input: current_state_index, action
 true_label <- label[current_state_index]
-reward <- +1 if action == true_label else -1
+reward <- class_weight[label] * (+1 if action == true_label else -1)
 advance episode step
 if episode is not finished:
     next_state <- feature[next_sample_index]
@@ -424,7 +424,7 @@ return next_state, reward, terminated, truncated, info(true_label, index)
 
 **Inputs:** agent, environment, replay buffer, epsilon policy, epsilon scheduler, training config, proximal coefficient.
 
-**Outputs:** round metrics such as reward, TD loss, KL loss, proximal loss, Q statistics, and action histograms.
+**Outputs:** round metrics such as reward, TD loss, KL loss, auxiliary CE loss, proximal loss, prototype loss, Q statistics, balanced policy accuracy, per-class policy accuracy, and action histograms.
 
 **Procedure:** interact with the environment for a fixed number of episodes, push transitions into replay memory, and repeatedly sample mini-batches for KL and TD updates. The target network is soft-updated during training.
 
@@ -442,7 +442,7 @@ for episode in 1..local_episodes_per_round:
         buffer.push(s, a, r, s_next, terminated or truncated, info.true_label)
         if |buffer| >= min_buffer_size:
             batch <- sample(buffer)
-            td, kl, prox, q <- agent.train_step(batch, proximal_mu)
+            td, kl, prox, q <- agent.train_step(batch, proximal_mu, aux_ce, class_weights, prototypes)
             if total_steps mod target_update_freq == 0:
                 agent.soft_update_target(tau)
         s <- s_next

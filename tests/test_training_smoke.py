@@ -38,6 +38,9 @@ def test_minimal_local_training_smoke(tmp_path):
             "epsilon_start": 0.0,
             "epsilon_end": 0.0,
             "epsilon_decay_rate": 1.0,
+            "aux_ce_weight": 0.1,
+            "aux_ce_label_smoothing": 0.0,
+            "aux_ce_use_class_weights": True,
         }
     )
 
@@ -60,3 +63,5 @@ def test_minimal_local_training_smoke(tmp_path):
 
     assert steps == 3
     assert "avg_td_loss" in metrics
+    assert "avg_aux_ce_loss" in metrics
+    assert "balanced_policy_accuracy" in metrics

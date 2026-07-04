@@ -20,6 +20,22 @@ epsilon_start: 1.0
 epsilon_end: 0.01
 epsilon_decay_rate: 0.95
 prior_kl_raw: false
+
+# RL reward shaping. The default keeps old +1/-1 behavior so baselines stay comparable.
+# FedGPA overrides this to class_balanced for non-IID/minority-class stability.
+reward_mode: symmetric        # symmetric | class_balanced
+reward_correct: 1.0
+reward_wrong: -1.0
+reward_weight_power: 0.5      # sqrt inverse-frequency when class_balanced
+reward_min_weight: 0.5
+reward_max_weight: 3.0
+reward_normalize_mean: true
+
+# Auxiliary supervised stabilizer on Q-values. Disabled by default; FedGPA enables it.
+aux_ce_weight: 0.0
+aux_ce_label_smoothing: 0.0
+aux_ce_use_class_weights: true
+
 generator:
   enabled: true
   batch_size: 128

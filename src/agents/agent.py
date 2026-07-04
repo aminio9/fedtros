@@ -152,6 +152,7 @@ class Agent:
 
         self.td_loss_fn = nn.SmoothL1Loss()
         self.last_prototype_loss = 0.0
+        self.last_aux_ce_loss = 0.0
         self._capture_proximal_reference()
         self.logger.debug("Agent initialized with Double-DQN: %s", self.use_double_dqn)
 
@@ -218,6 +219,9 @@ class Agent:
         global_prototype_mask: torch.Tensor | None = None,
         prototype_lambda: float = 0.0,
         prototype_feature: str = "latent_q",
+        aux_ce_weight: float = 0.0,
+        aux_ce_label_smoothing: float = 0.0,
+        class_weights: torch.Tensor | None = None,
     ) -> tuple[float, float, float, float]:
         """
         Performs one full training step (Prior update + RL update).
@@ -230,9 +234,12 @@ class Agent:
         true_actions_a_t = _ensure_action_index(true_actions_a_t, self.action_dim)
         proximal_mu = float(proximal_mu)
         prototype_lambda = float(prototype_lambda)
+        aux_ce_weight = float(aux_ce_weight)
+        aux_ce_label_smoothing = float(aux_ce_label_smoothing)
         prox_loss_total = torch.zeros((), device=self.device)
         proto_loss_total = torch.zeros((), device=self.device)
         self.last_prototype_loss = 0.0
+        self.last_aux_ce_loss = 0.0
 
         # ========== 1) PRIOR update: KL(q||p) using TRUE labels (Eq. 5) ==========
         self.prior_net.train()
@@ -293,9 +300,28 @@ class Agent:
         q_values_all = self.value_net_main(z_now, states_s)
         q_pred = q_values_all.gather(1, actions_a_t)
 
-        # Calculate TD Loss (Eq. 11)
+        # Calculate TD Loss (Eq. 11).  This remains the RL objective.
         td_loss = self.td_loss_fn(q_pred, y_t)
         td_objective = td_loss
+
+        # Auxiliary supervised classification term.  The environment is a
+        # sampled data-pool bandit, so adding a small CE loss on Q-values makes
+        # learning less sensitive to short-horizon TD noise and class imbalance
+        # while preserving the DQN update as the main objective.
+        aux_ce_loss = torch.zeros((), device=self.device)
+        if aux_ce_weight > 0.0:
+            ce_targets = true_actions_a_t.view(-1).long().clamp_(0, self.action_dim - 1)
+            ce_weights = None
+            if class_weights is not None and class_weights.numel() >= self.action_dim:
+                ce_weights = class_weights.to(self.device, dtype=q_values_all.dtype)[: self.action_dim]
+                ce_weights = ce_weights / ce_weights.mean().clamp_min(1e-8)
+            aux_ce_loss = F.cross_entropy(
+                q_values_all,
+                ce_targets,
+                weight=ce_weights,
+                label_smoothing=max(aux_ce_label_smoothing, 0.0),
+            )
+            td_objective = td_objective + aux_ce_weight * aux_ce_loss
         if prototype_lambda > 0.0 and global_prototypes is not None:
             proto_features = self._build_prototype_features(
                 z_now, q_values_all, prototype_feature=prototype_feature
@@ -325,6 +351,7 @@ class Agent:
 
         avg_q = q_pred.mean().item()
         self.last_prototype_loss = float(proto_loss_total.item())
+        self.last_aux_ce_loss = float(aux_ce_loss.detach().item())
         return td_loss.item(), kl_loss.item(), prox_loss_total.item(), avg_q
 
     def _build_prototype_features(

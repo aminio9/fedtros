@@ -47,3 +47,31 @@ def test_train_step_reports_fedprox_penalty_after_local_drift():
     assert kl_loss >= 0.0
     assert prox_loss > 0.0
     assert np.isfinite(avg_q)
+
+
+def test_train_step_records_auxiliary_ce_loss():
+    factory = OpenSetQChainModelFactory(_model_cfg())
+    agent = Agent(factory, _training_cfg(), torch.device("cpu"))
+
+    batch_size = 4
+    batch = (
+        torch.randn(batch_size, 5),
+        torch.zeros(batch_size, 1, dtype=torch.long),
+        torch.ones(batch_size, 1),
+        torch.randn(batch_size, 5),
+        torch.zeros(batch_size, 1),
+        torch.tensor([[0], [1], [2], [3]], dtype=torch.long),
+    )
+
+    td_loss, kl_loss, prox_loss, avg_q = agent.train_step(
+        batch,
+        aux_ce_weight=0.1,
+        aux_ce_label_smoothing=0.01,
+        class_weights=torch.ones(4),
+    )
+
+    assert td_loss >= 0.0
+    assert kl_loss >= 0.0
+    assert prox_loss >= 0.0
+    assert agent.last_aux_ce_loss > 0.0
+    assert np.isfinite(avg_q)

@@ -44,6 +44,12 @@ def run_local_training_round(
     batch_size = cfg_training.batch_size
     target_update_freq = cfg_training.target_update_freq
     tau = cfg_training.tau
+    aux_ce_weight = float(getattr(cfg_training, "aux_ce_weight", 0.0))
+    aux_ce_label_smoothing = float(getattr(cfg_training, "aux_ce_label_smoothing", 0.0))
+    aux_ce_use_class_weights = bool(getattr(cfg_training, "aux_ce_use_class_weights", True))
+    reward_class_weights = None
+    if aux_ce_use_class_weights and hasattr(env, "get_reward_class_weights"):
+        reward_class_weights = env.get_reward_class_weights(device)
 
     # Optional deterministic seeding if cfg_training.seed exists
     base_seed = getattr(cfg_training, "seed", None)
@@ -57,8 +63,11 @@ def run_local_training_round(
     total_kl_loss = 0.0
     total_prox_loss = 0.0
     total_proto_loss = 0.0
+    total_aux_ce_loss = 0.0
     total_avg_q = 0.0
     total_correct = 0
+    class_correct_counts: dict[int, int] = {}
+    reward_weight_sum = 0.0
     action_counts: dict[int, int] = {}
     label_counts: dict[int, int] = {}
     started_training = False
@@ -79,6 +88,7 @@ def run_local_training_round(
         episode_kl_loss = 0.0
         episode_prox_loss = 0.0
         episode_proto_loss = 0.0
+        episode_aux_ce_loss = 0.0
         episode_q_value = 0.0
         episode_train_steps = 0
 
@@ -109,9 +119,13 @@ def run_local_training_round(
             buffer.push(state_s, action_int, reward, next_state, done, true_label_int)
             state_s = next_state
 
+            correct = int(action_int == true_label_int)
             episode_reward += reward
             total_steps += 1
-            total_correct += int(action_int == true_label_int)
+            total_correct += correct
+            if correct:
+                class_correct_counts[true_label_int] = class_correct_counts.get(true_label_int, 0) + 1
+            reward_weight_sum += float(info.get("reward_weight", 1.0))
             action_counts[action_int] = action_counts.get(action_int, 0) + 1
             label_counts[true_label_int] = label_counts.get(true_label_int, 0) + 1
 
@@ -132,14 +146,19 @@ def run_local_training_round(
                     global_prototype_mask=global_prototype_mask,
                     prototype_lambda=prototype_lambda,
                     prototype_feature=prototype_feature,
+                    aux_ce_weight=aux_ce_weight,
+                    aux_ce_label_smoothing=aux_ce_label_smoothing,
+                    class_weights=reward_class_weights,
                 )
                 proto_loss = float(getattr(agent, "last_prototype_loss", 0.0))
+                aux_ce_loss = float(getattr(agent, "last_aux_ce_loss", 0.0))
 
                 episode_train_steps += 1
                 episode_td_loss += td_loss
                 episode_kl_loss += kl_loss
                 episode_prox_loss += prox_loss
                 episode_proto_loss += proto_loss
+                episode_aux_ce_loss += aux_ce_loss
                 episode_q_value += avg_q
 
                 total_train_steps += 1
@@ -147,6 +166,7 @@ def run_local_training_round(
                 total_kl_loss += kl_loss
                 total_prox_loss += prox_loss
                 total_proto_loss += proto_loss
+                total_aux_ce_loss += aux_ce_loss
                 total_avg_q += avg_q
 
                 # Soft-update the target network periodically
@@ -164,14 +184,16 @@ def run_local_training_round(
         avg_ep_kl = episode_kl_loss / episode_train_steps if episode_train_steps else 0.0
         avg_ep_prox = episode_prox_loss / episode_train_steps if episode_train_steps else 0.0
         avg_ep_proto = episode_proto_loss / episode_train_steps if episode_train_steps else 0.0
+        avg_ep_aux_ce = episode_aux_ce_loss / episode_train_steps if episode_train_steps else 0.0
 
         active_logger.info(
             "Episode %02d | Reward: %7.2f | Avg TD Loss: %6.4f | Avg KL Loss: %6.4f | "
-            "Avg Prox Loss: %6.4f | Avg Proto Loss: %6.4f | Epsilon: %.4f",
+            "Avg CE Loss: %6.4f | Avg Prox Loss: %6.4f | Avg Proto Loss: %6.4f | Epsilon: %.4f",
             ep_idx + 1,
             episode_reward,
             avg_ep_td,
             avg_ep_kl,
+            avg_ep_aux_ce,
             avg_ep_prox,
             avg_ep_proto,
             epsilon_scheduler.get_epsilon(),
@@ -191,15 +213,27 @@ def run_local_training_round(
     avg_round_kl = total_kl_loss / total_train_steps if total_train_steps else 0.0
     avg_round_prox = total_prox_loss / total_train_steps if total_train_steps else 0.0
     avg_round_proto = total_proto_loss / total_train_steps if total_train_steps else 0.0
+    avg_round_aux_ce = total_aux_ce_loss / total_train_steps if total_train_steps else 0.0
     avg_round_q = total_avg_q / total_train_steps if total_train_steps else 0.0
+    per_class_accuracy = {
+        str(class_id): class_correct_counts.get(class_id, 0) / count
+        for class_id, count in sorted(label_counts.items())
+        if count > 0
+    }
+    balanced_policy_accuracy = (
+        sum(per_class_accuracy.values()) / len(per_class_accuracy) if per_class_accuracy else 0.0
+    )
 
     metrics = {
         "total_reward": total_reward,
         "avg_reward_per_episode": (total_reward / local_episodes if local_episodes else 0.0),
         "reward_per_step": total_reward / total_steps if total_steps else 0.0,
         "policy_accuracy": total_correct / total_steps if total_steps else 0.0,
+        "balanced_policy_accuracy": balanced_policy_accuracy,
         "avg_td_loss": avg_round_td,
         "avg_kl_loss": avg_round_kl,
+        "avg_aux_ce_loss": avg_round_aux_ce,
+        "aux_ce_weight": aux_ce_weight,
         "avg_prox_loss": avg_round_prox,
         "avg_proto_loss": avg_round_proto,
         "prototype_lambda": float(prototype_lambda),
@@ -211,6 +245,8 @@ def run_local_training_round(
         "proximal_mu": float(proximal_mu),
         "action_histogram": json.dumps(action_counts, sort_keys=True),
         "label_histogram": json.dumps(label_counts, sort_keys=True),
+        "per_class_policy_accuracy": json.dumps(per_class_accuracy, sort_keys=True),
+        "mean_reward_weight": reward_weight_sum / total_steps if total_steps else 1.0,
     }
 
     active_logger.info("Local training finished. Ran %s steps.", total_steps)

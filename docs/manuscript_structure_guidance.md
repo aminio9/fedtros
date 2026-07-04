@@ -32,7 +32,7 @@ Needed material: a comparison table is recommended. Columns should include metho
 
 Paragraph 1 should define the federated clients, local datasets, feature space, known labels, held-out unknown labels, and privacy constraint.
 
-Paragraph 2 should define the local MDP formulation: state, action, reward, transition assumption, replay buffer, and target-network role.
+Paragraph 2 should define the local MDP/contextual-bandit formulation: state, action, class-balanced reward option, transition assumption, replay buffer, auxiliary CE stabilizer, and target-network role.
 
 Paragraph 3 should define the federated objective and show the FedAvg/FedProx optimization equations. For FMRL-AVA, explain that the FedAvg sample-count prior is preserved, multiplied by a bounded client utility, and then modulated by an update-vector alignment multiplier, so the server update uses \(a_i=n_i u_i m_i\).
 

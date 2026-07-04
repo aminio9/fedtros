@@ -20,9 +20,10 @@ Preprocessing fits scaler/encoder objects on known training rows only. Unknown s
 Every figure and metric should be traceable to:
 
 - `resolved_config.yaml`
-- `metrics.jsonl` / `metrics.csv`
+- `metrics.jsonl` / `metrics.csv`, including `avg_aux_ce_loss`, `balanced_policy_accuracy`, and per-class sampled policy accuracy for RL-stabilized runs
 - `federated_history.csv` for round-level Flower metrics when federated simulation is used
 - `fmrl_ava_monitoring.jsonl` for FMRL-AVA utilities, selected-client fraction, vector-alignment multipliers, final aggregation weights, support reward, and validation team reward
+- `fedgpa_monitoring.jsonl` for FedGPA prototype coverage and personalized aggregation weights
 - `open_set_metrics.json` for EVT calibration metadata and the calibrated threshold used by plot 5
 - checkpoint files
 - evaluation JSON/CSV outputs

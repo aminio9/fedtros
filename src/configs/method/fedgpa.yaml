@@ -22,3 +22,18 @@ federated:
     monitor_path: ${tracking.run_dir}/fedgpa_monitoring.jsonl
   server:
     proximal_mu: 0.0
+
+training:
+  # Non-IID FedGPA needs slower exploration decay; otherwise clients lock into local class bias early.
+  epsilon_end: 0.05
+  epsilon_decay_rate: 0.98
+  # Class-balanced reward protects BP/MitM/FoT-style minority classes in the RL signal.
+  reward_mode: class_balanced
+  reward_weight_power: 0.5
+  reward_min_weight: 0.5
+  reward_max_weight: 3.0
+  reward_normalize_mean: true
+  # Small supervised CE term stabilizes the contextual-bandit/Q-classifier head.
+  aux_ce_weight: 0.10
+  aux_ce_label_smoothing: 0.02
+  aux_ce_use_class_weights: true
