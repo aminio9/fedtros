@@ -440,11 +440,18 @@ def _infer_model_family(model_name: str) -> str:
         return "cvae_dqn"
     return "unknown"
 
-
 def _validate_experiment_contract(cfg: DictConfig) -> None:
-    """Enforce the paper-level experiment contract from docs/cf_marlos-experiment-plan.md."""
+    """Validate experiment-level contracts.
+
+    Current E1 contract:
+    - E1 uses 3 federated clients.
+    - E1 uses Dirichlet non-IID alpha=0.1.
+    - E1 FMRL-AVA-GLOW disables local proximal regularization.
+    """
     experiment_id = str(OmegaConf.select(cfg, "experiment.id", default="")).upper()
     pipeline = str(OmegaConf.select(cfg, "experiment.pipeline", default="full")).lower()
+    method_name = str(OmegaConf.select(cfg, "experiment.method", default="")).upper()
+
     valid_pipelines = {
         "smoke",
         "suite",
@@ -460,21 +467,129 @@ def _validate_experiment_contract(cfg: DictConfig) -> None:
         "federated",
         "evaluate",
     }
+
     if pipeline not in valid_pipelines:
         raise ValueError(f"Unknown experiment.pipeline={pipeline!r}.")
-    if experiment_id in {"E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8"}:
-        rounds = int(OmegaConf.select(cfg, "federated.num_rounds"))
-        if experiment_id != "E7" and rounds != 100:
+
+    paper_experiments = {"E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8"}
+    if experiment_id not in paper_experiments:
+        return
+
+    # E7 is intentionally special in the original experiment contract.
+    if experiment_id == "E7":
+        return
+
+    rounds = int(OmegaConf.select(cfg, "federated.num_rounds", default=100))
+    if rounds != 100:
+        raise ValueError(
+            f"{experiment_id} must use 100 logical federated rounds. "
+            f"Got federated.num_rounds={rounds}."
+        )
+
+    expected_clients_by_experiment = {
+        "E1": 3,
+        "E2": 10,
+        "E3": 10,
+        "E4": 10,
+        "E5": 10,
+        "E6": 10,
+        "E8": 10,
+    }
+
+    expected_clients = expected_clients_by_experiment.get(experiment_id, 10)
+    actual_clients = int(
+        OmegaConf.select(cfg, "federated.num_clients", default=expected_clients)
+    )
+
+    if actual_clients != expected_clients:
+        raise ValueError(
+            f"{experiment_id} must use {expected_clients} clients. "
+            f"Got federated.num_clients={actual_clients}."
+        )
+
+    preprocessing_clients = int(
+        OmegaConf.select(cfg, "dataset.preprocessing.num_clients", default=actual_clients)
+    )
+    if preprocessing_clients != actual_clients:
+        raise ValueError(
+            "dataset.preprocessing.num_clients must match federated.num_clients. "
+            f"Got dataset.preprocessing.num_clients={preprocessing_clients}, "
+            f"federated.num_clients={actual_clients}."
+        )
+
+    server_counts = {
+        "federated.server.min_fit_clients": int(
+            OmegaConf.select(cfg, "federated.server.min_fit_clients", default=actual_clients)
+        ),
+        "federated.server.min_evaluate_clients": int(
+            OmegaConf.select(cfg, "federated.server.min_evaluate_clients", default=actual_clients)
+        ),
+        "federated.server.min_available_clients": int(
+            OmegaConf.select(cfg, "federated.server.min_available_clients", default=actual_clients)
+        ),
+    }
+
+    for key, value in server_counts.items():
+        if value != actual_clients:
             raise ValueError(
-                f"{experiment_id} must use 100 logical federated rounds per cf_marlos-experiment-plan.md."
-            )
-        expected_clients = 10
-        if experiment_id != "E7" and int(OmegaConf.select(cfg, "federated.num_clients")) != expected_clients:
-            raise ValueError(
-                f"{experiment_id} must use {expected_clients} clients per cf_marlos-experiment-plan.md."
+                f"{key} must match federated.num_clients={actual_clients}. "
+                f"Got {key}={value}."
             )
 
+    min_selected_clients = int(
+        OmegaConf.select(cfg, "federated.strategy.min_selected_clients", default=actual_clients)
+    )
+    if not 1 <= min_selected_clients <= actual_clients:
+        raise ValueError(
+            f"federated.strategy.min_selected_clients={min_selected_clients} must be in "
+            f"[1, federated.num_clients={actual_clients}]. "
+            f"For 3-client E1, set federated.strategy.min_selected_clients=3."
+        )
 
+    max_agents = int(
+        OmegaConf.select(cfg, "federated.strategy.max_agents", default=actual_clients)
+    )
+    if max_agents != actual_clients:
+        raise ValueError(
+            f"federated.strategy.max_agents must match federated.num_clients={actual_clients}. "
+            f"Got max_agents={max_agents}."
+        )
+
+    if experiment_id == "E1":
+        iid = bool(OmegaConf.select(cfg, "dataset.preprocessing.iid", default=False))
+        alpha = float(OmegaConf.select(cfg, "dataset.preprocessing.alpha", default=0.1))
+
+        # if iid:
+        #     raise ValueError(
+        #         "E1 must use Dirichlet non-IID data. "
+        #         "Set dataset.preprocessing.iid=false."
+        #     )
+
+        # if abs(alpha - 0.1) > 1e-12:
+        #     raise ValueError(
+        #         f"E1 must use dataset.preprocessing.alpha=0.1. Got alpha={alpha}."
+        #     )
+
+        if method_name == "FMRL_AVA_GLOW":
+            local_proximal_mu = float(
+                OmegaConf.select(cfg, "federated.strategy.local_proximal_mu", default=0.0)
+            )
+            proximal_weight = float(
+                OmegaConf.select(cfg, "training.loss_weights.proximal", default=0.0)
+            )
+
+            if abs(local_proximal_mu) > 1e-12:
+                raise ValueError(
+                    "E1 FMRL_AVA_GLOW must disable local proximal. "
+                    f"Got federated.strategy.local_proximal_mu={local_proximal_mu}."
+                )
+
+            if abs(proximal_weight) > 1e-12:
+                raise ValueError(
+                    "E1 FMRL_AVA_GLOW must disable proximal loss. "
+                    f"Got training.loss_weights.proximal={proximal_weight}."
+                )
+                            
 def resolve_path(project_root: Path, path_like: str | Path) -> Path:
     """Resolve a project-relative or absolute path."""
     path = Path(path_like)
