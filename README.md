@@ -184,3 +184,35 @@ poetry run python run.py experiment=exp3 +method=dkd_fedos seed=42 \
   federated.num_clients=10 federated.num_rounds=100 \
   training.local_episodes_per_round=10 dataset.preprocessing.alpha=0.1
 ```
+
+
+## DKD-FedOS v2
+
+`+method=dkd_fedos` implements a Sentinel-inspired teacher/student federated IDS strategy for extreme non-IID blockchain traffic.
+
+Key behavior:
+
+- local CVAE-DQN teacher remains private and personalized;
+- lightweight student is the only model uploaded to the server;
+- server aggregates student pseudo-gradients with L2 normalization, equal weighting, and momentum;
+- local teacher update, student update, and student-to-teacher KD are separated;
+- absent-class local gradients are blocked, but global student KD can still teach missing classes;
+- teacher and student are evaluated separately in logs.
+
+Smoke test:
+
+```bash
+poetry run python run.py experiment=exp1 +method=dkd_fedos seed=42 \
+  federated.num_clients=3 federated.num_rounds=3 \
+  training.local_episodes_per_round=5 dataset.preprocessing.iid=true
+```
+
+Non-IID run:
+
+```bash
+poetry run python run.py experiment=exp3 +method=dkd_fedos seed=42 \
+  federated.num_clients=10 federated.num_rounds=100 \
+  training.local_episodes_per_round=10 dataset.preprocessing.alpha=0.1
+```
+
+See `docs/dkd-fedos-implementation.md` for the full method mapping and logging checklist.

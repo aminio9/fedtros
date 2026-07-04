@@ -49,3 +49,15 @@ poetry run python run.py experiment=exp3 +method=dkd_fedos seed=42 \
 ```
 
 For open-set, use `experiment=exp4` and verify that the unknown label is not included in known-class training.
+
+## DKD-FedOS v2 update
+
+The DKD-FedOS implementation now follows a stricter Sentinel-style teacher/student separation. The CVAE-DQN teacher remains local, while only the lightweight student is federated. Local teacher learning, student learning, and global student-to-teacher KD are separated into distinct optimization stages. This avoids blocking missing-class knowledge transfer when absent-class local-gradient protection is enabled.
+
+New logs distinguish teacher and student evaluation:
+- `TEACHER_LOCAL_PRE_AGG`
+- `STUDENT_LOCAL_PRE_AGG`
+- `TEACHER_GLOBAL_POST_AGG`
+- `STUDENT_GLOBAL_POST_AGG`
+
+The server also reports included/excluded clients, reliability filtering, raw gradient norms, normalized gradient norms, and student aggregation statistics.

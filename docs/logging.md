@@ -37,3 +37,15 @@ No online service is required.
 - `dkd_fedos_mean_student_grad_norm`: server-side normalized pseudo-gradient diagnostic.
 
 Always inspect `label_histogram` and `label_coverage` when debugging non-IID results. A client with one local class cannot learn all classes from local labels; DKD-FedOS is designed to transfer missing-class knowledge through the global student.
+
+## DKD-FedOS v2 update
+
+The DKD-FedOS implementation now follows a stricter Sentinel-style teacher/student separation. The CVAE-DQN teacher remains local, while only the lightweight student is federated. Local teacher learning, student learning, and global student-to-teacher KD are separated into distinct optimization stages. This avoids blocking missing-class knowledge transfer when absent-class local-gradient protection is enabled.
+
+New logs distinguish teacher and student evaluation:
+- `TEACHER_LOCAL_PRE_AGG`
+- `STUDENT_LOCAL_PRE_AGG`
+- `TEACHER_GLOBAL_POST_AGG`
+- `STUDENT_GLOBAL_POST_AGG`
+
+The server also reports included/excluded clients, reliability filtering, raw gradient norms, normalized gradient norms, and student aggregation statistics.

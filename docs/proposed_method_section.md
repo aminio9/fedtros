@@ -439,3 +439,15 @@ P_{\mathrm{unknown}}(x) \geq \delta_{\mathrm{global}}.
 ## DKD-FedOS method paragraph
 
 We propose DKD-FedOS, a dynamic knowledge-distilled personalized federated framework for open-set blockchain traffic detection under non-IID data. Each blockchain node maintains a personalized CVAE-DQN teacher for local classification and reconstruction-based unknown detection, together with a lightweight student classifier for global knowledge sharing. Local training combines class-balanced RL/supervised learning, adaptive bidirectional knowledge distillation, and teacher-student feature alignment. The server aggregates only compact student models using equal-weight normalized pseudo-gradient aggregation with momentum, preventing large or skewed clients from dominating the federation. The updated global student is then distilled back into each local teacher, allowing clients with missing attack classes to recover global decision knowledge without sharing raw blockchain traffic.
+
+## DKD-FedOS v2 update
+
+The DKD-FedOS implementation now follows a stricter Sentinel-style teacher/student separation. The CVAE-DQN teacher remains local, while only the lightweight student is federated. Local teacher learning, student learning, and global student-to-teacher KD are separated into distinct optimization stages. This avoids blocking missing-class knowledge transfer when absent-class local-gradient protection is enabled.
+
+New logs distinguish teacher and student evaluation:
+- `TEACHER_LOCAL_PRE_AGG`
+- `STUDENT_LOCAL_PRE_AGG`
+- `TEACHER_GLOBAL_POST_AGG`
+- `STUDENT_GLOBAL_POST_AGG`
+
+The server also reports included/excluded clients, reliability filtering, raw gradient norms, normalized gradient norms, and student aggregation statistics.

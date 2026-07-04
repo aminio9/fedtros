@@ -135,6 +135,15 @@ class FlowerClient(fl.client.NumPyClient):
         self.cached_metrics: dict[str, Any] = {}
         self.lifetime_reward = 0.0
         self.local_data_profile = self._build_local_data_profile()
+        if str(cfg.federated.strategy.name).lower() == "dkd_fedos":
+            self.logger.info(
+                "Client %s DKD-FedOS setup | teacher=CVAE-DQN(local) student=StudentIDSModel(shared) "
+                "teacher_uploaded=false student_uploaded=true samples=%s histogram=%s missing=%s",
+                self.cid,
+                self.local_data_profile["local_num_examples"],
+                self.local_data_profile["label_histogram"],
+                self.local_data_profile.get("missing_classes", "[]"),
+            )
 
         # Directories
         figures_root = _resolve_project_path(cfg.paths.figures_dir)
@@ -238,6 +247,9 @@ class FlowerClient(fl.client.NumPyClient):
                         "class_entropy": self.local_data_profile["class_entropy"],
                         "label_coverage": self.local_data_profile["label_coverage"],
                         "label_histogram": self.local_data_profile["label_histogram"],
+                        "missing_classes": self.local_data_profile.get("missing_classes", "[]"),
+                        "present_classes": self.local_data_profile.get("present_classes", "[]"),
+                        "imbalance_ratio": self.local_data_profile.get("imbalance_ratio", 0.0),
                     }
                 )
                 updated_student = self.agent.get_student_parameters()
@@ -376,10 +388,23 @@ class FlowerClient(fl.client.NumPyClient):
             else 0.0
         )
         coverage = float((counts > 0).sum().item() / max(num_actions, 1))
+        missing = [int(i) for i in range(num_actions) if int(counts[i].item()) == 0]
+        present = [int(i) for i in range(num_actions) if int(counts[i].item()) > 0]
+        nonzero_counts = counts[counts > 0]
+        imbalance_ratio = (
+            float(nonzero_counts.max().item() / max(float(nonzero_counts.min().item()), 1.0))
+            if nonzero_counts.numel() > 0
+            else 0.0
+        )
         return {
             "local_num_examples": float(total),
             "class_entropy": entropy,
             "label_coverage": coverage,
+            "missing_classes": json.dumps(missing),
+            "present_classes": json.dumps(present),
+            "min_class_count": float(nonzero_counts.min().item()) if nonzero_counts.numel() else 0.0,
+            "max_class_count": float(nonzero_counts.max().item()) if nonzero_counts.numel() else 0.0,
+            "imbalance_ratio": imbalance_ratio,
             "label_histogram": json.dumps(
                 {str(i): int(counts[i].item()) for i in range(num_actions)},
                 sort_keys=True,
@@ -635,14 +660,24 @@ class FlowerClient(fl.client.NumPyClient):
         if not self.eval_enabled:
             return
         try:
-            _, _, local_metrics = self._evaluate_closed_set(0, prefix="LOCAL_PRE_AGG")
+            if str(self.cfg.federated.strategy.name).lower() == "dkd_fedos":
+                _, _, teacher_metrics = self._evaluate_closed_set(
+                    0, prefix="TEACHER_LOCAL_PRE_AGG", model_kind="teacher"
+                )
+                _, _, student_metrics = self._evaluate_closed_set(
+                    0, prefix="STUDENT_LOCAL_PRE_AGG", model_kind="student"
+                )
+                metrics.update({f"local_teacher_{k}": v for k, v in teacher_metrics.items()})
+                metrics.update({f"local_student_{k}": v for k, v in student_metrics.items()})
+            else:
+                _, _, local_metrics = self._evaluate_closed_set(0, prefix="LOCAL_PRE_AGG")
+                metrics.update({f"local_{k}": v for k, v in local_metrics.items()})
         except Exception:
             self.logger.exception(
                 "Client %s: local closed-set evaluation failed; keeping training result.",
                 self.cid,
             )
             return
-        metrics.update({f"local_{k}": v for k, v in local_metrics.items()})
 
     def evaluate(
         self, parameters: list[np.ndarray] | Parameters, config: dict[str, Any]
@@ -674,10 +709,21 @@ class FlowerClient(fl.client.NumPyClient):
             if not self.eval_enabled or self.eval_loader is None:
                 return 0.0, 0, {}
 
-            loss, num_examples, cs_metrics = self._evaluate_closed_set(
-                round_index, prefix="GLOBAL_POST_AGG"
-            )
-            metrics.update(cs_metrics)
+            if str(config.get("phase", "")).lower() == "dkd_fedos":
+                loss, num_examples, teacher_metrics = self._evaluate_closed_set(
+                    round_index, prefix="TEACHER_GLOBAL_POST_AGG", model_kind="teacher"
+                )
+                _, _, student_metrics = self._evaluate_closed_set(
+                    round_index, prefix="STUDENT_GLOBAL_POST_AGG", model_kind="student"
+                )
+                metrics.update(teacher_metrics)
+                metrics.update({f"teacher_{k}": v for k, v in teacher_metrics.items()})
+                metrics.update({f"student_{k}": v for k, v in student_metrics.items()})
+            else:
+                loss, num_examples, cs_metrics = self._evaluate_closed_set(
+                    round_index, prefix="GLOBAL_POST_AGG"
+                )
+                metrics.update(cs_metrics)
 
             # EVT Logic (Optional)
             evt_cfg = self.cfg.evt
@@ -762,10 +808,15 @@ class FlowerClient(fl.client.NumPyClient):
                 self.logger.warning("Client class-names load failed (%s): %s", path, exc)
         return [f"class_{idx}" for idx in range(num_actions)]
 
-    def _run_closed_set_inference(self) -> tuple[float, np.ndarray, np.ndarray]:
+    def _run_closed_set_inference(
+        self, model_kind: str = "teacher"
+    ) -> tuple[float, np.ndarray, np.ndarray]:
         assert self.eval_loader is not None
+        model_kind = str(model_kind).lower()
         self.agent.prior_net.eval()
         self.agent.value_net_main.eval()
+        if hasattr(self.agent, "student_model"):
+            self.agent.student_model.eval()
 
         total_loss = 0.0
         total_samples = 0
@@ -777,11 +828,14 @@ class FlowerClient(fl.client.NumPyClient):
                 features = features.to(self.device)
                 labels = labels.to(self.device)
 
-                mu_p, _ = self.agent.prior_net(features)
-                q_values = self.agent.value_net_main(mu_p, features)
-                loss = F.cross_entropy(q_values, labels, reduction="mean")
+                if model_kind == "student":
+                    _, logits = self.agent.student_model(features)
+                else:
+                    mu_p, _ = self.agent.prior_net(features)
+                    logits = self.agent.value_net_main(mu_p, features)
+                loss = F.cross_entropy(logits, labels, reduction="mean")
 
-                preds = q_values.argmax(dim=1)
+                preds = logits.argmax(dim=1)
                 all_true.extend(labels.cpu().numpy().tolist())
                 all_pred.extend(preds.cpu().numpy().tolist())
 
@@ -840,9 +894,9 @@ class FlowerClient(fl.client.NumPyClient):
         plt.close(fig)
 
     def _evaluate_closed_set(
-        self, round_index: int, prefix: str = "GLOBAL"
+        self, round_index: int, prefix: str = "GLOBAL", model_kind: str = "teacher"
     ) -> tuple[float, int, dict[str, float]]:
-        loss, y_true, y_pred = self._run_closed_set_inference()
+        loss, y_true, y_pred = self._run_closed_set_inference(model_kind=model_kind)
         num_examples = int(y_true.size)
         accuracy = float((y_true == y_pred).mean()) if num_examples else 0.0
         f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)

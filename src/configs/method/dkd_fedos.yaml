@@ -10,6 +10,7 @@ federated:
     # equal client weighting, and momentum. Only the compact student is shared.
     server_lr: 1.0
     server_momentum: 0.9
+    min_reliable_samples: 500
     monitor_path: ${tracking.run_dir}/dkd_fedos_monitoring.jsonl
   server:
     proximal_mu: 0.0
@@ -32,10 +33,16 @@ training:
   # DKD-FedOS student and Sentinel-inspired adaptive losses.
   dkd_student_hidden_dims: [64, 32, 16]
   dkd_student_lr: 0.005
-  dkd_task_weight: 1.0
+  dkd_teacher_task_weight: 0.5
+  dkd_student_task_weight: 1.0
   dkd_kd_base_temperature: 3.0
   dkd_kd_min_temperature: 1.0
   dkd_kd_decay: 0.95
+  dkd_teacher_to_student_start_round: 4
+  dkd_student_to_teacher_start_round: 6
+  dkd_alignment_start_round: 4
+  dkd_min_student_confidence: 0.0
+  dkd_grad_clip_norm: 1.0
   dkd_lambda_kd_init: 0.20
   dkd_lambda_align_init: 0.08
   dkd_lambda_kd_min: 0.03

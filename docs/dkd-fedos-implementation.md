@@ -1,135 +1,133 @@
-# DKD-FedOS Implementation
+# DKD-FedOS v2 Implementation
 
-DKD-FedOS is a Sentinel-inspired dynamic knowledge-distillation strategy adapted to the CVAE-DQN blockchain-traffic intrusion detector.
-
-## Motivation
-
-FedGPA is useful under moderate non-IID data, but the project logs showed an extreme split where some clients had very few samples or only one local class. In that setting, a strongly personalized classifier can preserve local one-class bias and perform badly on the shared all-class test set. DKD-FedOS changes the federation target: the full CVAE-DQN model stays local as a personalized teacher, and only a compact student classifier is aggregated globally.
-
-## Paper mapping
-
-Sentinel uses a dual-model pFed-IDS design:
-
-- personalized teacher model kept local;
-- lightweight student model shared globally;
-- class-balanced task loss;
-- adaptive bidirectional knowledge distillation;
-- lightweight feature alignment;
-- normalized equal-weight pseudo-gradient aggregation on the server.
-
-DKD-FedOS maps this into this codebase as follows:
-
-| Sentinel concept | DKD-FedOS implementation |
-|---|---|
-| Teacher model | existing CVAE-DQN agent: `prior_net`, `recognition_net`, `value_net_main`, `generation_net` |
-| Student model | `StudentIDSModel`, a compact MLP classifier over traffic features |
-| Teacher logits | Q-values from `value_net_main` |
-| Teacher features | normalized latent vector concatenated with normalized Q-values |
-| Student features | final hidden layer of the compact student MLP |
-| Task loss | class-balanced CE for teacher Q logits and student logits |
-| KD loss | adaptive bidirectional KL with round-dependent temperature |
-| Alignment loss | MSE + cosine alignment from teacher feature space to student feature space |
-| Server aggregation | equal-weight normalized pseudo-gradient aggregation with momentum |
-
-## Files added
-
-- `src/models/student.py`: compact shared student model.
-- `src/rl/class_balance.py`: effective-number class weights and class-balanced CE.
-- `src/rl/distillation.py`: temperature schedule, bidirectional KD, and feature alignment helpers.
-- `src/configs/method/dkd_fedos.yaml`: method config.
-
-## Files modified
-
-- `src/agents/agent.py`: adds student model, aligner, DKD losses, adaptive lambda updates, and absent-class output-row protection.
-- `src/rl/local_training.py`: passes DKD options into training and logs DKD metrics.
-- `src/federated/client.py`: adds `phase=dkd_fedos`; receives global student and uploads only the updated student.
-- `src/federated/server.py`: adds `DKDFedOSStrategy` using normalized equal-weight pseudo-gradient aggregation.
-- `scripts/experiments/*`: adds DKD-FedOS commands to main experiment scripts.
-
-## Local objective
-
-For each mini-batch, the teacher still trains with the RL/CVAE objective. DKD-FedOS adds Sentinel-style student knowledge transfer:
-
-```text
-L_total = L_TD + L_KL + beta_CE L_CE_teacher
-        + L_task
-        + lambda_KD L_KD
-        + lambda_align L_align
-```
-
-where:
-
-```text
-L_task = 0.5 * CBCE(Q_teacher, y) + 0.5 * CBCE(student_logits, y)
-```
-
-`L_KD` is bidirectional teacher/student KL with adaptive temperature, and `L_align` is MSE + cosine feature alignment.
-
-## Server aggregation
-
-The server receives only student parameters. For each client update:
-
-```text
-g_i = theta_global_student - theta_i_student
-ghat_i = g_i / (||g_i||_2 + eps)
-gbar = mean_i(ghat_i)
-v_r = beta * v_{r-1} + (1 - beta) * gbar
-theta_global_student = theta_global_student - eta * v_r
-```
-
-This avoids sample-count domination by huge clients and makes each participating client contribute equally after normalization.
-
-## Absent-class protection
-
-When a local client lacks class `k`, the method zeros gradients for class `k` rows in:
-
-- teacher Q-head `advantage_fc2`;
-- student classifier head.
-
-This prevents one-class clients from locally overwriting missing-class decision rows. Missing-class knowledge is then recovered mainly through the global student via distillation.
-
-## Run commands
-
-IID closed-set smoke run:
-
-```bash
-poetry run python run.py experiment=exp1 +method=dkd_fedos seed=42 \
-  federated.num_clients=3 federated.num_rounds=3 \
-  training.local_episodes_per_round=10 dataset.preprocessing.iid=true
-```
-
-Main non-IID run:
+DKD-FedOS is a Sentinel-inspired dynamic knowledge-distillation strategy adapted to the CVAE-DQN blockchain-traffic detector.  It is a separate method from FedGPA and runs with:
 
 ```bash
 poetry run python run.py experiment=exp3 +method=dkd_fedos seed=42 \
   federated.num_clients=10 federated.num_rounds=100 \
-  training.local_episodes_per_round=10 dataset.preprocessing.alpha=0.1 \
-  2>&1 | tee dkd_fedos_exp3_alpha01_10clients.log
+  training.local_episodes_per_round=10 dataset.preprocessing.alpha=0.1
 ```
 
-Open-set non-IID run:
+## Paper-faithful design target
+
+Sentinel trains a personalized teacher and a lightweight shared student on each client.  Only the student is sent to the server.  The server aggregates student pseudo-gradients using L2 normalization, equal weighting, and momentum.  DKD-FedOS keeps that federation pattern but adapts the teacher to this project:
+
+- **Teacher:** local CVAE-DQN model (`prior_net`, `recognition_net`, `value_net_main`, `generation_net`)
+- **Student:** shared lightweight MLP classifier (`StudentIDSModel`)
+- **Uploaded:** student parameters only
+- **Aggregated:** student parameters only
+- **Final inference:** teacher, because the teacher owns the CVAE-DQN and open-set reconstruction path
+
+## Important v2 correction
+
+The first DKD-FedOS implementation mixed teacher RL loss, teacher CE, student CE, KD, and alignment in one backward pass.  That made absent-class protection too blunt: it could block both harmful local gradients and useful global KD gradients.
+
+v2 separates the update into three stages.
+
+### Stage A: local teacher update
+
+The CVAE-DQN teacher learns from local evidence:
+
+```text
+L_teacher_local = TD_loss + KL_loss + teacher_CBCE
+```
+
+Local missing-class output rows are protected here, so a client that only sees one or two classes cannot overwrite every absent output row.
+
+### Stage B: student update
+
+The shared student learns local labels and teacher knowledge:
+
+```text
+L_student = student_CBCE + lambda_KD * KD(teacher -> student) + lambda_align * alignment
+```
+
+The local student CE is computed only over locally present classes.  This prevents local CE from pushing absent class logits down.
+
+### Stage C: global student -> teacher update
+
+The teacher receives global knowledge from the student:
+
+```text
+L_teacher_global = lambda_KD * KD(student -> teacher)
+```
+
+Absent-class protection is intentionally **not** applied here.  This is the missing-class transfer path.  If a client has no samples for class `k`, the only safe way to recover class `k` knowledge is through the global student.
+
+## Warm-up and gating
+
+DKD-FedOS v2 uses staged KD because the teacher is a CVAE-DQN/RL model rather than Sentinel's plain DNN classifier.
+
+Default schedule:
+
+```yaml
+dkd_teacher_to_student_start_round: 4
+dkd_student_to_teacher_start_round: 6
+dkd_alignment_start_round: 4
+dkd_min_student_confidence: 0.0
+```
+
+Round 1 to 3 trains teacher/student with local losses only.  Teacher-to-student KD and alignment start later.  Student-to-teacher KD starts after the student has received global aggregation for multiple rounds.
+
+## Server aggregation
+
+The server keeps the Sentinel-style normalized pseudo-gradient update:
+
+```text
+g_i = theta_global_student - theta_i_student
+g_hat_i = g_i / (||g_i||_2 + eps)
+g_bar = mean(g_hat_i)
+v = beta * v + (1 - beta) * g_bar
+theta_global_student = theta_global_student - eta * v
+```
+
+v2 also adds reliability filtering:
+
+```yaml
+min_reliable_samples: 500
+```
+
+Clients below this threshold still receive the global student and are evaluated, but they are excluded from the server update.  This avoids giving a 45-sample client the same aggregation authority as a large, stable client.
+
+## Logging added
+
+Each DKD-FedOS run now reports:
+
+- local class histogram, present classes, missing classes, imbalance ratio
+- teacher local/global closed-set evaluation
+- student local/global closed-set evaluation
+- teacher batch accuracy
+- student batch accuracy
+- teacher-student agreement
+- correct agreement
+- teacher/student confidence
+- teacher-to-student and student-to-teacher KD losses
+- KD enable rates
+- alignment loss and alignment score
+- included/excluded aggregation clients
+- raw and normalized student gradient norms
+
+These logs are required before trusting a DKD-FedOS result.  If the global student improves but the teacher does not, the failure is in student-to-teacher transfer.  If the global student does not improve, the failure is in student training or server aggregation.
+
+## Recommended validation order
+
+Do not start with the harshest split.
 
 ```bash
-poetry run python run.py experiment=exp4 +method=dkd_fedos seed=42 \
+# smoke test
+poetry run python run.py experiment=exp1 +method=dkd_fedos seed=42 \
+  federated.num_clients=3 federated.num_rounds=3 \
+  training.local_episodes_per_round=5 dataset.preprocessing.iid=true
+
+# moderate non-IID
+poetry run python run.py experiment=exp3 +method=dkd_fedos seed=42 \
+  federated.num_clients=10 federated.num_rounds=30 \
+  training.local_episodes_per_round=5 dataset.preprocessing.alpha=0.5
+
+# harsh non-IID after the previous runs are stable
+poetry run python run.py experiment=exp3 +method=dkd_fedos seed=42 \
   federated.num_clients=10 federated.num_rounds=100 \
-  training.local_episodes_per_round=10 dataset.preprocessing.alpha=0.1 \
-  2>&1 | tee dkd_fedos_exp4_alpha01_10clients.log
+  training.local_episodes_per_round=10 dataset.preprocessing.alpha=0.1
 ```
 
-## Important logs
-
-Watch these metrics:
-
-- `avg_dkd_task_loss`
-- `avg_dkd_kd_loss`
-- `avg_dkd_align_loss`
-- `dkd_lambda_kd`
-- `dkd_lambda_align`
-- `dkd_temperature`
-- `dkd_agreement`
-- `dkd_confidence`
-- `dkd_fedos_mean_student_grad_norm`
-- `label_histogram`
-- `label_coverage`
-
-The method is working if weak clients no longer collapse to one-class predictions on the shared closed-set test after several rounds.
+For open-set experiments, ensure the unknown class is not part of known training.  If FoT is the unknown class, the known classifier should train on Normal, BP, DoS, and MitM only.

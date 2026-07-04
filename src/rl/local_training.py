@@ -90,6 +90,17 @@ def run_local_training_round(
     total_dkd_agreement = 0.0
     total_dkd_confidence = 0.0
     total_dkd_align_score = 0.0
+    total_dkd_teacher_task_loss = 0.0
+    total_dkd_student_task_loss = 0.0
+    total_dkd_t2s_loss = 0.0
+    total_dkd_s2t_loss = 0.0
+    total_dkd_teacher_batch_accuracy = 0.0
+    total_dkd_student_batch_accuracy = 0.0
+    total_dkd_correct_agreement = 0.0
+    total_dkd_teacher_confidence = 0.0
+    total_dkd_student_confidence = 0.0
+    total_dkd_t2s_enabled = 0.0
+    total_dkd_s2t_enabled = 0.0
     total_avg_q = 0.0
     total_correct = 0
     class_correct_counts: dict[int, int] = {}
@@ -191,6 +202,17 @@ def run_local_training_round(
                 dkd_agreement = float(getattr(agent, "last_dkd_agreement", 0.0))
                 dkd_confidence = float(getattr(agent, "last_dkd_confidence", 0.0))
                 dkd_align_score = float(getattr(agent, "last_dkd_align_score", 0.0))
+                dkd_teacher_task_loss = float(getattr(agent, "last_dkd_teacher_task_loss", 0.0))
+                dkd_student_task_loss = float(getattr(agent, "last_dkd_student_task_loss", 0.0))
+                dkd_t2s_loss = float(getattr(agent, "last_dkd_t2s_loss", 0.0))
+                dkd_s2t_loss = float(getattr(agent, "last_dkd_s2t_loss", 0.0))
+                dkd_teacher_batch_accuracy = float(getattr(agent, "last_dkd_teacher_batch_accuracy", 0.0))
+                dkd_student_batch_accuracy = float(getattr(agent, "last_dkd_student_batch_accuracy", 0.0))
+                dkd_correct_agreement = float(getattr(agent, "last_dkd_correct_agreement", 0.0))
+                dkd_teacher_confidence = float(getattr(agent, "last_dkd_teacher_confidence", 0.0))
+                dkd_student_confidence = float(getattr(agent, "last_dkd_student_confidence", 0.0))
+                dkd_t2s_enabled = float(getattr(agent, "last_dkd_t2s_enabled", 0.0))
+                dkd_s2t_enabled = float(getattr(agent, "last_dkd_s2t_enabled", 0.0))
 
                 episode_train_steps += 1
                 episode_td_loss += td_loss
@@ -215,6 +237,17 @@ def run_local_training_round(
                 total_dkd_agreement += dkd_agreement
                 total_dkd_confidence += dkd_confidence
                 total_dkd_align_score += dkd_align_score
+                total_dkd_teacher_task_loss += dkd_teacher_task_loss
+                total_dkd_student_task_loss += dkd_student_task_loss
+                total_dkd_t2s_loss += dkd_t2s_loss
+                total_dkd_s2t_loss += dkd_s2t_loss
+                total_dkd_teacher_batch_accuracy += dkd_teacher_batch_accuracy
+                total_dkd_student_batch_accuracy += dkd_student_batch_accuracy
+                total_dkd_correct_agreement += dkd_correct_agreement
+                total_dkd_teacher_confidence += dkd_teacher_confidence
+                total_dkd_student_confidence += dkd_student_confidence
+                total_dkd_t2s_enabled += dkd_t2s_enabled
+                total_dkd_s2t_enabled += dkd_s2t_enabled
                 total_avg_q += avg_q
 
                 # Soft-update the target network periodically
@@ -273,6 +306,17 @@ def run_local_training_round(
     avg_round_dkd_agreement = total_dkd_agreement / total_train_steps if total_train_steps else 0.0
     avg_round_dkd_confidence = total_dkd_confidence / total_train_steps if total_train_steps else 0.0
     avg_round_dkd_align_score = total_dkd_align_score / total_train_steps if total_train_steps else 0.0
+    avg_round_dkd_teacher_task = total_dkd_teacher_task_loss / total_train_steps if total_train_steps else 0.0
+    avg_round_dkd_student_task = total_dkd_student_task_loss / total_train_steps if total_train_steps else 0.0
+    avg_round_dkd_t2s = total_dkd_t2s_loss / total_train_steps if total_train_steps else 0.0
+    avg_round_dkd_s2t = total_dkd_s2t_loss / total_train_steps if total_train_steps else 0.0
+    avg_round_dkd_teacher_acc = total_dkd_teacher_batch_accuracy / total_train_steps if total_train_steps else 0.0
+    avg_round_dkd_student_acc = total_dkd_student_batch_accuracy / total_train_steps if total_train_steps else 0.0
+    avg_round_dkd_correct_agreement = total_dkd_correct_agreement / total_train_steps if total_train_steps else 0.0
+    avg_round_dkd_teacher_conf = total_dkd_teacher_confidence / total_train_steps if total_train_steps else 0.0
+    avg_round_dkd_student_conf = total_dkd_student_confidence / total_train_steps if total_train_steps else 0.0
+    avg_round_dkd_t2s_enabled = total_dkd_t2s_enabled / total_train_steps if total_train_steps else 0.0
+    avg_round_dkd_s2t_enabled = total_dkd_s2t_enabled / total_train_steps if total_train_steps else 0.0
     avg_round_q = total_avg_q / total_train_steps if total_train_steps else 0.0
     per_class_accuracy = {
         str(class_id): class_correct_counts.get(class_id, 0) / count
@@ -297,6 +341,17 @@ def run_local_training_round(
         "avg_dkd_task_loss": avg_round_dkd_task,
         "avg_dkd_kd_loss": avg_round_dkd_kd,
         "avg_dkd_align_loss": avg_round_dkd_align,
+        "avg_dkd_teacher_task_loss": avg_round_dkd_teacher_task,
+        "avg_dkd_student_task_loss": avg_round_dkd_student_task,
+        "avg_dkd_t2s_loss": avg_round_dkd_t2s,
+        "avg_dkd_s2t_loss": avg_round_dkd_s2t,
+        "dkd_teacher_batch_accuracy": avg_round_dkd_teacher_acc,
+        "dkd_student_batch_accuracy": avg_round_dkd_student_acc,
+        "dkd_correct_agreement": avg_round_dkd_correct_agreement,
+        "dkd_teacher_confidence": avg_round_dkd_teacher_conf,
+        "dkd_student_confidence": avg_round_dkd_student_conf,
+        "dkd_t2s_enabled_rate": avg_round_dkd_t2s_enabled,
+        "dkd_s2t_enabled_rate": avg_round_dkd_s2t_enabled,
         "dkd_lambda_kd": float(getattr(agent, "dkd_lambda_kd", 0.0)),
         "dkd_lambda_align": float(getattr(agent, "dkd_lambda_align", 0.0)),
         "dkd_temperature": float(getattr(agent, "last_dkd_temperature", 1.0)),

@@ -12,7 +12,11 @@ from torch.utils.data import DataLoader, TensorDataset
 from src.models.models import OpenSetQChainModelFactory, ValueNetwork
 from src.models.student import StudentIDSModel
 from src.rl.class_balance import class_balanced_cross_entropy
-from src.rl.distillation import bidirectional_kd_loss, kd_temperature, mse_cosine_alignment
+from src.rl.distillation import (
+    kd_temperature,
+    mse_cosine_alignment,
+    sentinel_bidirectional_kd_components,
+)
 from src.utils.utils import (
     calculate_kl_divergence,
     calculate_kl_divergence_raw,
@@ -187,6 +191,17 @@ class Agent:
         self.last_dkd_agreement = 0.0
         self.last_dkd_confidence = 0.0
         self.last_dkd_align_score = 0.0
+        self.last_dkd_teacher_task_loss = 0.0
+        self.last_dkd_student_task_loss = 0.0
+        self.last_dkd_t2s_loss = 0.0
+        self.last_dkd_s2t_loss = 0.0
+        self.last_dkd_teacher_batch_accuracy = 0.0
+        self.last_dkd_student_batch_accuracy = 0.0
+        self.last_dkd_correct_agreement = 0.0
+        self.last_dkd_teacher_confidence = 0.0
+        self.last_dkd_student_confidence = 0.0
+        self.last_dkd_t2s_enabled = 0.0
+        self.last_dkd_s2t_enabled = 0.0
         self._capture_proximal_reference()
         self.logger.debug("Agent initialized with Double-DQN: %s", self.use_double_dqn)
 
@@ -291,6 +306,17 @@ class Agent:
         self.last_dkd_agreement = 0.0
         self.last_dkd_confidence = 0.0
         self.last_dkd_align_score = 0.0
+        self.last_dkd_teacher_task_loss = 0.0
+        self.last_dkd_student_task_loss = 0.0
+        self.last_dkd_t2s_loss = 0.0
+        self.last_dkd_s2t_loss = 0.0
+        self.last_dkd_teacher_batch_accuracy = 0.0
+        self.last_dkd_student_batch_accuracy = 0.0
+        self.last_dkd_correct_agreement = 0.0
+        self.last_dkd_teacher_confidence = 0.0
+        self.last_dkd_student_confidence = 0.0
+        self.last_dkd_t2s_enabled = 0.0
+        self.last_dkd_s2t_enabled = 0.0
 
         # ========== 1) PRIOR update: KL(q||p) using TRUE labels (Eq. 5) ==========
         self.prior_net.train()
@@ -374,71 +400,47 @@ class Agent:
             )
             td_objective = td_objective + aux_ce_weight * aux_ce_loss
 
-        # DKD-FedOS: Sentinel-style dual-model local objective.  The CVAE-DQN
-        # Q-head is the personalized teacher, while the compact student carries
-        # globally shared class knowledge across non-IID clients.
+        # DKD-FedOS v2: keep Sentinel's local/global roles separated.
+        #
+        # Stage A happens inside the teacher RL objective below: the CVAE-DQN
+        # teacher learns from local labels/rewards.  Student training and
+        # student->teacher global transfer happen after the teacher local step,
+        # so missing-class protection can block harmful local gradients without
+        # blocking useful KD from the global student.
+        dkd_teacher_task_loss = torch.zeros((), device=self.device)
+        dkd_student_task_loss = torch.zeros((), device=self.device)
+        dkd_t2s = torch.zeros((), device=self.device)
+        dkd_s2t = torch.zeros((), device=self.device)
+        dkd_align = torch.zeros((), device=self.device)
         dkd_task_loss = torch.zeros((), device=self.device)
         dkd_kd = torch.zeros((), device=self.device)
-        dkd_align = torch.zeros((), device=self.device)
+        dkd_temperature_value = 1.0
+        dkd_stats: dict[str, float] = {
+            "agreement": 0.0,
+            "joint_confidence": 0.0,
+            "teacher_batch_accuracy": 0.0,
+            "student_batch_accuracy": 0.0,
+            "correct_agreement": 0.0,
+            "teacher_confidence": 0.0,
+            "student_confidence": 0.0,
+        }
+        dkd_align_score = 0.0
+        dkd_t2s_enabled = False
+        dkd_s2t_enabled = False
+        dkd_cb_weights = None
+        dkd_targets = true_actions_a_t.view(-1).long().clamp(0, self.action_dim - 1)
         if dkd_enabled:
-            self.student_model.train()
-            self.teacher_to_student_aligner.train()
-            student_features, student_logits = self.student_model(states_s)
-            ce_targets = true_actions_a_t.view(-1).long().clamp(0, self.action_dim - 1)
-            cb_weights = dkd_class_weights if dkd_class_weights is not None else class_weights
-            teacher_ce = class_balanced_cross_entropy(
+            dkd_cb_weights = dkd_class_weights if dkd_class_weights is not None else class_weights
+            dkd_teacher_task_loss = self._masked_class_balanced_ce(
                 q_values_all,
-                ce_targets,
-                cb_weights,
+                dkd_targets,
+                dkd_cb_weights,
+                dkd_present_classes,
                 label_smoothing=max(aux_ce_label_smoothing, 0.0),
             )
-            student_ce = class_balanced_cross_entropy(
-                student_logits,
-                ce_targets,
-                cb_weights,
-                label_smoothing=max(aux_ce_label_smoothing, 0.0),
-            )
-            dkd_task_loss = 0.5 * (teacher_ce + student_ce)
+            teacher_task_weight = float(getattr(self.train_cfg, "dkd_teacher_task_weight", 0.5))
+            td_objective = td_objective + teacher_task_weight * dkd_teacher_task_loss
 
-            temperature = kd_temperature(
-                int(dkd_round),
-                base=float(getattr(self.train_cfg, "dkd_kd_base_temperature", 3.0)),
-                minimum=float(getattr(self.train_cfg, "dkd_kd_min_temperature", 1.0)),
-                decay=float(getattr(self.train_cfg, "dkd_kd_decay", 0.95)),
-            )
-            if cb_weights is not None:
-                batch_weights = cb_weights.to(self.device, dtype=q_values_all.dtype)[ce_targets]
-                mean_weight = batch_weights.mean().detach()
-            else:
-                mean_weight = torch.ones((), device=self.device, dtype=q_values_all.dtype)
-            dkd_kd, agreement, confidence = bidirectional_kd_loss(
-                q_values_all,
-                student_logits,
-                temperature=temperature,
-                mean_class_weight=mean_weight,
-            )
-
-            teacher_features = self._teacher_distillation_features(z_now, q_values_all)
-            projected_teacher = self.teacher_to_student_aligner(teacher_features.detach())
-            dkd_align, align_score = mse_cosine_alignment(
-                projected_teacher,
-                student_features,
-                cosine_weight=float(getattr(self.train_cfg, "dkd_align_cos_weight", 0.5)),
-                mse_weight=float(getattr(self.train_cfg, "dkd_align_mse_weight", 1.0)),
-            )
-
-            self._update_dkd_lambdas(agreement=agreement, align_score=align_score, round_num=int(dkd_round))
-            task_weight = float(getattr(self.train_cfg, "dkd_task_weight", 1.0))
-            td_objective = (
-                td_objective
-                + task_weight * dkd_task_loss
-                + self.dkd_lambda_kd * dkd_kd
-                + self.dkd_lambda_align * dkd_align
-            )
-            self.last_dkd_temperature = float(temperature)
-            self.last_dkd_agreement = float(agreement)
-            self.last_dkd_confidence = float(confidence)
-            self.last_dkd_align_score = float(align_score)
         if prototype_lambda > 0.0 and global_prototypes is not None:
             proto_features = self._build_prototype_features(
                 z_now, q_values_all, prototype_feature=prototype_feature
@@ -457,33 +459,254 @@ class Agent:
             prox_loss_total = prox_loss_total + 0.5 * proximal_mu * rl_prox
             td_objective = td_objective + 0.5 * proximal_mu * rl_prox
 
-        # Optimize recognition/main_q plus optional DKD student/aligner.
+        # Stage A optimization: local CVAE-DQN teacher update.
+        # Local gradients are allowed to update only locally observed output rows;
+        # missing-class rows are protected from CE/TD overwrite here.
         self.optimizer_q_rl.zero_grad()
-        if dkd_enabled:
-            self.optimizer_dkd.zero_grad()
         td_objective.backward()
         if dkd_enabled and dkd_present_classes is not None:
-            self._protect_absent_class_rows(dkd_present_classes)
+            self._protect_absent_class_rows(dkd_present_classes, target="teacher")
         torch.nn.utils.clip_grad_norm_(
             list(self.recognition_net.parameters()) + list(self.value_net_main.parameters()),
-            max_norm=1.0,  # Common practice for DQN stability
+            max_norm=1.0,
         )
-        if dkd_enabled:
-            torch.nn.utils.clip_grad_norm_(
-                list(self.student_model.parameters()) + list(self.teacher_to_student_aligner.parameters()),
-                max_norm=1.0,
-            )
         self.optimizer_q_rl.step()
+
+        # Stage B/C optimization: Sentinel-style student update and gated global
+        # student -> teacher transfer.  This is intentionally separate from the
+        # local teacher backward pass so absent-class KD can remain active.
         if dkd_enabled:
-            self.optimizer_dkd.step()
+            (
+                dkd_student_task_loss,
+                dkd_t2s,
+                dkd_s2t,
+                dkd_align,
+                dkd_stats,
+                dkd_align_score,
+                dkd_temperature_value,
+                dkd_t2s_enabled,
+                dkd_s2t_enabled,
+            ) = self._run_dkd_teacher_student_updates(
+                states_s=states_s,
+                labels=dkd_targets,
+                class_weights=dkd_cb_weights,
+                present_classes=dkd_present_classes,
+                round_num=int(dkd_round),
+                label_smoothing=max(aux_ce_label_smoothing, 0.0),
+            )
+            dkd_task_loss = 0.5 * (dkd_teacher_task_loss.detach() + dkd_student_task_loss.detach())
+            dkd_kd = dkd_t2s.detach() + dkd_s2t.detach()
+            self._update_dkd_lambdas(
+                agreement=dkd_stats.get("agreement", 0.0),
+                align_score=dkd_align_score,
+                round_num=int(dkd_round),
+            )
+            self.last_dkd_temperature = float(dkd_temperature_value)
+            self.last_dkd_agreement = float(dkd_stats.get("agreement", 0.0))
+            self.last_dkd_confidence = float(dkd_stats.get("joint_confidence", 0.0))
+            self.last_dkd_align_score = float(dkd_align_score)
+            self.last_dkd_teacher_batch_accuracy = float(dkd_stats.get("teacher_batch_accuracy", 0.0))
+            self.last_dkd_student_batch_accuracy = float(dkd_stats.get("student_batch_accuracy", 0.0))
+            self.last_dkd_correct_agreement = float(dkd_stats.get("correct_agreement", 0.0))
+            self.last_dkd_teacher_confidence = float(dkd_stats.get("teacher_confidence", 0.0))
+            self.last_dkd_student_confidence = float(dkd_stats.get("student_confidence", 0.0))
+            self.last_dkd_t2s_enabled = float(bool(dkd_t2s_enabled))
+            self.last_dkd_s2t_enabled = float(bool(dkd_s2t_enabled))
 
         avg_q = q_pred.mean().item()
         self.last_prototype_loss = float(proto_loss_total.item())
         self.last_aux_ce_loss = float(aux_ce_loss.detach().item())
+        self.last_dkd_teacher_task_loss = float(dkd_teacher_task_loss.detach().item())
+        self.last_dkd_student_task_loss = float(dkd_student_task_loss.detach().item())
         self.last_dkd_task_loss = float(dkd_task_loss.detach().item())
+        self.last_dkd_t2s_loss = float(dkd_t2s.detach().item())
+        self.last_dkd_s2t_loss = float(dkd_s2t.detach().item())
         self.last_dkd_kd_loss = float(dkd_kd.detach().item())
         self.last_dkd_align_loss = float(dkd_align.detach().item())
         return td_loss.item(), kl_loss.item(), prox_loss_total.item(), avg_q
+
+    def _masked_class_balanced_ce(
+        self,
+        logits: torch.Tensor,
+        labels: torch.Tensor,
+        weights: torch.Tensor | None,
+        present_classes: torch.Tensor | None,
+        *,
+        label_smoothing: float = 0.0,
+    ) -> torch.Tensor:
+        """Class-balanced CE that does not touch absent output rows.
+
+        Cross entropy over all logits pushes absent classes down even when a
+        client never observes them.  For non-IID clients, local label losses
+        should only update locally present class rows.  Global KD is handled in
+        a separate pass and can still update absent rows.
+        """
+        labels = labels.view(-1).long().to(logits.device).clamp(0, self.action_dim - 1)
+        if (
+            present_classes is None
+            or not bool(getattr(self.train_cfg, "dkd_protect_absent_classes", True))
+        ):
+            return class_balanced_cross_entropy(
+                logits,
+                labels,
+                weights,
+                label_smoothing=label_smoothing,
+            )
+
+        present_mask = present_classes.to(logits.device).bool().view(-1)
+        if present_mask.numel() < self.action_dim:
+            present_mask = F.pad(present_mask, (0, self.action_dim - present_mask.numel()), value=False)
+        present_mask = present_mask[: self.action_dim]
+        present_idx = torch.nonzero(present_mask, as_tuple=False).view(-1)
+        if present_idx.numel() <= 1:
+            # With one local class, local CE has no useful class-discrimination
+            # signal.  KD from the global student remains the missing-class
+            # knowledge path.
+            return torch.zeros((), device=logits.device, dtype=logits.dtype)
+
+        remap = torch.full((self.action_dim,), -1, device=logits.device, dtype=torch.long)
+        remap[present_idx] = torch.arange(present_idx.numel(), device=logits.device)
+        valid = remap[labels] >= 0
+        if not bool(valid.any().item()):
+            return torch.zeros((), device=logits.device, dtype=logits.dtype)
+
+        selected_logits = logits[valid][:, present_idx]
+        selected_labels = remap[labels[valid]]
+        selected_weights = None
+        if weights is not None and weights.numel() >= self.action_dim:
+            selected_weights = weights.to(logits.device, dtype=logits.dtype)[: self.action_dim][present_idx]
+            selected_weights = selected_weights / selected_weights.mean().clamp_min(1e-8)
+        return F.cross_entropy(
+            selected_logits,
+            selected_labels,
+            weight=selected_weights,
+            label_smoothing=max(float(label_smoothing), 0.0),
+        )
+
+    def _run_dkd_teacher_student_updates(
+        self,
+        *,
+        states_s: torch.Tensor,
+        labels: torch.Tensor,
+        class_weights: torch.Tensor | None,
+        present_classes: torch.Tensor | None,
+        round_num: int,
+        label_smoothing: float,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, dict[str, float], float, float, bool, bool]:
+        """Run Sentinel-style student update and gated global-to-teacher KD.
+
+        Stage B updates only the student/aligner with local CBCE, teacher->student
+        KD, and feature alignment.  Stage C optionally updates the teacher Q-head
+        from the student without absent-class row protection, allowing missing
+        class knowledge to transfer from the global student.
+        """
+        self.student_model.train()
+        self.teacher_to_student_aligner.train()
+        labels = labels.view(-1).long().to(self.device).clamp(0, self.action_dim - 1)
+        temperature = kd_temperature(
+            int(round_num),
+            base=float(getattr(self.train_cfg, "dkd_kd_base_temperature", 3.0)),
+            minimum=float(getattr(self.train_cfg, "dkd_kd_min_temperature", 1.0)),
+            decay=float(getattr(self.train_cfg, "dkd_kd_decay", 0.95)),
+        )
+        if class_weights is not None:
+            mean_weight = class_weights.to(self.device, dtype=states_s.dtype)[labels].mean().detach()
+        else:
+            mean_weight = torch.ones((), device=self.device, dtype=states_s.dtype)
+
+        # Teacher snapshot after local update.  Use inference path (prior -> Q)
+        # because this is what closed-set/open-set evaluation uses.
+        with torch.no_grad():
+            mu_teacher, _ = self.prior_net(states_s)
+            teacher_logits_snapshot = self.value_net_main(mu_teacher, states_s)
+            teacher_features = self._teacher_distillation_features(mu_teacher, teacher_logits_snapshot)
+
+        student_features, student_logits = self.student_model(states_s)
+        student_task_loss = self._masked_class_balanced_ce(
+            student_logits,
+            labels,
+            class_weights,
+            present_classes,
+            label_smoothing=label_smoothing,
+        )
+        t2s_component, _s2t_component_for_stats, stats = sentinel_bidirectional_kd_components(
+            teacher_logits_snapshot,
+            student_logits,
+            temperature=temperature,
+            mean_class_weight=mean_weight,
+            labels=labels,
+        )
+        projected_teacher = self.teacher_to_student_aligner(teacher_features.detach())
+        align_loss, align_score = mse_cosine_alignment(
+            projected_teacher,
+            student_features,
+            cosine_weight=float(getattr(self.train_cfg, "dkd_align_cos_weight", 0.5)),
+            mse_weight=float(getattr(self.train_cfg, "dkd_align_mse_weight", 1.0)),
+        )
+
+        t2s_start = int(getattr(self.train_cfg, "dkd_teacher_to_student_start_round", 4))
+        align_start = int(getattr(self.train_cfg, "dkd_alignment_start_round", 4))
+        t2s_enabled = int(round_num) >= t2s_start
+        align_enabled = int(round_num) >= align_start
+
+        self.optimizer_dkd.zero_grad()
+        student_objective = (
+            float(getattr(self.train_cfg, "dkd_student_task_weight", 1.0)) * student_task_loss
+        )
+        if t2s_enabled:
+            student_objective = student_objective + self.dkd_lambda_kd * t2s_component
+        if align_enabled:
+            student_objective = student_objective + self.dkd_lambda_align * align_loss
+        student_objective.backward()
+        torch.nn.utils.clip_grad_norm_(
+            list(self.student_model.parameters()) + list(self.teacher_to_student_aligner.parameters()),
+            max_norm=float(getattr(self.train_cfg, "dkd_grad_clip_norm", 1.0)),
+        )
+        self.optimizer_dkd.step()
+
+        # Stage C: global student -> teacher.  Crucially, this pass is not
+        # protected against absent classes; it is the only path that can teach
+        # missing output rows on clients with label holes.
+        s2t_start = int(getattr(self.train_cfg, "dkd_student_to_teacher_start_round", 6))
+        min_student_conf = float(getattr(self.train_cfg, "dkd_min_student_confidence", 0.0))
+        s2t_enabled = int(round_num) >= s2t_start and stats.get("student_confidence", 0.0) >= min_student_conf
+        s2t_loss = torch.zeros((), device=self.device)
+        if s2t_enabled:
+            with torch.no_grad():
+                _student_features_after, student_logits_after = self.student_model(states_s)
+                mu_teacher_s2t, _ = self.prior_net(states_s)
+            teacher_logits_for_kd = self.value_net_main(mu_teacher_s2t.detach(), states_s)
+            _unused_t2s, s2t_component, s2t_stats = sentinel_bidirectional_kd_components(
+                teacher_logits_for_kd,
+                student_logits_after.detach(),
+                temperature=temperature,
+                mean_class_weight=mean_weight,
+                labels=labels,
+            )
+            # In sentinel_bidirectional_kd_components arguments are
+            # (teacher_logits, student_logits); the returned s2t component updates
+            # the first argument toward the second argument, which is what we need.
+            s2t_loss = s2t_component
+            stats.update({f"s2t_{k}": v for k, v in s2t_stats.items()})
+            self.optimizer_q_rl.zero_grad()
+            (self.dkd_lambda_kd * s2t_loss).backward()
+            torch.nn.utils.clip_grad_norm_(
+                self.value_net_main.parameters(),
+                max_norm=float(getattr(self.train_cfg, "dkd_grad_clip_norm", 1.0)),
+            )
+            self.optimizer_q_rl.step()
+
+        return (
+            student_task_loss.detach(),
+            t2s_component.detach() if t2s_enabled else torch.zeros((), device=self.device),
+            s2t_loss.detach(),
+            align_loss.detach() if align_enabled else torch.zeros((), device=self.device),
+            stats,
+            align_score,
+            float(temperature),
+            bool(t2s_enabled),
+            bool(s2t_enabled),
+        )
 
     def _teacher_distillation_features(self, latent: torch.Tensor, q_values: torch.Tensor) -> torch.Tensor:
         return torch.cat([F.normalize(latent, dim=1), F.normalize(q_values, dim=1)], dim=1)
@@ -511,7 +734,13 @@ class Agent:
             np.clip(self.dkd_lambda_align, align_min, max(align_min, align_max))
         )
 
-    def _protect_absent_class_rows(self, present_classes: torch.Tensor) -> None:
+    def _protect_absent_class_rows(self, present_classes: torch.Tensor, *, target: str = "teacher") -> None:
+        """Zero local-label gradients for absent output rows.
+
+        This is used only for local evidence losses.  Global student->teacher KD
+        deliberately does not call this function, so absent classes can be
+        recovered from the global student.
+        """
         if not bool(getattr(self.train_cfg, "dkd_protect_absent_classes", True)):
             return
         mask = present_classes.to(self.device).bool().view(-1)
@@ -520,20 +749,21 @@ class Agent:
         absent = ~mask[: self.action_dim]
         if not bool(absent.any().item()):
             return
-        # Dueling Q-network stores class-specific rows in advantage_fc2.
-        layer = getattr(self.value_net_main, "advantage_fc2", None)
-        if layer is not None:
-            if layer.weight.grad is not None:
-                layer.weight.grad[absent] = 0.0
-            if layer.bias is not None and layer.bias.grad is not None:
-                layer.bias.grad[absent] = 0.0
-        # The student output head is also protected from local one-class overwrite.
-        student_head = getattr(self.student_model, "head", None)
-        if student_head is not None:
-            if student_head.weight.grad is not None:
-                student_head.weight.grad[absent] = 0.0
-            if student_head.bias is not None and student_head.bias.grad is not None:
-                student_head.bias.grad[absent] = 0.0
+        if target in {"teacher", "both"}:
+            # Dueling Q-network stores class-specific rows in advantage_fc2.
+            layer = getattr(self.value_net_main, "advantage_fc2", None)
+            if layer is not None:
+                if layer.weight.grad is not None:
+                    layer.weight.grad[absent] = 0.0
+                if layer.bias is not None and layer.bias.grad is not None:
+                    layer.bias.grad[absent] = 0.0
+        if target in {"student", "both"}:
+            student_head = getattr(self.student_model, "head", None)
+            if student_head is not None:
+                if student_head.weight.grad is not None:
+                    student_head.weight.grad[absent] = 0.0
+                if student_head.bias is not None and student_head.bias.grad is not None:
+                    student_head.bias.grad[absent] = 0.0
 
     def _build_prototype_features(
         self,

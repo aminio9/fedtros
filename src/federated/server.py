@@ -253,13 +253,17 @@ class DKDFedOSStrategy(FedAvg):
             OmegaConf.select(cfg, "strategy.monitor_path", default="outputs/dkd_fedos_monitoring.jsonl")
         )
         self.monitor_path.parent.mkdir(parents=True, exist_ok=True)
+        self.min_reliable_samples = float(
+            OmegaConf.select(cfg, "strategy.min_reliable_samples", default=0.0)
+        )
         self.global_student_parameters = ndarrays_to_parameters(GLOBAL_AGENT_REF.get_student_parameters())
         self.momentum: list[np.ndarray] | None = None
         logger.info(
-            "DKD-FedOS configured | student_layers=%d server_lr=%.3f momentum=%.3f",
+            "DKD-FedOS configured | student_layers=%d server_lr=%.3f momentum=%.3f min_reliable_samples=%.1f",
             len(GLOBAL_AGENT_REF.get_student_parameters()),
             self.server_lr,
             self.momentum_beta,
+            self.min_reliable_samples,
         )
 
     def configure_fit(self, server_round: int, parameters: Parameters, client_manager):
@@ -311,14 +315,32 @@ class DKDFedOSStrategy(FedAvg):
             logger.warning("DKD-FedOS round=%d has no usable client updates", server_round)
             return self.global_student_parameters, {}
 
+        reliable_records = [
+            record for record in records if float(record["num_examples"]) >= self.min_reliable_samples
+        ]
+        excluded_records = [
+            record for record in records if float(record["num_examples"]) < self.min_reliable_samples
+        ]
+        if not reliable_records:
+            logger.warning(
+                "DKD-FedOS round=%d has no clients above min_reliable_samples=%.1f; using all updates.",
+                server_round,
+                self.min_reliable_samples,
+            )
+            reliable_records = records
+            excluded_records = []
+
         base = parameters_to_ndarrays(self.global_student_parameters)
         pseudo_gradients = []
         grad_norms = []
-        for record in records:
+        normalized_grad_norms = []
+        for record in reliable_records:
             grad = [base_layer - local_layer for base_layer, local_layer in zip(base, record["weights"], strict=True)]
             norm = self._weight_list_norm(grad)
             grad_norms.append(norm)
-            pseudo_gradients.append([layer / max(norm, EPS) for layer in grad])
+            normalized = [layer / max(norm, EPS) for layer in grad]
+            normalized_grad_norms.append(self._weight_list_norm(normalized))
+            pseudo_gradients.append(normalized)
 
         mean_grad = []
         for layer_idx in range(len(base)):
@@ -341,13 +363,16 @@ class DKDFedOSStrategy(FedAvg):
         self.global_student_parameters = ndarrays_to_parameters(new_weights)
         self._save_student_checkpoint(new_weights, server_round)
 
-        fit_metrics = [(int(record["num_examples"]), record["metrics"]) for record in records]
+        fit_metrics = [(int(record["num_examples"]), record["metrics"]) for record in reliable_records]
         metrics = aggregate_fit_metrics(fit_metrics)
         metrics.update(
             {
                 "dkd_fedos_clients": float(len(records)),
+                "dkd_fedos_included_clients": float(len(reliable_records)),
+                "dkd_fedos_excluded_clients": float(len(excluded_records)),
                 "dkd_fedos_mean_student_grad_norm": float(np.mean(grad_norms) if grad_norms else 0.0),
                 "dkd_fedos_max_student_grad_norm": float(np.max(grad_norms) if grad_norms else 0.0),
+                "dkd_fedos_mean_normalized_grad_norm": float(np.mean(normalized_grad_norms) if normalized_grad_norms else 0.0),
             }
         )
         self._write_monitor_event(
@@ -355,14 +380,19 @@ class DKDFedOSStrategy(FedAvg):
                 "event": "dkd_fedos_aggregation",
                 "server_round": server_round,
                 "clients": [record["cid"] for record in records],
+                "included_clients": [record["cid"] for record in reliable_records],
+                "excluded_clients": [record["cid"] for record in excluded_records],
                 "grad_norms": grad_norms,
+                "normalized_grad_norms": normalized_grad_norms,
                 "metrics": metrics,
             }
         )
         logger.info(
-            "DKD-FedOS aggregation | round=%d clients=%d mean_grad_norm=%.4f",
+            "DKD-FedOS aggregation | round=%d clients=%d included=%d excluded=%d mean_grad_norm=%.4f",
             server_round,
             len(records),
+            len(reliable_records),
+            len(excluded_records),
             metrics["dkd_fedos_mean_student_grad_norm"],
         )
         return self.global_student_parameters, metrics
