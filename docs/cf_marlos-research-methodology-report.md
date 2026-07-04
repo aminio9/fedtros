@@ -853,3 +853,8 @@ Implemented baselines:
 - [TODO] Containerize the full reproduction workflow for release and archival.
 
 The current repository is structurally ready for these extensions because the preprocessing, evaluation, federated orchestration, and artifact layers already expose the necessary interfaces.
+
+
+## DKD-FedOS addition
+
+The DKD-FedOS method is added as a fully separate baseline/proposed method for extreme non-IID and missing-class client settings. Unlike FedGPA, it does not aggregate the full CVAE-DQN teacher. The teacher remains local and personalized, while only a lightweight student classifier is globally aggregated. This design is intended for the observed failure mode where clients with very small or one-class shards collapse on shared all-class evaluation.

@@ -5,6 +5,10 @@ invoke_hydra_run() {
   poetry run python run.py "$@"
 }
 
+invoke_hydra_run "experiment=exp6" "+method=dkd_fedos" "seed=42" "tracking.run_id=e6_dkd_fedos_full_seed42"
+invoke_hydra_run "experiment=exp6" "+method=dkd_fedos" "seed=42" "training.dkd_task_weight=0.0" "experiment.method=DKD_No_Task" "tracking.run_id=e6_dkd_no_task_seed42"
+invoke_hydra_run "experiment=exp6" "+method=dkd_fedos" "seed=42" "training.dkd_lambda_kd_init=0.0" "training.dkd_lambda_kd_max=0.0" "experiment.method=DKD_No_KD" "tracking.run_id=e6_dkd_no_kd_seed42"
+invoke_hydra_run "experiment=exp6" "+method=dkd_fedos" "seed=42" "training.dkd_lambda_align_init=0.0" "training.dkd_lambda_align_max=0.0" "experiment.method=DKD_No_Align" "tracking.run_id=e6_dkd_no_align_seed42"
 invoke_hydra_run "experiment=exp6" "+method=fmrl_ava" "seed=42" "tracking.run_id=e6_full_seed42"
 invoke_hydra_run "experiment=exp6" "+method=fmrl_ava" "seed=42" "open_set.evt.enabled=false" "experiment.method=No_EVT" "tracking.run_id=e6_no_evt_seed42"
 invoke_hydra_run "experiment=exp6" "+method=fmrl_ava" "seed=42" "training.generator.enabled=false" "experiment.method=No_Generator" "tracking.run_id=e6_no_generator_seed42"

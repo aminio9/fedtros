@@ -22,3 +22,18 @@ FMRL-AVA monitoring records include selected clients, selected fraction, per-cli
 FedGPA logs include `alpha_self`, `beta_self`, prototype class coverage, and round aggregation metadata. Local-training logs now also report `Avg CE Loss`, `balanced_policy_accuracy`, `per_class_policy_accuracy`, and `mean_reward_weight` when class-balanced RL stabilizers are enabled.
 
 No online service is required.
+
+
+## DKD-FedOS metrics
+
+`+method=dkd_fedos` adds dynamic distillation metrics to the local training log:
+
+- `avg_dkd_task_loss`: class-balanced teacher/student task loss.
+- `avg_dkd_kd_loss`: adaptive bidirectional knowledge-distillation loss.
+- `avg_dkd_align_loss`: teacher-student feature alignment loss.
+- `dkd_lambda_kd` and `dkd_lambda_align`: adaptive auxiliary weights.
+- `dkd_temperature`: round-dependent KD temperature.
+- `dkd_agreement` and `dkd_confidence`: teacher/student prediction agreement and joint confidence.
+- `dkd_fedos_mean_student_grad_norm`: server-side normalized pseudo-gradient diagnostic.
+
+Always inspect `label_histogram` and `label_coverage` when debugging non-IID results. A client with one local class cannot learn all classes from local labels; DKD-FedOS is designed to transfer missing-class knowledge through the global student.

@@ -171,3 +171,16 @@ output, sweep, method, experiment
 All important experiment parameters are controlled by config files or explicit Hydra overrides. Missing required values fail during script startup through `src.utils.config.validate_config`.
 
 See `docs/` for the experiment protocol, plotting contract, checkpoint format, and reproducibility workflow.
+
+
+## DKD-FedOS method
+
+This repository now includes `+method=dkd_fedos`, a Sentinel-inspired dynamic knowledge-distillation strategy for extreme non-IID blockchain traffic clients. The existing CVAE-DQN agent is used as a personalized local teacher, while a compact student classifier is shared globally. The server aggregates only student models using equal-weight normalized pseudo-gradient aggregation with momentum. See `docs/dkd-fedos-implementation.md`.
+
+Example:
+
+```bash
+poetry run python run.py experiment=exp3 +method=dkd_fedos seed=42 \
+  federated.num_clients=10 federated.num_rounds=100 \
+  training.local_episodes_per_round=10 dataset.preprocessing.alpha=0.1
+```

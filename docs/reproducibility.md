@@ -36,3 +36,16 @@ Every figure and metric should be traceable to:
 poetry run python scripts/reproduce_experiment.py tracking.run_id=fmrl_alpha01_seed42 seed=42 runtime=cpu federated.num_clients=10 federated.num_rounds=100 dataset.preprocessing.alpha=0.1 dataset.preprocessing.iid=false dataset.preprocessing.output_dir=outputs/fmrl_alpha01_seed42/processed
 poetry run python scripts/plot.py run_dir=outputs/fmrl_alpha01_seed42
 ```
+
+
+## DKD-FedOS reproducibility commands
+
+Use identical client count, round count, local episodes, seed, and train/test split when comparing DKD-FedOS with FedAvg, FedProx, FedGPA, or FMRL-AVA. The main harsh non-IID command is:
+
+```bash
+poetry run python run.py experiment=exp3 +method=dkd_fedos seed=42 \
+  federated.num_clients=10 federated.num_rounds=100 \
+  training.local_episodes_per_round=10 dataset.preprocessing.alpha=0.1
+```
+
+For open-set, use `experiment=exp4` and verify that the unknown label is not included in known-class training.

@@ -10,6 +10,7 @@ from tqdm.auto import tqdm
 from src.agents.agent import Agent
 from src.agents.policy import EpsilonGreedyPolicy, EpsilonScheduler
 from src.rl.environment import BlockchainIntrusionEnv
+from src.rl.class_balance import effective_number_class_weights
 from src.rl.replay_buffer import ExperienceReplayBuffer
 
 logger = logging.getLogger("LocalTraining")
@@ -28,6 +29,8 @@ def run_local_training_round(
     global_prototype_mask: torch.Tensor | None = None,
     prototype_lambda: float = 0.0,
     prototype_feature: str = "latent_q",
+    dkd_enabled: bool = False,
+    dkd_round: int = 0,
     logger: logging.Logger | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """
@@ -50,6 +53,23 @@ def run_local_training_round(
     reward_class_weights = None
     if aux_ce_use_class_weights and hasattr(env, "get_reward_class_weights"):
         reward_class_weights = env.get_reward_class_weights(device)
+    dkd_class_weights = None
+    dkd_present_classes = None
+    if dkd_enabled:
+        dkd_class_weights = effective_number_class_weights(
+            env.all_labels_a_t.detach().cpu(),
+            int(getattr(env, "num_actions_nt", 1)),
+            beta=float(getattr(cfg_training, "dkd_class_balance_beta", 0.999)),
+            min_weight=float(getattr(cfg_training, "dkd_class_weight_min", 0.2)),
+            max_weight=float(getattr(cfg_training, "dkd_class_weight_max", 5.0)),
+            normalize=True,
+            device=device,
+        )
+        counts = torch.bincount(
+            env.all_labels_a_t.detach().cpu().long().clamp_min(0),
+            minlength=int(getattr(env, "num_actions_nt", 1)),
+        )[: int(getattr(env, "num_actions_nt", 1))]
+        dkd_present_classes = (counts > 0).to(device)
 
     # Optional deterministic seeding if cfg_training.seed exists
     base_seed = getattr(cfg_training, "seed", None)
@@ -64,6 +84,12 @@ def run_local_training_round(
     total_prox_loss = 0.0
     total_proto_loss = 0.0
     total_aux_ce_loss = 0.0
+    total_dkd_task_loss = 0.0
+    total_dkd_kd_loss = 0.0
+    total_dkd_align_loss = 0.0
+    total_dkd_agreement = 0.0
+    total_dkd_confidence = 0.0
+    total_dkd_align_score = 0.0
     total_avg_q = 0.0
     total_correct = 0
     class_correct_counts: dict[int, int] = {}
@@ -89,6 +115,9 @@ def run_local_training_round(
         episode_prox_loss = 0.0
         episode_proto_loss = 0.0
         episode_aux_ce_loss = 0.0
+        episode_dkd_task_loss = 0.0
+        episode_dkd_kd_loss = 0.0
+        episode_dkd_align_loss = 0.0
         episode_q_value = 0.0
         episode_train_steps = 0
 
@@ -149,9 +178,19 @@ def run_local_training_round(
                     aux_ce_weight=aux_ce_weight,
                     aux_ce_label_smoothing=aux_ce_label_smoothing,
                     class_weights=reward_class_weights,
+                    dkd_enabled=dkd_enabled,
+                    dkd_round=dkd_round,
+                    dkd_class_weights=dkd_class_weights,
+                    dkd_present_classes=dkd_present_classes,
                 )
                 proto_loss = float(getattr(agent, "last_prototype_loss", 0.0))
                 aux_ce_loss = float(getattr(agent, "last_aux_ce_loss", 0.0))
+                dkd_task_loss = float(getattr(agent, "last_dkd_task_loss", 0.0))
+                dkd_kd_loss = float(getattr(agent, "last_dkd_kd_loss", 0.0))
+                dkd_align_loss = float(getattr(agent, "last_dkd_align_loss", 0.0))
+                dkd_agreement = float(getattr(agent, "last_dkd_agreement", 0.0))
+                dkd_confidence = float(getattr(agent, "last_dkd_confidence", 0.0))
+                dkd_align_score = float(getattr(agent, "last_dkd_align_score", 0.0))
 
                 episode_train_steps += 1
                 episode_td_loss += td_loss
@@ -159,6 +198,9 @@ def run_local_training_round(
                 episode_prox_loss += prox_loss
                 episode_proto_loss += proto_loss
                 episode_aux_ce_loss += aux_ce_loss
+                episode_dkd_task_loss += dkd_task_loss
+                episode_dkd_kd_loss += dkd_kd_loss
+                episode_dkd_align_loss += dkd_align_loss
                 episode_q_value += avg_q
 
                 total_train_steps += 1
@@ -167,6 +209,12 @@ def run_local_training_round(
                 total_prox_loss += prox_loss
                 total_proto_loss += proto_loss
                 total_aux_ce_loss += aux_ce_loss
+                total_dkd_task_loss += dkd_task_loss
+                total_dkd_kd_loss += dkd_kd_loss
+                total_dkd_align_loss += dkd_align_loss
+                total_dkd_agreement += dkd_agreement
+                total_dkd_confidence += dkd_confidence
+                total_dkd_align_score += dkd_align_score
                 total_avg_q += avg_q
 
                 # Soft-update the target network periodically
@@ -185,15 +233,20 @@ def run_local_training_round(
         avg_ep_prox = episode_prox_loss / episode_train_steps if episode_train_steps else 0.0
         avg_ep_proto = episode_proto_loss / episode_train_steps if episode_train_steps else 0.0
         avg_ep_aux_ce = episode_aux_ce_loss / episode_train_steps if episode_train_steps else 0.0
+        avg_ep_dkd_kd = episode_dkd_kd_loss / episode_train_steps if episode_train_steps else 0.0
+        avg_ep_dkd_align = episode_dkd_align_loss / episode_train_steps if episode_train_steps else 0.0
 
         active_logger.info(
             "Episode %02d | Reward: %7.2f | Avg TD Loss: %6.4f | Avg KL Loss: %6.4f | "
-            "Avg CE Loss: %6.4f | Avg Prox Loss: %6.4f | Avg Proto Loss: %6.4f | Epsilon: %.4f",
+            "Avg CE Loss: %6.4f | Avg DKD Loss: %6.4f | Avg Align Loss: %6.4f | "
+            "Avg Prox Loss: %6.4f | Avg Proto Loss: %6.4f | Epsilon: %.4f",
             ep_idx + 1,
             episode_reward,
             avg_ep_td,
             avg_ep_kl,
             avg_ep_aux_ce,
+            avg_ep_dkd_kd,
+            avg_ep_dkd_align,
             avg_ep_prox,
             avg_ep_proto,
             epsilon_scheduler.get_epsilon(),
@@ -214,6 +267,12 @@ def run_local_training_round(
     avg_round_prox = total_prox_loss / total_train_steps if total_train_steps else 0.0
     avg_round_proto = total_proto_loss / total_train_steps if total_train_steps else 0.0
     avg_round_aux_ce = total_aux_ce_loss / total_train_steps if total_train_steps else 0.0
+    avg_round_dkd_task = total_dkd_task_loss / total_train_steps if total_train_steps else 0.0
+    avg_round_dkd_kd = total_dkd_kd_loss / total_train_steps if total_train_steps else 0.0
+    avg_round_dkd_align = total_dkd_align_loss / total_train_steps if total_train_steps else 0.0
+    avg_round_dkd_agreement = total_dkd_agreement / total_train_steps if total_train_steps else 0.0
+    avg_round_dkd_confidence = total_dkd_confidence / total_train_steps if total_train_steps else 0.0
+    avg_round_dkd_align_score = total_dkd_align_score / total_train_steps if total_train_steps else 0.0
     avg_round_q = total_avg_q / total_train_steps if total_train_steps else 0.0
     per_class_accuracy = {
         str(class_id): class_correct_counts.get(class_id, 0) / count
@@ -233,6 +292,17 @@ def run_local_training_round(
         "avg_td_loss": avg_round_td,
         "avg_kl_loss": avg_round_kl,
         "avg_aux_ce_loss": avg_round_aux_ce,
+        "aux_ce_weight": aux_ce_weight,
+        "dkd_enabled": float(bool(dkd_enabled)),
+        "avg_dkd_task_loss": avg_round_dkd_task,
+        "avg_dkd_kd_loss": avg_round_dkd_kd,
+        "avg_dkd_align_loss": avg_round_dkd_align,
+        "dkd_lambda_kd": float(getattr(agent, "dkd_lambda_kd", 0.0)),
+        "dkd_lambda_align": float(getattr(agent, "dkd_lambda_align", 0.0)),
+        "dkd_temperature": float(getattr(agent, "last_dkd_temperature", 1.0)),
+        "dkd_agreement": avg_round_dkd_agreement,
+        "dkd_confidence": avg_round_dkd_confidence,
+        "dkd_align_score": avg_round_dkd_align_score,
         "aux_ce_weight": aux_ce_weight,
         "avg_prox_loss": avg_round_prox,
         "avg_proto_loss": avg_round_proto,

@@ -259,3 +259,32 @@ This algorithm should appear because it explains how the method moves from close
 - Use Algorithm 3 in the federated optimization subsection because FMRL-AVA is the custom cooperative aggregation method.
 - Use Algorithm 4 in the open-set detection subsection.
 - Describe FedAvg and FedProx in text with their equations rather than giving them a separate algorithm block. -->
+
+## Algorithm: DKD-FedOS client update
+
+**Input:** local traffic shard `D_i`, personalized CVAE-DQN teacher `T_i`, global student `S^g`, local student `S_i`, round `r`.
+
+1. Load global student parameters into `S_i`.
+2. Compute effective-number class weights from local labels.
+3. For each local episode / mini-batch:
+   - select class/action with epsilon-greedy teacher policy;
+   - compute class-balanced reward;
+   - update teacher prior/Q modules with TD, KL, and CE terms;
+   - compute teacher logits from Q-values and student logits from `S_i`;
+   - optimize class-balanced teacher/student task loss;
+   - compute adaptive bidirectional KD loss using temperature `T_r`;
+   - align projected teacher latent-Q features with student features;
+   - update adaptive KD/alignment weights using EMA;
+   - zero class-output gradients for locally absent classes.
+4. Upload only `S_i` parameters and audit metrics.
+
+## Algorithm: DKD-FedOS server aggregation
+
+**Input:** global student `S^g`, client students `{S_i}`.
+
+1. For each client, compute pseudo-gradient `g_i = theta_S^g - theta_S^i`.
+2. Normalize `g_i` by its L2 norm.
+3. Average normalized pseudo-gradients with equal client weighting.
+4. Apply server momentum.
+5. Update global student `theta_S^g`.
+6. Broadcast the updated student in the next round.

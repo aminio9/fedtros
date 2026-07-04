@@ -10,6 +10,9 @@ from omegaconf import DictConfig
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.models.models import OpenSetQChainModelFactory, ValueNetwork
+from src.models.student import StudentIDSModel
+from src.rl.class_balance import class_balanced_cross_entropy
+from src.rl.distillation import bidirectional_kd_loss, kd_temperature, mse_cosine_alignment
 from src.utils.utils import (
     calculate_kl_divergence,
     calculate_kl_divergence_raw,
@@ -150,9 +153,40 @@ class Agent:
         else:
             self.optimizer_q_rl = adam_cls(rl_params, lr=train_cfg.lr_q_rl)
 
+        # DKD-FedOS student: lightweight globally shared classifier.
+        # It is always constructed so method switching through Hydra does not
+        # require a different Agent class, but it is trained/federated only by
+        # the dkd_fedos strategy.
+        student_hidden = list(getattr(train_cfg, "dkd_student_hidden_dims", [64, 32, 16]))
+        self.student_model = StudentIDSModel(
+            input_dim=model_factory.state_dim,
+            num_classes=model_factory.num_actions,
+            hidden_dims=student_hidden,
+        ).to(device)
+        teacher_feature_dim = int(model_factory.latent_dim) + int(model_factory.num_actions)
+        self.teacher_to_student_aligner = nn.Linear(
+            teacher_feature_dim, int(self.student_model.feature_dim)
+        ).to(device)
+        dkd_params = list(self.student_model.parameters()) + list(self.teacher_to_student_aligner.parameters())
+        dkd_lr = float(getattr(train_cfg, "dkd_student_lr", train_cfg.lr_q_rl))
+        if adam_cls is optim.Adam:
+            self.optimizer_dkd = adam_cls(dkd_params, lr=dkd_lr, foreach=False)
+        else:
+            self.optimizer_dkd = adam_cls(dkd_params, lr=dkd_lr)
+
+        self.dkd_lambda_kd = float(getattr(train_cfg, "dkd_lambda_kd_init", 0.20))
+        self.dkd_lambda_align = float(getattr(train_cfg, "dkd_lambda_align_init", 0.08))
+
         self.td_loss_fn = nn.SmoothL1Loss()
         self.last_prototype_loss = 0.0
         self.last_aux_ce_loss = 0.0
+        self.last_dkd_task_loss = 0.0
+        self.last_dkd_kd_loss = 0.0
+        self.last_dkd_align_loss = 0.0
+        self.last_dkd_temperature = 1.0
+        self.last_dkd_agreement = 0.0
+        self.last_dkd_confidence = 0.0
+        self.last_dkd_align_score = 0.0
         self._capture_proximal_reference()
         self.logger.debug("Agent initialized with Double-DQN: %s", self.use_double_dqn)
 
@@ -165,8 +199,14 @@ class Agent:
         self.value_network.to(target_device)
         if self.generation_net is not None:
             self.generation_net.to(target_device)
+        if hasattr(self, "student_model"):
+            self.student_model.to(target_device)
+        if hasattr(self, "teacher_to_student_aligner"):
+            self.teacher_to_student_aligner.to(target_device)
         self._move_optimizer_state(self.optimizer_prior, target_device)
         self._move_optimizer_state(self.optimizer_q_rl, target_device)
+        if hasattr(self, "optimizer_dkd"):
+            self._move_optimizer_state(self.optimizer_dkd, target_device)
         self.device = target_device
         return self
 
@@ -222,6 +262,10 @@ class Agent:
         aux_ce_weight: float = 0.0,
         aux_ce_label_smoothing: float = 0.0,
         class_weights: torch.Tensor | None = None,
+        dkd_enabled: bool = False,
+        dkd_round: int = 0,
+        dkd_class_weights: torch.Tensor | None = None,
+        dkd_present_classes: torch.Tensor | None = None,
     ) -> tuple[float, float, float, float]:
         """
         Performs one full training step (Prior update + RL update).
@@ -240,6 +284,13 @@ class Agent:
         proto_loss_total = torch.zeros((), device=self.device)
         self.last_prototype_loss = 0.0
         self.last_aux_ce_loss = 0.0
+        self.last_dkd_task_loss = 0.0
+        self.last_dkd_kd_loss = 0.0
+        self.last_dkd_align_loss = 0.0
+        self.last_dkd_temperature = 1.0
+        self.last_dkd_agreement = 0.0
+        self.last_dkd_confidence = 0.0
+        self.last_dkd_align_score = 0.0
 
         # ========== 1) PRIOR update: KL(q||p) using TRUE labels (Eq. 5) ==========
         self.prior_net.train()
@@ -310,7 +361,7 @@ class Agent:
         # while preserving the DQN update as the main objective.
         aux_ce_loss = torch.zeros((), device=self.device)
         if aux_ce_weight > 0.0:
-            ce_targets = true_actions_a_t.view(-1).long().clamp_(0, self.action_dim - 1)
+            ce_targets = true_actions_a_t.view(-1).long().clamp(0, self.action_dim - 1)
             ce_weights = None
             if class_weights is not None and class_weights.numel() >= self.action_dim:
                 ce_weights = class_weights.to(self.device, dtype=q_values_all.dtype)[: self.action_dim]
@@ -322,6 +373,72 @@ class Agent:
                 label_smoothing=max(aux_ce_label_smoothing, 0.0),
             )
             td_objective = td_objective + aux_ce_weight * aux_ce_loss
+
+        # DKD-FedOS: Sentinel-style dual-model local objective.  The CVAE-DQN
+        # Q-head is the personalized teacher, while the compact student carries
+        # globally shared class knowledge across non-IID clients.
+        dkd_task_loss = torch.zeros((), device=self.device)
+        dkd_kd = torch.zeros((), device=self.device)
+        dkd_align = torch.zeros((), device=self.device)
+        if dkd_enabled:
+            self.student_model.train()
+            self.teacher_to_student_aligner.train()
+            student_features, student_logits = self.student_model(states_s)
+            ce_targets = true_actions_a_t.view(-1).long().clamp(0, self.action_dim - 1)
+            cb_weights = dkd_class_weights if dkd_class_weights is not None else class_weights
+            teacher_ce = class_balanced_cross_entropy(
+                q_values_all,
+                ce_targets,
+                cb_weights,
+                label_smoothing=max(aux_ce_label_smoothing, 0.0),
+            )
+            student_ce = class_balanced_cross_entropy(
+                student_logits,
+                ce_targets,
+                cb_weights,
+                label_smoothing=max(aux_ce_label_smoothing, 0.0),
+            )
+            dkd_task_loss = 0.5 * (teacher_ce + student_ce)
+
+            temperature = kd_temperature(
+                int(dkd_round),
+                base=float(getattr(self.train_cfg, "dkd_kd_base_temperature", 3.0)),
+                minimum=float(getattr(self.train_cfg, "dkd_kd_min_temperature", 1.0)),
+                decay=float(getattr(self.train_cfg, "dkd_kd_decay", 0.95)),
+            )
+            if cb_weights is not None:
+                batch_weights = cb_weights.to(self.device, dtype=q_values_all.dtype)[ce_targets]
+                mean_weight = batch_weights.mean().detach()
+            else:
+                mean_weight = torch.ones((), device=self.device, dtype=q_values_all.dtype)
+            dkd_kd, agreement, confidence = bidirectional_kd_loss(
+                q_values_all,
+                student_logits,
+                temperature=temperature,
+                mean_class_weight=mean_weight,
+            )
+
+            teacher_features = self._teacher_distillation_features(z_now, q_values_all)
+            projected_teacher = self.teacher_to_student_aligner(teacher_features.detach())
+            dkd_align, align_score = mse_cosine_alignment(
+                projected_teacher,
+                student_features,
+                cosine_weight=float(getattr(self.train_cfg, "dkd_align_cos_weight", 0.5)),
+                mse_weight=float(getattr(self.train_cfg, "dkd_align_mse_weight", 1.0)),
+            )
+
+            self._update_dkd_lambdas(agreement=agreement, align_score=align_score, round_num=int(dkd_round))
+            task_weight = float(getattr(self.train_cfg, "dkd_task_weight", 1.0))
+            td_objective = (
+                td_objective
+                + task_weight * dkd_task_loss
+                + self.dkd_lambda_kd * dkd_kd
+                + self.dkd_lambda_align * dkd_align
+            )
+            self.last_dkd_temperature = float(temperature)
+            self.last_dkd_agreement = float(agreement)
+            self.last_dkd_confidence = float(confidence)
+            self.last_dkd_align_score = float(align_score)
         if prototype_lambda > 0.0 and global_prototypes is not None:
             proto_features = self._build_prototype_features(
                 z_now, q_values_all, prototype_feature=prototype_feature
@@ -340,19 +457,83 @@ class Agent:
             prox_loss_total = prox_loss_total + 0.5 * proximal_mu * rl_prox
             td_objective = td_objective + 0.5 * proximal_mu * rl_prox
 
-        # Optimize both recognition and main_q nets
+        # Optimize recognition/main_q plus optional DKD student/aligner.
         self.optimizer_q_rl.zero_grad()
+        if dkd_enabled:
+            self.optimizer_dkd.zero_grad()
         td_objective.backward()
+        if dkd_enabled and dkd_present_classes is not None:
+            self._protect_absent_class_rows(dkd_present_classes)
         torch.nn.utils.clip_grad_norm_(
             list(self.recognition_net.parameters()) + list(self.value_net_main.parameters()),
             max_norm=1.0,  # Common practice for DQN stability
         )
+        if dkd_enabled:
+            torch.nn.utils.clip_grad_norm_(
+                list(self.student_model.parameters()) + list(self.teacher_to_student_aligner.parameters()),
+                max_norm=1.0,
+            )
         self.optimizer_q_rl.step()
+        if dkd_enabled:
+            self.optimizer_dkd.step()
 
         avg_q = q_pred.mean().item()
         self.last_prototype_loss = float(proto_loss_total.item())
         self.last_aux_ce_loss = float(aux_ce_loss.detach().item())
+        self.last_dkd_task_loss = float(dkd_task_loss.detach().item())
+        self.last_dkd_kd_loss = float(dkd_kd.detach().item())
+        self.last_dkd_align_loss = float(dkd_align.detach().item())
         return td_loss.item(), kl_loss.item(), prox_loss_total.item(), avg_q
+
+    def _teacher_distillation_features(self, latent: torch.Tensor, q_values: torch.Tensor) -> torch.Tensor:
+        return torch.cat([F.normalize(latent, dim=1), F.normalize(q_values, dim=1)], dim=1)
+
+    def _update_dkd_lambdas(self, *, agreement: float, align_score: float, round_num: int) -> None:
+        alpha = max(0.7, 0.9 - 0.03 * float(max(round_num, 0)))
+        self.dkd_lambda_kd = (alpha * self.dkd_lambda_kd) + ((1.0 - alpha) * (1.0 - float(agreement)))
+        self.dkd_lambda_align = (alpha * self.dkd_lambda_align) + (
+            (1.0 - alpha) * (1.0 - float(align_score))
+        )
+        kd_min = float(getattr(self.train_cfg, "dkd_lambda_kd_min", 0.03))
+        kd_max = min(
+            float(getattr(self.train_cfg, "dkd_lambda_kd_max", 0.35)),
+            float(getattr(self.train_cfg, "dkd_lambda_kd_max_base", 0.18))
+            + float(getattr(self.train_cfg, "dkd_lambda_kd_max_growth", 0.02)) * float(max(round_num, 0)),
+        )
+        align_min = float(getattr(self.train_cfg, "dkd_lambda_align_min", 0.01))
+        align_max = min(
+            float(getattr(self.train_cfg, "dkd_lambda_align_max", 0.12)),
+            float(getattr(self.train_cfg, "dkd_lambda_align_max_base", 0.06))
+            + float(getattr(self.train_cfg, "dkd_lambda_align_max_growth", 0.01)) * float(max(round_num, 0)),
+        )
+        self.dkd_lambda_kd = float(np.clip(self.dkd_lambda_kd, kd_min, max(kd_min, kd_max)))
+        self.dkd_lambda_align = float(
+            np.clip(self.dkd_lambda_align, align_min, max(align_min, align_max))
+        )
+
+    def _protect_absent_class_rows(self, present_classes: torch.Tensor) -> None:
+        if not bool(getattr(self.train_cfg, "dkd_protect_absent_classes", True)):
+            return
+        mask = present_classes.to(self.device).bool().view(-1)
+        if mask.numel() < self.action_dim:
+            mask = F.pad(mask, (0, self.action_dim - mask.numel()), value=False)
+        absent = ~mask[: self.action_dim]
+        if not bool(absent.any().item()):
+            return
+        # Dueling Q-network stores class-specific rows in advantage_fc2.
+        layer = getattr(self.value_net_main, "advantage_fc2", None)
+        if layer is not None:
+            if layer.weight.grad is not None:
+                layer.weight.grad[absent] = 0.0
+            if layer.bias is not None and layer.bias.grad is not None:
+                layer.bias.grad[absent] = 0.0
+        # The student output head is also protected from local one-class overwrite.
+        student_head = getattr(self.student_model, "head", None)
+        if student_head is not None:
+            if student_head.weight.grad is not None:
+                student_head.weight.grad[absent] = 0.0
+            if student_head.bias is not None and student_head.bias.grad is not None:
+                student_head.bias.grad[absent] = 0.0
 
     def _build_prototype_features(
         self,
@@ -451,6 +632,23 @@ class Agent:
         return penalty
 
     # --- METHODS FOR FEDERATED LEARNING ---
+
+    def get_student_parameters(self) -> list[np.ndarray]:
+        """Return compact DKD-FedOS student parameters only."""
+        return [val.detach().cpu().numpy() for val in self.student_model.state_dict().values()]
+
+    def set_student_parameters(self, parameters: list[np.ndarray]) -> None:
+        """Load compact DKD-FedOS student parameters only."""
+        keys = list(self.student_model.state_dict().keys())
+        if len(parameters) != len(keys):
+            raise ValueError(
+                f"Student parameter mismatch: expected {len(keys)}, received {len(parameters)}"
+            )
+        self.student_model.load_state_dict(
+            OrderedDict(
+                zip(keys, [torch.tensor(p, device=self.device) for p in parameters], strict=True)
+            )
+        )
 
     def get_federated_parameters(self) -> list[np.ndarray]:
         """

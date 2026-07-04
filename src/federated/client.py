@@ -212,6 +212,39 @@ class FlowerClient(fl.client.NumPyClient):
         execution_device, switched = self._enter_execution_device()
         try:
             # =========================================================
+            # DKD-FedOS: Sentinel-style dynamic KD.  The client receives only
+            # the global lightweight student, trains its local CVAE-DQN teacher
+            # with student/teacher KD, then uploads only the student.
+            # =========================================================
+            if phase == "dkd_fedos":
+                self.logger.info(f"Client {self.cid} [DKD-FedOS]: Round {round_num}")
+                param_list = (
+                    parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
+                )
+                if param_list:
+                    self.agent.set_student_parameters(param_list)
+                num_steps_trained, metrics = self._perform_training_loop(
+                    proximal_mu=0.0,
+                    dkd_enabled=True,
+                    dkd_round=int(round_num) if str(round_num).isdigit() else 0,
+                )
+                metrics.setdefault("total_steps", float(num_steps_trained))
+                metrics.update(
+                    {
+                        "dkd_student_num_parameters": float(
+                            sum(p.size for p in self.agent.get_student_parameters())
+                        ),
+                        "local_num_examples": self.local_data_profile["local_num_examples"],
+                        "class_entropy": self.local_data_profile["class_entropy"],
+                        "label_coverage": self.local_data_profile["label_coverage"],
+                        "label_histogram": self.local_data_profile["label_histogram"],
+                    }
+                )
+                updated_student = self.agent.get_student_parameters()
+                num_examples = int(self.local_data_profile["local_num_examples"])
+                return updated_student, num_examples, metrics
+
+            # =========================================================
             # FedGPA: personalized model + prototype alignment
             # =========================================================
             if phase == "fedgpa":
@@ -456,6 +489,8 @@ class FlowerClient(fl.client.NumPyClient):
         global_prototype_mask: torch.Tensor | None = None,
         prototype_lambda: float = 0.0,
         prototype_feature: str = "latent_q",
+        dkd_enabled: bool = False,
+        dkd_round: int = 0,
     ) -> tuple[int, dict[str, Any]]:
         """Shared training logic for Standard, FMRL, and FedGPA modes."""
         num_steps_trained, metrics = run_local_training_round(
@@ -471,6 +506,8 @@ class FlowerClient(fl.client.NumPyClient):
             global_prototype_mask=global_prototype_mask,
             prototype_lambda=prototype_lambda,
             prototype_feature=prototype_feature,
+            dkd_enabled=dkd_enabled,
+            dkd_round=dkd_round,
             logger=self.logger,
         )
 
@@ -618,7 +655,11 @@ class FlowerClient(fl.client.NumPyClient):
             param_list = (
                 parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
             )
-            self.set_parameters(param_list)
+            if str(config.get("phase", "")).lower() == "dkd_fedos":
+                if param_list:
+                    self.agent.set_student_parameters(param_list)
+            else:
+                self.set_parameters(param_list)
 
             if self._simulation_gpu_batching and self.device.type == "cuda":
                 self._switch_runtime_device(self._simulation_rest_device)

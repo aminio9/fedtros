@@ -50,3 +50,28 @@ smoke:
   steps_per_episode: 3
   min_buffer_size: 2
   batch_size: 2
+
+# DKD-FedOS / Sentinel-style dynamic knowledge distillation defaults.
+# These are inert unless the dkd_fedos strategy activates them.
+dkd_student_hidden_dims: [64, 32, 16]
+dkd_student_lr: 0.005
+dkd_task_weight: 1.0
+dkd_kd_base_temperature: 3.0
+dkd_kd_min_temperature: 1.0
+dkd_kd_decay: 0.95
+dkd_lambda_kd_init: 0.20
+dkd_lambda_align_init: 0.08
+dkd_lambda_kd_min: 0.03
+dkd_lambda_kd_max: 0.35
+dkd_lambda_kd_max_base: 0.18
+dkd_lambda_kd_max_growth: 0.02
+dkd_lambda_align_min: 0.01
+dkd_lambda_align_max: 0.12
+dkd_lambda_align_max_base: 0.06
+dkd_lambda_align_max_growth: 0.01
+dkd_align_mse_weight: 1.0
+dkd_align_cos_weight: 0.5
+dkd_class_balance_beta: 0.999
+dkd_class_weight_min: 0.2
+dkd_class_weight_max: 5.0
+dkd_protect_absent_classes: true

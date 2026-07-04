@@ -233,6 +233,193 @@ class SaveModelFedProx(FedProx):
         return aggregated_parameters, aggregated_metrics
 
 
+class DKDFedOSStrategy(FedAvg):
+    """Sentinel-style dynamic-KD strategy for the CVAE-DQN IDS stack.
+
+    Only the compact student model is sent to and aggregated by the server.
+    The CVAE-DQN teacher remains local for personalization and open-set
+    reconstruction, preventing extreme non-IID clients from overwriting a shared
+    global teacher with one-class local evidence.
+    """
+
+    def __init__(self, cfg: DictConfig, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if GLOBAL_AGENT_REF is None:
+            raise RuntimeError("DKD-FedOS needs a server Agent reference with a student model.")
+        self.cfg = cfg
+        self.server_lr = float(OmegaConf.select(cfg, "strategy.server_lr", default=1.0))
+        self.momentum_beta = float(OmegaConf.select(cfg, "strategy.server_momentum", default=0.9))
+        self.monitor_path = _resolve_path(
+            OmegaConf.select(cfg, "strategy.monitor_path", default="outputs/dkd_fedos_monitoring.jsonl")
+        )
+        self.monitor_path.parent.mkdir(parents=True, exist_ok=True)
+        self.global_student_parameters = ndarrays_to_parameters(GLOBAL_AGENT_REF.get_student_parameters())
+        self.momentum: list[np.ndarray] | None = None
+        logger.info(
+            "DKD-FedOS configured | student_layers=%d server_lr=%.3f momentum=%.3f",
+            len(GLOBAL_AGENT_REF.get_student_parameters()),
+            self.server_lr,
+            self.momentum_beta,
+        )
+
+    def configure_fit(self, server_round: int, parameters: Parameters, client_manager):
+        _ = parameters
+        clients = client_manager.sample(
+            num_clients=self.min_fit_clients,
+            min_num_clients=self.min_fit_clients,
+        )
+        fit_ins = FitIns(
+            self.global_student_parameters,
+            {"server_round": server_round, "phase": "dkd_fedos"},
+        )
+        logger.info("DKD-FedOS round=%d sampled=%d", server_round, len(clients))
+        return [(client, fit_ins) for client in clients]
+
+    def configure_evaluate(self, server_round: int, parameters: Parameters, client_manager):
+        _ = parameters
+        if self.fraction_evaluate == 0.0:
+            return []
+        clients = client_manager.sample(
+            num_clients=self.min_evaluate_clients,
+            min_num_clients=self.min_evaluate_clients,
+        )
+        evaluate_ins = EvaluateIns(
+            self.global_student_parameters,
+            {"server_round": server_round, "phase": "dkd_fedos"},
+        )
+        logger.info("DKD-FedOS evaluation round=%d clients=%d", server_round, len(clients))
+        return [(client, evaluate_ins) for client in clients]
+
+    def aggregate_fit(self, server_round: int, results, failures):
+        if failures:
+            self._log_failures("DKD-FedOS", failures)
+        records = []
+        for client, fit_res in results:
+            weights = parameters_to_ndarrays(fit_res.parameters)
+            if not weights:
+                logger.warning("DKD-FedOS client %s returned empty student weights; skipping", client.cid)
+                continue
+            records.append(
+                {
+                    "cid": getattr(client, "cid", "?"),
+                    "weights": weights,
+                    "num_examples": float(fit_res.num_examples),
+                    "metrics": dict(fit_res.metrics),
+                }
+            )
+        if not records:
+            logger.warning("DKD-FedOS round=%d has no usable client updates", server_round)
+            return self.global_student_parameters, {}
+
+        base = parameters_to_ndarrays(self.global_student_parameters)
+        pseudo_gradients = []
+        grad_norms = []
+        for record in records:
+            grad = [base_layer - local_layer for base_layer, local_layer in zip(base, record["weights"], strict=True)]
+            norm = self._weight_list_norm(grad)
+            grad_norms.append(norm)
+            pseudo_gradients.append([layer / max(norm, EPS) for layer in grad])
+
+        mean_grad = []
+        for layer_idx in range(len(base)):
+            layer_sum = np.zeros_like(base[layer_idx])
+            for grad in pseudo_gradients:
+                layer_sum += grad[layer_idx]
+            mean_grad.append(layer_sum / max(len(pseudo_gradients), 1))
+
+        if self.momentum is None:
+            self.momentum = [np.zeros_like(layer) for layer in mean_grad]
+        beta = float(np.clip(self.momentum_beta, 0.0, 0.999))
+        self.momentum = [
+            (beta * old) + ((1.0 - beta) * grad)
+            for old, grad in zip(self.momentum, mean_grad, strict=True)
+        ]
+        new_weights = [
+            base_layer - (self.server_lr * mom_layer)
+            for base_layer, mom_layer in zip(base, self.momentum, strict=True)
+        ]
+        self.global_student_parameters = ndarrays_to_parameters(new_weights)
+        self._save_student_checkpoint(new_weights, server_round)
+
+        fit_metrics = [(int(record["num_examples"]), record["metrics"]) for record in records]
+        metrics = aggregate_fit_metrics(fit_metrics)
+        metrics.update(
+            {
+                "dkd_fedos_clients": float(len(records)),
+                "dkd_fedos_mean_student_grad_norm": float(np.mean(grad_norms) if grad_norms else 0.0),
+                "dkd_fedos_max_student_grad_norm": float(np.max(grad_norms) if grad_norms else 0.0),
+            }
+        )
+        self._write_monitor_event(
+            {
+                "event": "dkd_fedos_aggregation",
+                "server_round": server_round,
+                "clients": [record["cid"] for record in records],
+                "grad_norms": grad_norms,
+                "metrics": metrics,
+            }
+        )
+        logger.info(
+            "DKD-FedOS aggregation | round=%d clients=%d mean_grad_norm=%.4f",
+            server_round,
+            len(records),
+            metrics["dkd_fedos_mean_student_grad_norm"],
+        )
+        return self.global_student_parameters, metrics
+
+    def _save_student_checkpoint(self, weights: list[np.ndarray], round_num: int) -> None:
+        model_dir = _resolve_path(self.cfg.checkpointing.dir)
+        model_dir.mkdir(parents=True, exist_ok=True)
+        if GLOBAL_AGENT_REF is None:
+            return
+        GLOBAL_AGENT_REF.set_student_parameters(weights)
+        checkpoint = {
+            "round": round_num,
+            "epoch": round_num,
+            "global_step": round_num,
+            "method": "dkd_fedos",
+            "metrics": {"federated/round": float(round_num)},
+            "config": OmegaConf.to_container(self.cfg, resolve=True),
+            "student_model": GLOBAL_AGENT_REF.student_model.state_dict(),
+        }
+        round_path = model_dir / f"dkd_fedos_student_round_{round_num:04d}.pt"
+        torch.save(checkpoint, round_path)
+        torch.save(checkpoint, model_dir / "dkd_fedos_student_latest.pt")
+        logger.info("Saved DKD-FedOS student checkpoint to %s", round_path)
+
+    @staticmethod
+    def _weight_list_norm(weights: list[np.ndarray]) -> float:
+        total = 0.0
+        for layer in weights:
+            layer64 = layer.astype(np.float64, copy=False)
+            total += float(np.sum(layer64 * layer64))
+        return float(np.sqrt(max(total, 0.0)))
+
+    def _write_monitor_event(self, event: dict[str, Any]) -> None:
+        try:
+            with open(self.monitor_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(event, sort_keys=True, default=str) + "\n")
+        except Exception as exc:
+            logger.warning("Failed to write DKD-FedOS monitor event: %s", exc)
+
+    @staticmethod
+    def _log_failures(context: str, failures) -> None:
+        for idx, failure in enumerate(failures, start=1):
+            if isinstance(failure, BaseException):
+                logger.warning("%s failure %d: %r", context, idx, failure)
+            elif isinstance(failure, tuple) and len(failure) == 2:
+                client, result = failure
+                logger.warning(
+                    "%s failure %d | client=%s | result=%r",
+                    context,
+                    idx,
+                    getattr(client, "cid", "?"),
+                    result,
+                )
+            else:
+                logger.warning("%s failure %d: %r", context, idx, failure)
+
+
 class FedGPAStrategy(FedAvg):
     """
     FedGPA for the CVAE-DQN/open-set stack.
@@ -1500,6 +1687,14 @@ def get_strategy(cfg: DictConfig) -> Strategy:
             "--- Strategy: FMRL-AVA (Adaptive Vector-Aligned Aggregation) with Model Saving ---"
         )
         return FMRLAdaptiveVectorAlignedAggregationStrategy(cfg=cfg, **args)
+
+    if strat_name == "dkd_fedos":
+        logger.info("--- Strategy: DKD-FedOS (dynamic KD student aggregation) with Model Saving ---")
+        return DKDFedOSStrategy(
+            cfg=cfg,
+            fit_metrics_aggregation_fn=aggregate_fit_metrics,
+            **args,
+        )
 
     if strat_name == "fedgpa":
         logger.info("--- Strategy: FedGPA (prototype-personalized aggregation) with Model Saving ---")
