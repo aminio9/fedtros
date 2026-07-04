@@ -1,10 +1,32 @@
 # @package _global_
 experiment:
   method: FedAvg
+
+# Clean FedAvg baseline: no cross-round local optimizer/replay/epsilon memory,
+# no duplicated client-side shared-test evaluation, and no generator/open-set
+# training unless explicitly overridden for a dedicated open-set experiment.
 federated:
   strategy:
     name: fedavg
     aggregation_strategy: fedavg
   server:
     proximal_mu: 0.0
+    fraction_evaluate: 0.0
+  central_evaluate:
+    enabled: true
+    data_path: ${paths.validation_data}
+    prefix: val
 
+training:
+  reset_optimizer_each_round: true
+  reset_replay_buffer_each_round: true
+  reset_epsilon_each_round: true
+  round_aware_seed: true
+  evaluate_after_local_fit: false
+  aux_ce_weight: 0.0
+  generator:
+    enabled: false
+
+checkpointing:
+  monitor_metric: val/macro_f1
+  monitor_mode: max

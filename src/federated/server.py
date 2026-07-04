@@ -2,6 +2,7 @@ import csv
 import json
 import logging
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score
+from torch.utils.data import DataLoader, TensorDataset
 from flwr.common import (
     EvaluateIns,
     FitIns,
@@ -66,6 +69,171 @@ def _resolve_path(path_like) -> Path:
     return path if path.is_absolute() else (_project_root() / path)
 
 
+def _load_tensor_dataset_for_server(path: Path) -> tuple[torch.Tensor, torch.Tensor]:
+    data = torch.load(path, map_location="cpu", weights_only=True)
+    if isinstance(data, dict):
+        if "features" in data and "labels" in data:
+            return data["features"].float(), data["labels"].long()
+        if "X" in data and "y" in data:
+            return data["X"].float(), data["y"].long()
+    if isinstance(data, (tuple, list)) and len(data) >= 2:
+        return data[0].float(), data[1].long()
+    raise ValueError(f"Unsupported tensor dataset format in {path}")
+
+
+def _metric_is_better(new_value: float, old_value: float | None, mode: str) -> bool:
+    if old_value is None:
+        return True
+    mode = str(mode or "max").lower()
+    return new_value < old_value if mode == "min" else new_value > old_value
+
+
+def _update_best_checkpoint(
+    *,
+    cfg: DictConfig,
+    round_num: int,
+    metric_name: str,
+    metric_value: float,
+    candidate_checkpoint: dict[str, Any] | None = None,
+) -> None:
+    """Promote the current checkpoint when the monitor metric improves."""
+    best_path = _resolve_path(cfg.checkpointing.best_model_path)
+    latest_path = _resolve_path(cfg.checkpointing.latest_checkpoint_path)
+    metadata_path = best_path.with_suffix(best_path.suffix + ".metrics.json")
+    mode = str(OmegaConf.select(cfg, "checkpointing.monitor_mode", default="max"))
+
+    previous_value: float | None = None
+    if metadata_path.exists():
+        try:
+            previous = json.loads(metadata_path.read_text(encoding="utf-8"))
+            previous_value = float(previous.get("metric_value"))
+        except Exception:
+            previous_value = None
+
+    if not _metric_is_better(float(metric_value), previous_value, mode):
+        return
+
+    best_path.parent.mkdir(parents=True, exist_ok=True)
+    if candidate_checkpoint is not None:
+        torch.save(candidate_checkpoint, best_path)
+    elif latest_path.exists():
+        shutil.copy2(latest_path, best_path)
+    else:
+        logger.warning(
+            "Cannot update best checkpoint; latest checkpoint missing: %s", latest_path
+        )
+        return
+
+    metadata = {
+        "round": int(round_num),
+        "metric_name": str(metric_name),
+        "metric_value": float(metric_value),
+        "monitor_mode": mode,
+    }
+    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
+    logger.info(
+        "Updated best checkpoint | round=%s | %s=%.6f | path=%s",
+        round_num,
+        metric_name,
+        float(metric_value),
+        best_path,
+    )
+
+
+def make_central_evaluate_fn(cfg: DictConfig, device: torch.device):
+    """Build a server-side validation evaluator for clean FedAvg/FedProx.
+
+    This replaces duplicated client-side shared-test evaluation.  It evaluates
+    the aggregated global model once per round on validation.pt by default.
+    """
+    if not bool(OmegaConf.select(cfg, "federated.central_evaluate.enabled", default=False)):
+        return None
+
+    eval_path_value = OmegaConf.select(
+        cfg,
+        "federated.central_evaluate.data_path",
+        default=OmegaConf.select(cfg, "paths.validation_data", default=None),
+    )
+    if not eval_path_value:
+        logger.warning("Central evaluation requested but no data path was configured.")
+        return None
+
+    eval_path = _resolve_path(eval_path_value)
+    if not eval_path.exists():
+        logger.warning("Central evaluation data missing: %s", eval_path)
+        return None
+
+    features, labels = _load_tensor_dataset_for_server(eval_path)
+    batch_size = int(OmegaConf.select(cfg, "evaluation.batch_size", default=512))
+    loader = DataLoader(TensorDataset(features, labels), batch_size=batch_size, shuffle=False)
+    eval_agent = Agent(OpenSetQChainModelFactory(cfg.model), cfg.training, device=device)
+    prefix = str(OmegaConf.select(cfg, "federated.central_evaluate.prefix", default="val"))
+    monitor_metric = str(OmegaConf.select(cfg, "checkpointing.monitor_metric", default="val/macro_f1"))
+
+    logger.info(
+        "Central evaluation enabled | data=%s | samples=%d | prefix=%s | monitor=%s",
+        eval_path,
+        int(labels.numel()),
+        prefix,
+        monitor_metric,
+    )
+
+    def evaluate(server_round: int, parameters, config: dict[str, Scalar]):
+        _ = config
+        eval_agent.set_federated_parameters(list(parameters), hard_target_update=True)
+        eval_agent.prior_net.eval()
+        eval_agent.value_net_main.eval()
+        total_loss = 0.0
+        total = 0
+        y_true: list[int] = []
+        y_pred: list[int] = []
+
+        with torch.no_grad():
+            for batch_features, batch_labels in loader:
+                batch_features = batch_features.to(device).float()
+                batch_labels = batch_labels.to(device).long()
+                mu, _ = eval_agent.prior_net(batch_features)
+                logits = eval_agent.value_net_main(mu, batch_features)
+                loss = F.cross_entropy(logits, batch_labels, reduction="sum")
+                preds = logits.argmax(dim=1)
+                total_loss += float(loss.item())
+                total += int(batch_labels.numel())
+                y_true.extend(batch_labels.cpu().tolist())
+                y_pred.extend(preds.cpu().tolist())
+
+        avg_loss = total_loss / max(total, 1)
+        accuracy = float(accuracy_score(y_true, y_pred)) if y_true else 0.0
+        balanced = float(balanced_accuracy_score(y_true, y_pred)) if y_true else 0.0
+        macro_f1 = float(f1_score(y_true, y_pred, average="macro", zero_division=0)) if y_true else 0.0
+        metrics: dict[str, Scalar] = {
+            f"{prefix}/loss": float(avg_loss),
+            f"{prefix}/accuracy": accuracy,
+            f"{prefix}/balanced_accuracy": balanced,
+            f"{prefix}/macro_f1": macro_f1,
+            f"{prefix}/num_examples": int(total),
+            "central_evaluate": 1.0,
+        }
+        logger.info(
+            "Central %s evaluation | round=%s | loss=%.6f | acc=%.4f | bal_acc=%.4f | macro_f1=%.4f",
+            prefix,
+            server_round,
+            avg_loss,
+            accuracy,
+            balanced,
+            macro_f1,
+        )
+        if bool(cfg.checkpointing.save_best) and monitor_metric in metrics:
+            _update_best_checkpoint(
+                cfg=cfg,
+                round_num=int(server_round),
+                metric_name=monitor_metric,
+                metric_value=float(metrics[monitor_metric]),
+            )
+        return float(avg_loss), metrics
+
+    return evaluate
+
+
 def init_global_agent_ref(cfg: DictConfig, device: torch.device):
     """
     Initialize a dummy Agent on the server.
@@ -94,7 +262,10 @@ def init_global_agent_ref(cfg: DictConfig, device: torch.device):
 
 
 def save_global_model(
-    parameters: Parameters | list[np.ndarray], round_num: int, cfg: DictConfig
+    parameters: Parameters | list[np.ndarray],
+    round_num: int,
+    cfg: DictConfig,
+    metrics: dict[str, Scalar] | None = None,
 ) -> None:
     """
     Universal function to save the global model state.
@@ -121,7 +292,7 @@ def save_global_model(
             "round": round_num,
             "epoch": round_num,
             "global_step": round_num,
-            "metrics": {"federated/round": float(round_num)},
+            "metrics": {"federated/round": float(round_num), **dict(metrics or {})},
             "config": OmegaConf.to_container(cfg, resolve=True),
             "prior_net": GLOBAL_AGENT_REF.prior_net.state_dict(),
             "recognition_net": GLOBAL_AGENT_REF.recognition_net.state_dict(),
@@ -140,9 +311,23 @@ def save_global_model(
         torch.save(checkpoint, round_path)
         torch.save(checkpoint, model_dir / "global_model_latest.pt")
         torch.save(checkpoint, _resolve_path(cfg.checkpointing.latest_checkpoint_path))
+        # latest_checkpoint.pt is the canonical final FedAvg/FedProx model.
+        # best_model.pt is updated by centralized validation when enabled; if no
+        # monitor metric exists, keep it synced to latest rather than freezing
+        # the first round forever.
         if bool(cfg.checkpointing.save_best):
             best_path = _resolve_path(cfg.checkpointing.best_model_path)
-            if not best_path.exists():
+            monitor_metric = str(OmegaConf.select(cfg, "checkpointing.monitor_metric", default=""))
+            has_monitor_metric = bool(monitor_metric and metrics and monitor_metric in metrics)
+            if has_monitor_metric:
+                _update_best_checkpoint(
+                    candidate_checkpoint=checkpoint,
+                    cfg=cfg,
+                    round_num=round_num,
+                    metric_name=monitor_metric,
+                    metric_value=float(metrics[monitor_metric]),
+                )
+            elif not bool(OmegaConf.select(cfg, "federated.central_evaluate.enabled", default=False)):
                 torch.save(checkpoint, best_path)
 
         metrics_path = model_dir / "federated_round_metrics.csv"
@@ -206,7 +391,9 @@ class SaveModelFedAvg(FedAvg):
 
         if aggregated_parameters is not None:
             # Save the model
-            save_global_model(aggregated_parameters, server_round, self.cfg)
+            save_global_model(
+                aggregated_parameters, server_round, self.cfg, metrics=dict(aggregated_metrics)
+            )
 
         return aggregated_parameters, aggregated_metrics
 
@@ -228,7 +415,9 @@ class SaveModelFedProx(FedProx):
         )
 
         if aggregated_parameters is not None:
-            save_global_model(aggregated_parameters, server_round, self.cfg)
+            save_global_model(
+                aggregated_parameters, server_round, self.cfg, metrics=dict(aggregated_metrics)
+            )
 
         return aggregated_parameters, aggregated_metrics
 
@@ -1757,6 +1946,7 @@ def get_strategy(cfg: DictConfig) -> Strategy:
         get_effective_num_rounds(cfg),
     )
 
+    central_evaluate_fn = make_central_evaluate_fn(cfg, device)
     args = dict(
         fraction_fit=cfg.server.fraction_fit,
         fraction_evaluate=cfg.server.fraction_evaluate,
@@ -1765,6 +1955,7 @@ def get_strategy(cfg: DictConfig) -> Strategy:
         min_available_clients=cfg.server.min_available_clients,
         initial_parameters=_initial_parameters_from_checkpoint(cfg, device),
         on_fit_config_fn=fit_config_fn,
+        evaluate_fn=central_evaluate_fn,
         evaluate_metrics_aggregation_fn=aggregate_evaluate_metrics,
     )
 

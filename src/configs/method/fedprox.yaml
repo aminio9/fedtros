@@ -1,10 +1,31 @@
 # @package _global_
 experiment:
   method: FedProx
+
+# Clean FedProx baseline: identical to clean FedAvg except for the proximal
+# penalty in the local client objective.
 federated:
   strategy:
     name: fedprox
     aggregation_strategy: fedprox
   server:
     proximal_mu: 0.01
+    fraction_evaluate: 0.0
+  central_evaluate:
+    enabled: true
+    data_path: ${paths.validation_data}
+    prefix: val
 
+training:
+  reset_optimizer_each_round: true
+  reset_replay_buffer_each_round: true
+  reset_epsilon_each_round: true
+  round_aware_seed: true
+  evaluate_after_local_fit: false
+  aux_ce_weight: 0.0
+  generator:
+    enabled: false
+
+checkpointing:
+  monitor_metric: val/macro_f1
+  monitor_mode: max

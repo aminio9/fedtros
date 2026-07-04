@@ -240,6 +240,33 @@ class Agent:
                         item.to(device) if torch.is_tensor(item) else item for item in value
                     )
 
+    @staticmethod
+    def _is_directml_device(device: torch.device) -> bool:
+        return device.type in {"dml", "directml", "privateuseone"}
+
+    def _new_optimizer(self, params, lr: float) -> optim.Optimizer:
+        """Create a fresh optimizer with no carried momentum/state."""
+        if self._is_directml_device(self.device):
+            return DirectMLAdam(params, lr=float(lr))
+        return optim.Adam(params, lr=float(lr), foreach=False)
+
+    def reset_federated_optimizers(self) -> None:
+        """Reset FedAvg/FedProx local optimizers between communication rounds."""
+        self.optimizer_prior = self._new_optimizer(
+            self.prior_net.parameters(), float(self.train_cfg.lr_prior)
+        )
+        rl_params = list(self.recognition_net.parameters()) + list(
+            self.value_net_main.parameters()
+        )
+        self.optimizer_q_rl = self._new_optimizer(
+            rl_params, float(self.train_cfg.lr_q_rl)
+        )
+        self.logger.info(
+            "Reset federated local optimizers | lr_prior=%.6g | lr_q_rl=%.6g",
+            float(self.train_cfg.lr_prior),
+            float(self.train_cfg.lr_q_rl),
+        )
+
     @torch.no_grad()
     def _bootstrap_target(self, next_states_s: torch.Tensor) -> torch.Tensor:
         """

@@ -21,6 +21,14 @@ epsilon_end: 0.01
 epsilon_decay_rate: 0.95
 prior_kl_raw: false
 
+# Clean FedAvg/FedProx baseline controls. Defaults are conservative so custom
+# methods keep their prior behavior unless their method config enables these.
+reset_optimizer_each_round: false
+reset_replay_buffer_each_round: false
+reset_epsilon_each_round: false
+round_aware_seed: false
+evaluate_after_local_fit: true
+
 # RL reward shaping. The default keeps old +1/-1 behavior so baselines stay comparable.
 # FedGPA overrides this to class_balanced for non-IID/minority-class stability.
 reward_mode: symmetric        # symmetric | class_balanced

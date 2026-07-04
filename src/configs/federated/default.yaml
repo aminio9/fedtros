@@ -8,6 +8,10 @@ client_resources:
   num_gpus: ${runtime.client_num_gpus}
 client_id: 1
 client_data_path: ${dataset.preprocessing.output_dir}/client_${federated.client_id}_train.pt
+central_evaluate:
+  enabled: false
+  data_path: ${paths.validation_data}
+  prefix: val
 server:
   address: 127.0.0.1:8090
   num_rounds: ${federated.num_rounds}

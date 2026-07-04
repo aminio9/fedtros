@@ -293,7 +293,12 @@ class FlowerClient(fl.client.NumPyClient):
                     parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
                 )
                 self.set_parameters(param_list)
-                num_steps_trained, metrics = self._perform_training_loop(proximal_mu=proximal_mu)
+                reset_metrics = self._prepare_clean_federated_baseline_round(round_num)
+                num_steps_trained, metrics = self._perform_training_loop(
+                    proximal_mu=proximal_mu,
+                    round_num=int(round_num) if str(round_num).isdigit() else 0,
+                )
+                metrics.update(reset_metrics)
                 metrics.setdefault("total_steps", float(num_steps_trained))
                 updated_params = self.agent.get_federated_parameters()
                 num_examples = int(self.local_data_profile["local_num_examples"])
@@ -507,6 +512,47 @@ class FlowerClient(fl.client.NumPyClient):
             "fedgpa_num_classes": float(len(prototypes)),
         }
 
+    def _prepare_clean_federated_baseline_round(self, round_num: Any) -> dict[str, float]:
+        """Reset state that must not leak across clean FedAvg/FedProx rounds."""
+        strategy_name = str(self.cfg.strategy.name).lower()
+        if strategy_name not in {"fedavg", "fedprox"}:
+            return {}
+
+        training_cfg = self.cfg.training
+        reset_optimizer = bool(getattr(training_cfg, "reset_optimizer_each_round", False))
+        reset_buffer = bool(getattr(training_cfg, "reset_replay_buffer_each_round", False))
+        reset_epsilon = bool(getattr(training_cfg, "reset_epsilon_each_round", False))
+        old_buffer_size = len(self.buffer)
+
+        if reset_optimizer:
+            self.agent.reset_federated_optimizers()
+        if reset_buffer:
+            self.buffer = ExperienceReplayBuffer(int(training_cfg.replay_buffer_size))
+        if reset_epsilon:
+            self.epsilon_scheduler = EpsilonScheduler(training_cfg)
+
+        self.logger.info(
+            "Client %s clean %s round %s reset policy | optimizer=%s | replay_buffer=%s "
+            "old_buffer=%d new_buffer=%d | epsilon=%s start=%.4f",
+            self.cid,
+            strategy_name,
+            round_num,
+            reset_optimizer,
+            reset_buffer,
+            old_buffer_size,
+            len(self.buffer),
+            reset_epsilon,
+            float(self.epsilon_scheduler.get_epsilon()),
+        )
+        return {
+            "clean_baseline": 1.0,
+            "optimizer_reset_each_round": float(reset_optimizer),
+            "replay_buffer_reset_each_round": float(reset_buffer),
+            "epsilon_reset_each_round": float(reset_epsilon),
+            "replay_buffer_size_before_reset": float(old_buffer_size),
+            "replay_buffer_size_after_reset": float(len(self.buffer)),
+        }
+
     def _perform_training_loop(
         self,
         proximal_mu: float = 0.0,
@@ -516,6 +562,7 @@ class FlowerClient(fl.client.NumPyClient):
         prototype_feature: str = "latent_q",
         dkd_enabled: bool = False,
         dkd_round: int = 0,
+        round_num: int = 0,
     ) -> tuple[int, dict[str, Any]]:
         """Shared training logic for Standard, FMRL, and FedGPA modes."""
         num_steps_trained, metrics = run_local_training_round(
@@ -533,6 +580,8 @@ class FlowerClient(fl.client.NumPyClient):
             prototype_feature=prototype_feature,
             dkd_enabled=dkd_enabled,
             dkd_round=dkd_round,
+            round_num=round_num,
+            client_id=self.cid,
             logger=self.logger,
         )
 
@@ -558,8 +607,13 @@ class FlowerClient(fl.client.NumPyClient):
         if self._simulation_gpu_batching and self.device.type == "cuda":
             self._switch_runtime_device(self._simulation_rest_device)
 
-        # Optional Local Eval
-        self._run_local_eval_logic(metrics, "LOCAL")
+        # Optional Local Eval.  Clean FedAvg/FedProx disables this by default
+        # because all clients otherwise evaluate the same shared test tensor and
+        # the server aggregates duplicated test metrics as if they were local.
+        if bool(getattr(self.cfg.training, "evaluate_after_local_fit", True)):
+            self._run_local_eval_logic(metrics, "LOCAL")
+        else:
+            metrics["local_fit_eval_enabled"] = 0.0
         return num_steps_trained, metrics
 
     def _calculate_audit_signals(self) -> dict[str, Any]:
