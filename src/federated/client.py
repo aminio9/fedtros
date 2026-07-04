@@ -293,11 +293,23 @@ class FlowerClient(fl.client.NumPyClient):
                     parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
                 )
                 self.set_parameters(param_list)
+                round_index = int(round_num) if str(round_num).isdigit() else 0
+
+                metrics: dict[str, Any] = {}
+                if bool(getattr(self.cfg.training, "evaluate_before_local_fit", False)):
+                    self._run_standard_eval_logic(
+                        metrics,
+                        round_index=round_index,
+                        report_prefix="LOCAL_BEFORE_TRAIN",
+                        metric_namespace="local_before",
+                    )
+
                 reset_metrics = self._prepare_clean_federated_baseline_round(round_num)
-                num_steps_trained, metrics = self._perform_training_loop(
+                num_steps_trained, train_metrics = self._perform_training_loop(
                     proximal_mu=proximal_mu,
-                    round_num=int(round_num) if str(round_num).isdigit() else 0,
+                    round_num=round_index,
                 )
+                metrics.update(train_metrics)
                 metrics.update(reset_metrics)
                 metrics.setdefault("total_steps", float(num_steps_trained))
                 updated_params = self.agent.get_federated_parameters()
@@ -607,11 +619,19 @@ class FlowerClient(fl.client.NumPyClient):
         if self._simulation_gpu_batching and self.device.type == "cuda":
             self._switch_runtime_device(self._simulation_rest_device)
 
-        # Optional Local Eval.  Clean FedAvg/FedProx disables this by default
-        # because all clients otherwise evaluate the same shared test tensor and
-        # the server aggregates duplicated test metrics as if they were local.
+        # Optional local evaluation after local training, before server aggregation.
+        # For FedAvg/FedProx this uses the client's own held-out local test file
+        # when preprocessing generated one; it no longer prefers the shared test.
         if bool(getattr(self.cfg.training, "evaluate_after_local_fit", True)):
-            self._run_local_eval_logic(metrics, "LOCAL")
+            if str(self.cfg.federated.strategy.name).lower() in {"fedavg", "fedprox"}:
+                self._run_standard_eval_logic(
+                    metrics,
+                    round_index=int(round_num or 0),
+                    report_prefix="LOCAL_AFTER_TRAIN_PRE_AGG",
+                    metric_namespace="local_after",
+                )
+            else:
+                self._run_local_eval_logic(metrics, "LOCAL")
         else:
             metrics["local_fit_eval_enabled"] = 0.0
         return num_steps_trained, metrics
@@ -710,7 +730,31 @@ class FlowerClient(fl.client.NumPyClient):
             "audit_batch_size": int(audit_batch_size),
         }
 
-    def _run_local_eval_logic(self, metrics: dict[str, float], _prefix: str):
+    def _run_standard_eval_logic(
+        self,
+        metrics: dict[str, Any],
+        *,
+        round_index: int,
+        report_prefix: str,
+        metric_namespace: str,
+    ) -> None:
+        """Evaluate a FedAvg/FedProx model on this client's local held-out test set."""
+        if not self.eval_enabled or self.eval_loader is None:
+            metrics[f"{metric_namespace}_eval_enabled"] = 0.0
+            return
+        try:
+            _, _, local_metrics = self._evaluate_closed_set(round_index, prefix=report_prefix)
+            metrics.update({f"{metric_namespace}_{k}": v for k, v in local_metrics.items()})
+            metrics[f"{metric_namespace}_eval_enabled"] = 1.0
+        except Exception:
+            self.logger.exception(
+                "Client %s: %s closed-set evaluation failed; keeping training result.",
+                self.cid,
+                report_prefix,
+            )
+            metrics[f"{metric_namespace}_eval_enabled"] = 0.0
+
+    def _run_local_eval_logic(self, metrics: dict[str, Any], _prefix: str):
         if not self.eval_enabled:
             return
         try:
@@ -724,8 +768,12 @@ class FlowerClient(fl.client.NumPyClient):
                 metrics.update({f"local_teacher_{k}": v for k, v in teacher_metrics.items()})
                 metrics.update({f"local_student_{k}": v for k, v in student_metrics.items()})
             else:
-                _, _, local_metrics = self._evaluate_closed_set(0, prefix="LOCAL_PRE_AGG")
-                metrics.update({f"local_{k}": v for k, v in local_metrics.items()})
+                self._run_standard_eval_logic(
+                    metrics,
+                    round_index=0,
+                    report_prefix="LOCAL_AFTER_TRAIN_PRE_AGG",
+                    metric_namespace="local_after",
+                )
         except Exception:
             self.logger.exception(
                 "Client %s: local closed-set evaluation failed; keeping training result.",
@@ -771,9 +819,10 @@ class FlowerClient(fl.client.NumPyClient):
                 metrics.update({f"student_{k}": v for k, v in student_metrics.items()})
             else:
                 loss, num_examples, cs_metrics = self._evaluate_closed_set(
-                    round_index, prefix="GLOBAL_POST_AGG"
+                    round_index, prefix="GLOBAL_AFTER_SERVER_AGG"
                 )
                 metrics.update(cs_metrics)
+                metrics.update({f"global_after_{k}": v for k, v in cs_metrics.items()})
 
             # EVT Logic (Optional)
             evt_cfg = self.cfg.evt
@@ -802,24 +851,45 @@ class FlowerClient(fl.client.NumPyClient):
         paths_cfg = self.cfg.paths
 
         test_data_key = f"test_closed_client_{self.cid}"
+        client_rel = getattr(paths_cfg, test_data_key, None)
         shared_rel = getattr(paths_cfg, "shared_closed_set_test_data", None)
         generic_rel = getattr(paths_cfg, "closed_set_test_data", None)
-        client_rel = getattr(paths_cfg, test_data_key, None)
+        output_dir = getattr(getattr(self.cfg, "dataset", object()), "preprocessing", object())
+        output_dir_value = getattr(output_dir, "output_dir", None)
 
-        test_data_rel = None
-        for candidate in (shared_rel, generic_rel, client_rel):
-            if candidate:
-                test_data_rel = candidate
+        candidate_paths: list[tuple[str, str | Path]] = []
+        if client_rel:
+            candidate_paths.append(("client_config", client_rel))
+        if output_dir_value:
+            base_dir = _resolve_project_path(output_dir_value)
+            candidate_paths.extend(
+                [
+                    ("client_local", base_dir / f"client_{self.cid}_test.pt"),
+                    ("client_local_legacy", base_dir / f"test_closed_client_{self.cid}.pt"),
+                ]
+            )
+        if generic_rel:
+            candidate_paths.append(("shared_generic_fallback", generic_rel))
+        if shared_rel:
+            candidate_paths.append(("shared_fallback", shared_rel))
+
+        test_data_path: Path | None = None
+        eval_scope = "missing"
+        for scope, candidate in candidate_paths:
+            candidate_path = _resolve_project_path(candidate)
+            if candidate_path.exists():
+                test_data_path = candidate_path
+                eval_scope = scope
                 break
 
         class_names_rel = getattr(paths_cfg, "class_names", None)
-        if not (test_data_rel and class_names_rel):
+        if not (test_data_path and class_names_rel):
             self.logger.warning("Client %s: paths for %s missing.", self.cid, test_data_key)
             return
 
-        test_data_path = _resolve_project_path(test_data_rel)
         class_names_path = _resolve_project_path(class_names_rel)
         self.closed_set_data_path = test_data_path
+        self.closed_set_eval_scope = eval_scope
 
         try:
             data_device = self.device if self._move_data_to_device else torch.device("cpu")
@@ -838,14 +908,27 @@ class FlowerClient(fl.client.NumPyClient):
             class_names_path, int(self.cfg.model.num_actions)
         )
         self.logger.info(
-            "Client %s: Closed-set eval data loaded (%s) | samples=%d",
+            "Client %s: Closed-set eval data loaded (%s) | scope=%s | samples=%d",
             self.cid,
             test_data_path.name,
+            eval_scope,
             len(dataset),
         )
+        if str(eval_scope).startswith("shared"):
+            self.logger.warning(
+                "Client %s is using shared closed-set eval fallback. Re-run preprocessing "
+                "to create client_%s_test.pt for true local client testing.",
+                self.cid,
+                self.cid,
+            )
 
         self.eval_enabled = True
-        self.logger.info("Client %s: Closed-set eval enabled using %s", self.cid, test_data_path.name)
+        self.logger.info(
+            "Client %s: Closed-set eval enabled using %s (scope=%s)",
+            self.cid,
+            test_data_path.name,
+            eval_scope,
+        )
 
     def _load_class_names(self, path: Path, num_actions: int) -> list[str]:
         if path.exists():
@@ -1002,6 +1085,9 @@ class FlowerClient(fl.client.NumPyClient):
                 "prediction_max_ratio": max_prediction_ratio,
                 "prediction_histogram": json.dumps(pred_counts, sort_keys=True),
                 "true_label_histogram": json.dumps(true_counts, sort_keys=True),
+                "eval_scope_is_client_local": float(
+                    str(getattr(self, "closed_set_eval_scope", "")).startswith("client")
+                ),
             },
         )
 

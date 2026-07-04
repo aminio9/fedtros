@@ -3,14 +3,14 @@ experiment:
   method: FedProx
 
 # Clean FedProx baseline: identical to clean FedAvg except for the proximal
-# penalty in the local client objective.
+# penalty in the local client objective. Local evaluation runs before/after fit.
 federated:
   strategy:
     name: fedprox
     aggregation_strategy: fedprox
   server:
     proximal_mu: 0.01
-    fraction_evaluate: 0.0
+    fraction_evaluate: 1.0
   central_evaluate:
     enabled: true
     data_path: ${paths.validation_data}
@@ -21,7 +21,8 @@ training:
   reset_replay_buffer_each_round: true
   reset_epsilon_each_round: true
   round_aware_seed: true
-  evaluate_after_local_fit: false
+  evaluate_after_local_fit: true
+  evaluate_before_local_fit: true
   aux_ce_weight: 0.0
   generator:
     enabled: false

@@ -27,6 +27,7 @@ reset_optimizer_each_round: false
 reset_replay_buffer_each_round: false
 reset_epsilon_each_round: false
 round_aware_seed: false
+evaluate_before_local_fit: false
 evaluate_after_local_fit: true
 
 # RL reward shaping. The default keeps old +1/-1 behavior so baselines stay comparable.
