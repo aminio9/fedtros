@@ -1,87 +1,260 @@
+from __future__ import annotations
+
+import json
 import logging
-import random
+import subprocess
+import sys
+from pathlib import Path
+from typing import Iterable
 
-import numpy as np
-import torch
-from omegaconf import DictConfig
+import hydra
+from hydra.utils import get_original_cwd
+from omegaconf import DictConfig, OmegaConf
 
-from src.models.cvae_dqn import MainQNetwork, PriorNetwork
-from src.utils.utils import reparameterization_trick
-
-logger = logging.getLogger("Policy")
-
-
-class EpsilonScheduler:
-    """Manages the decay of epsilon over time (episodes)."""
-
-    def __init__(self, cfg: DictConfig):
-        self.epsilon = cfg.epsilon_start
-        self.min_epsilon = cfg.epsilon_end
-        self.decay_rate = cfg.epsilon_decay_rate
-        logger.debug(
-            f"EpsilonScheduler init: start={self.epsilon}, "
-            f"end={self.min_epsilon}, rate={self.decay_rate}"
-        )
-
-    def get_epsilon(self) -> float:
-        """Get the current epsilon value."""
-        return self.epsilon
-
-    def step(self):
-        """Decays epsilon one step (call per episode)."""
-        self.epsilon = max(self.min_epsilon, self.epsilon * self.decay_rate)
+from src.artifacts.suite import build_suite_artifacts
+from src.data import run_preprocessing
+from src.evaluation import run_evaluation
+from src.evaluation.compare import compare_runs
+from src.federated import run_federated_simulation
+from src.plotting import generate_plots
+from src.tracking import attach_to_existing_run, initialize_run
+from src.training import run_smoke_test, run_training
+from src.utils.config import resolve_path, validate_config
+from src.utils.entrypoints import prepare_run_context
 
 
-class EpsilonGreedyPolicy:
-    """Implements the standard epsilon-greedy action selection strategy."""
+logger = logging.getLogger(__name__)
 
-    def __init__(
-        self,
-        prior_net: PriorNetwork,
-        q_net: MainQNetwork,
-        num_actions: int,
-        device: torch.device,
-    ):
-        self.prior_net = prior_net
-        self.q_net = q_net
-        self.num_actions = num_actions
-        self.device = device
-        self.allowed_actions: list[int] | None = None
 
-    def set_allowed_actions(self, actions: list[int]) -> None:
-        clean = sorted({int(action) for action in actions if 0 <= int(action) < self.num_actions})
-        self.allowed_actions = clean if clean else None
+def _log_checkpoint_evaluation_summary(cfg: DictConfig, project_root: Path) -> None:
+    best_metrics_path = resolve_path(project_root, Path(str(cfg.checkpointing.dir)) / "best_metrics.json")
+    latest_path = resolve_path(project_root, cfg.checkpointing.latest_checkpoint_path)
+    best_path = resolve_path(project_root, cfg.checkpointing.best_model_path)
+    checkpoint_used = best_path if bool(OmegaConf.select(cfg, "evaluation.use_best_checkpoint", default=True)) and best_path.exists() else resolve_path(project_root, cfg.evaluation.checkpoint_path)
 
-    @torch.no_grad()
-    def select_action(self, state_np: np.ndarray, epsilon: float) -> int:
-        """
-        Select an action using the epsilon-greedy policy.
-        Uses the PriorNetwork to get z, as in paper's logic.
-        """
-        # 1. With prob epsilon, explore
-        if random.random() < epsilon:
-            if self.allowed_actions:
-                return int(random.choice(self.allowed_actions))
-            return random.randint(0, self.num_actions - 1)
-
-        # 2. Otherwise, exploit (greedy action)
-        state = torch.tensor(state_np, dtype=torch.float32, device=self.device).unsqueeze(0)
-
-        prior_was_training = self.prior_net.training
-        q_was_training = self.q_net.training
-
+    best_round = None
+    best_value = None
+    latest_value = None
+    if best_metrics_path.exists():
         try:
-            self.prior_net.eval()
-            self.q_net.eval()
+            payload = json.loads(best_metrics_path.read_text(encoding="utf-8"))
+            metrics = payload.get("metrics", {}) or {}
+            metadata = payload.get("metadata", {}) or {}
+            best_round = metadata.get("round")
+            best_value = payload.get("selected_metric_value")
+            latest_value = metrics.get("val/macro_f1")
+        except Exception:
+            logger.exception("Failed to read best checkpoint metadata from %s", best_metrics_path)
 
-            mu_p, log_var_p = self.prior_net(state)
-            z_sample = reparameterization_trick(mu_p, log_var_p)
-            q_values = self.q_net(z_sample, state)
-            if self.allowed_actions:
-                mask = torch.full_like(q_values, float("-inf"))
-                mask[:, self.allowed_actions] = 0.0
-                q_values = q_values + mask
-            return int(q_values.argmax(dim=1).item())
-        finally:
-            self.prior_net.train(prior_was_training)
-            self.q_net.train(q_was_training)
+    logger.info(
+        "Checkpoint summary before evaluation | best_round=%s | best_validation_metric=%s | "
+        "latest_checkpoint=%s | evaluation_checkpoint=%s",
+        best_round,
+        best_value,
+        latest_path,
+        checkpoint_used,
+    )
+    if best_value is not None and latest_value is not None:
+        try:
+            if float(best_value) - float(latest_value) > 0.05:
+                logger.warning(
+                    "Latest validation macro-F1 appears worse than best by >0.05 | best=%s | latest=%s",
+                    best_value,
+                    latest_value,
+                )
+        except (TypeError, ValueError):
+            pass
+
+
+def _pipeline(cfg: DictConfig) -> str:
+    value = OmegaConf.select(cfg, "experiment.pipeline", default="full")
+    return str(value or "full").lower()
+
+
+def _suite_commands(cfg: DictConfig) -> Iterable[list[str]]:
+    commands = OmegaConf.select(cfg, "experiment.suite_commands", default=[])
+    for command in commands or []:
+        yield [str(part) for part in command]
+
+
+def _sync_model_shape_from_metadata(cfg: DictConfig, metadata: dict) -> None:
+    if "state_dim" in metadata:
+        cfg.model.state_dim = int(metadata["state_dim"])
+    if "num_actions" in metadata:
+        cfg.model.num_actions = int(metadata["num_actions"])
+
+
+def _sync_tracker_shape_metadata(tracker, cfg: DictConfig) -> None:
+    tracker.metadata["state_dim"] = int(cfg.model.state_dim)
+    tracker.metadata["num_actions"] = int(cfg.model.num_actions)
+
+
+def _run_suite(cfg: DictConfig) -> None:
+    project_root = Path(get_original_cwd())
+    validate_config(cfg)
+    for command in _suite_commands(cfg):
+        child = [sys.executable, str(project_root / "run.py"), *command]
+        subprocess.run(child, cwd=project_root, check=True)
+
+
+def _run_plot(cfg: DictConfig) -> None:
+    project_root = Path(get_original_cwd())
+    validate_config(cfg)
+    run_dir = attach_to_existing_run(
+        cfg,
+        project_root=project_root,
+        run_dir=cfg.run_dir,
+        script_name="run.py:plot",
+    )
+    generate_plots(cfg, project_root=project_root, run_dir=run_dir)
+
+
+def _run_export(cfg: DictConfig) -> None:
+    project_root = Path(get_original_cwd())
+    if not cfg.runs:
+        raise ValueError("Provide runs=[outputs/run1,outputs/run2,...] for export.")
+    tracker = initialize_run(cfg, project_root=project_root, script_name="run.py:export")
+    compare_runs(cfg, project_root=project_root)
+    generated = build_suite_artifacts(
+        run_dirs=[resolve_path(project_root, run) for run in cfg.runs],
+        output_dir=tracker.run_dir,
+        project_root=project_root,
+    )
+    tracker.write_json(
+        "suite_artifacts.json",
+        {
+            "input_runs": [str(run) for run in cfg.runs],
+            "generated_files": {name: str(path) for name, path in sorted(generated.items())},
+        },
+    )
+
+
+@hydra.main(config_path="src/configs", config_name="config_fl", version_base=None)
+def main(cfg: DictConfig) -> None:
+    pipeline = _pipeline(cfg)
+
+    if pipeline == "suite":
+        _run_suite(cfg)
+        return
+    if pipeline == "plot":
+        _run_plot(cfg)
+        return
+    if pipeline in {"export", "suite_artifacts"}:
+        _run_export(cfg)
+        return
+
+    extra_required = ("evaluation.checkpoint_path",) if pipeline == "evaluate" else ()
+    context = prepare_run_context(
+        cfg,
+        script_name=f"run.py:{pipeline}",
+        extra_required=extra_required,
+        with_device=pipeline not in {"preprocess", "compare"},
+        with_tracker=pipeline not in {"plot"},
+    )
+
+    if pipeline == "smoke":
+        assert context.device is not None
+        assert context.tracker is not None
+        run_smoke_test(
+            cfg,
+            project_root=context.project_root,
+            device=context.device,
+            tracker=context.tracker,
+        )
+        return
+
+    if pipeline == "preprocess":
+        assert context.tracker is not None
+        metadata = run_preprocessing(cfg, project_root=context.project_root)
+        _sync_model_shape_from_metadata(cfg, metadata)
+        _sync_tracker_shape_metadata(context.tracker, cfg)
+        context.tracker.write_json("preprocess_metadata.json", metadata)
+        return
+
+    if pipeline == "compare":
+        compare_runs(cfg, project_root=context.project_root)
+        return
+
+    if pipeline in {"full", "reproduce"}:
+        assert context.device is not None
+        assert context.tracker is not None
+        metadata = run_preprocessing(cfg, project_root=context.project_root)
+        _sync_model_shape_from_metadata(cfg, metadata)
+        _sync_tracker_shape_metadata(context.tracker, cfg)
+        context.tracker.save_config()
+        context.tracker.save_metadata()
+        run_federated_simulation(
+            cfg,
+            project_root=context.project_root,
+            tracker=context.tracker,
+        )
+        _log_checkpoint_evaluation_summary(cfg, context.project_root)
+        run_evaluation(
+            cfg,
+            project_root=context.project_root,
+            device=context.device,
+            tracker=context.tracker,
+        )
+        return
+
+    if pipeline == "centralized":
+        assert context.device is not None
+        assert context.tracker is not None
+        metadata = run_preprocessing(cfg, project_root=context.project_root)
+        _sync_model_shape_from_metadata(cfg, metadata)
+        _sync_tracker_shape_metadata(context.tracker, cfg)
+        context.tracker.save_config()
+        context.tracker.save_metadata()
+        run_training(
+            cfg,
+            project_root=context.project_root,
+            device=context.device,
+            tracker=context.tracker,
+        )
+        run_evaluation(
+            cfg,
+            project_root=context.project_root,
+            device=context.device,
+            tracker=context.tracker,
+        )
+        return
+
+    if pipeline == "train":
+        assert context.device is not None
+        assert context.tracker is not None
+        run_training(
+            cfg,
+            project_root=context.project_root,
+            device=context.device,
+            tracker=context.tracker,
+        )
+        return
+
+    if pipeline == "federated":
+        assert context.tracker is not None
+        run_federated_simulation(
+            cfg,
+            project_root=context.project_root,
+            tracker=context.tracker,
+        )
+        return
+
+    if pipeline == "evaluate":
+        assert context.device is not None
+        assert context.tracker is not None
+        run_evaluation(
+            cfg,
+            project_root=context.project_root,
+            device=context.device,
+            tracker=context.tracker,
+        )
+        return
+
+    raise ValueError(
+        f"Unknown experiment.pipeline={pipeline!r}. "
+        "Use full, smoke, centralized, preprocess, train, federated, evaluate, plot, compare, or export."
+    )
+
+
+if __name__ == "__main__":
+    main()

@@ -640,6 +640,389 @@ class FedMADEClassAwareAggregationStrategy(FedAvg):
                 logger.warning("%s failure %d: %r", context, idx, failure)
 
 
+class FedGPAGlowStrategy(FedAvg):
+    """FedGPA-inspired strategy adapted to the CVAE-DQN/GLOW model stack.
+
+    The uploaded FedGPA paper decouples the model into a feature extractor and
+    classifier, aligns local representations with global prototypes, and uses
+    different aggregation strategies for FE and CLS.  This implementation keeps
+    the existing single global-model evaluation path (so it remains directly
+    comparable with FedAvg) while adding the two safe FedGPA mechanisms:
+
+    * server-maintained class prototypes in the prior latent space;
+    * module-specific aggregation weights: prior/recognition use prototype
+      similarity + sample count, while the Q classifier uses prototype
+      variance/distance + sample count.
+
+    It does not implement per-client personalized checkpoints by default,
+    because the current evaluation pipeline expects one global checkpoint.  The
+    monitor file still logs the FE/CLS weights so a personalized extension can
+    be added later without disturbing the stable baseline.
+    """
+
+    def __init__(self, cfg: DictConfig, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cfg = cfg
+        self.best_validation_metric: float | None = None
+        self.num_classes = int(cfg.model.num_actions)
+        self.latent_dim = int(cfg.model.latent_dim)
+        self.mu = float(OmegaConf.select(cfg, "strategy.fedgpa.mu", default=0.5))
+        self.prototype_momentum = float(
+            OmegaConf.select(cfg, "strategy.fedgpa.prototype_momentum", default=0.8)
+        )
+        self.eps = float(OmegaConf.select(cfg, "strategy.fedgpa.eps", default=1.0e-8))
+        self.max_client_weight_fraction = float(
+            OmegaConf.select(cfg, "strategy.fedgpa.max_client_weight_fraction", default=1.0)
+        )
+        self.classifier_sample_blend = float(
+            OmegaConf.select(cfg, "strategy.fedgpa.classifier_sample_blend", default=0.25)
+        )
+        self.use_module_scales = bool(
+            OmegaConf.select(cfg, "strategy.fedgpa.use_module_update_scales", default=True)
+        )
+        self.module_update_scales = {
+            "prior_net": float(
+                OmegaConf.select(cfg, "strategy.fedgpa.module_update_scales.prior_net", default=0.50)
+            ),
+            "recognition_net": float(
+                OmegaConf.select(cfg, "strategy.fedgpa.module_update_scales.recognition_net", default=0.25)
+            ),
+            "value_net_main": float(
+                OmegaConf.select(cfg, "strategy.fedgpa.module_update_scales.value_net_main", default=1.0)
+            ),
+            "generation_net": float(
+                OmegaConf.select(cfg, "strategy.fedgpa.module_update_scales.generation_net", default=0.0)
+            ),
+        }
+        default_monitor_path = f"{cfg.tracking.run_dir}/fedgpa_glow_monitoring.jsonl"
+        self.monitor_path = _resolve_path(
+            OmegaConf.select(cfg, "strategy.fedgpa.monitor_path", default=default_monitor_path)
+        )
+        self.monitor_path.parent.mkdir(parents=True, exist_ok=True)
+        self.global_prototypes: np.ndarray | None = None
+        self.global_prototype_counts = np.zeros(self.num_classes, dtype=np.float64)
+        self.current_parameters: Parameters | None = None
+        logger.info(
+            "FedGPA-GLOW configured | classes=%d latent_dim=%d mu=%.3f prototype_momentum=%.3f",
+            self.num_classes,
+            self.latent_dim,
+            self.mu,
+            self.prototype_momentum,
+        )
+
+    def configure_fit(self, server_round: int, parameters: Parameters, client_manager):
+        self.current_parameters = parameters
+        configured = super().configure_fit(server_round, parameters, client_manager)
+        payload = self._global_prototype_payload()
+        updated = []
+        for client, fit_ins in configured:
+            config = dict(fit_ins.config)
+            if payload is not None:
+                config["global_prototypes_json"] = payload
+            config["fedgpa_round"] = int(server_round)
+            updated.append((client, FitIns(fit_ins.parameters, config)))
+        return updated
+
+    def aggregate_fit(self, server_round: int, results, failures):
+        if failures:
+            self._log_failures("FedGPA-GLOW aggregate", failures)
+        if not results:
+            return None, {"fedgpa_clients": 0.0}
+
+        payloads: list[dict[str, Any]] = []
+        for client, fit_res in sorted(results, key=lambda item: item[0].cid):
+            weights = parameters_to_ndarrays(fit_res.parameters)
+            if not weights:
+                logger.warning("Client %s returned empty parameters; skipping.", client.cid)
+                continue
+            metrics = dict(fit_res.metrics)
+            prototypes = self._json_array(metrics.get("fedgpa_local_prototypes", "[]"))
+            counts = self._json_array(metrics.get("fedgpa_local_prototype_counts", "[]"))
+            variances = self._json_array(metrics.get("fedgpa_local_prototype_variances", "[]"))
+            proto = self._prototype_matrix(prototypes)
+            count_vec = self._class_vector(counts)
+            var_vec = self._class_vector(variances)
+            payloads.append(
+                {
+                    "cid": str(client.cid),
+                    "weights": weights,
+                    "num_examples": max(float(fit_res.num_examples), 1.0),
+                    "metrics": metrics,
+                    "prototypes": proto,
+                    "counts": count_vec,
+                    "variances": var_vec,
+                }
+            )
+
+        if not payloads:
+            return None, {"fedgpa_clients": 0.0}
+
+        self._update_global_prototypes(payloads)
+        feature_weights, classifier_weights = self._aggregation_weights(payloads)
+        first_weights = payloads[0]["weights"]
+        module_slices = self._federated_module_slices(len(first_weights))
+        sample_weights = self._normalize(np.asarray([p["num_examples"] for p in payloads], dtype=np.float64))
+
+        new_weights: list[np.ndarray] = []
+        previous = parameters_to_ndarrays(self.current_parameters) if self.current_parameters is not None else None
+        for idx, template in enumerate(first_weights):
+            module_name = self._module_for_index(idx, module_slices)
+            if module_name in {"prior_net", "recognition_net"}:
+                weights_for_layer = feature_weights
+            elif module_name == "value_net_main":
+                weights_for_layer = classifier_weights
+            else:
+                weights_for_layer = sample_weights
+            layer = np.zeros_like(template)
+            for payload, weight in zip(payloads, weights_for_layer, strict=True):
+                layer += payload["weights"][idx] * float(weight)
+            if previous is not None and self.use_module_scales and idx < len(previous):
+                scale = float(np.clip(self.module_update_scales.get(module_name, 1.0), 0.0, 1.0))
+                layer = previous[idx] + scale * (layer - previous[idx])
+            new_weights.append(layer)
+
+        aggregated_parameters = ndarrays_to_parameters(new_weights)
+        self.current_parameters = aggregated_parameters
+        save_global_model(aggregated_parameters, server_round, self.cfg)
+
+        max_fe_share = float(np.max(feature_weights)) if feature_weights.size else 0.0
+        max_cls_share = float(np.max(classifier_weights)) if classifier_weights.size else 0.0
+        monitor_records = []
+        for payload, fe_w, cls_w in zip(payloads, feature_weights, classifier_weights, strict=True):
+            monitor_records.append(
+                {
+                    "cid": payload["cid"],
+                    "num_examples": payload["num_examples"],
+                    "feature_weight": float(fe_w),
+                    "classifier_weight": float(cls_w),
+                    "prototype_count_total": float(np.sum(payload["counts"])),
+                    "prototype_variance_mean": float(np.mean(payload["variances"])),
+                    "local_f1_macro": self._float_metric(payload["metrics"], "local_f1_macro"),
+                    "local_accuracy": self._float_metric(payload["metrics"], "local_accuracy", self._float_metric(payload["metrics"], "accuracy")),
+                }
+            )
+        self._write_monitor_event(
+            {
+                "event": "fedgpa_aggregation",
+                "server_round": int(server_round),
+                "clients": len(payloads),
+                "mu": float(self.mu),
+                "max_feature_weight": max_fe_share,
+                "max_classifier_weight": max_cls_share,
+                "global_prototype_counts": self.global_prototype_counts.tolist(),
+                "records": monitor_records,
+            }
+        )
+        logger.info(
+            "FedGPA-GLOW aggregation | round=%d clients=%d max_fe=%.4f max_cls=%.4f",
+            server_round,
+            len(payloads),
+            max_fe_share,
+            max_cls_share,
+        )
+        return aggregated_parameters, {
+            "fedgpa_clients": float(len(payloads)),
+            "fedgpa_max_feature_weight": max_fe_share,
+            "fedgpa_max_classifier_weight": max_cls_share,
+            "fedgpa_mu": float(self.mu),
+        }
+
+    def aggregate_evaluate(self, server_round: int, results, failures):
+        filtered_results = _positive_evaluate_results(server_round, results)
+        if results and not filtered_results:
+            return None, {}
+        loss, metrics = super().aggregate_evaluate(server_round, filtered_results, failures)
+        if metrics:
+            self.best_validation_metric = _maybe_save_best_validation_checkpoint(
+                self.cfg,
+                server_round,
+                metrics,
+                self.best_validation_metric,
+            )
+        return loss, metrics
+
+    def _global_prototype_payload(self) -> str | None:
+        if self.global_prototypes is None:
+            return None
+        payload = {
+            "prototypes": self.global_prototypes.astype(float).tolist(),
+            "counts": self.global_prototype_counts.astype(float).tolist(),
+        }
+        return json.dumps(payload)
+
+    def _update_global_prototypes(self, payloads: list[dict[str, Any]]) -> None:
+        sums = np.zeros((self.num_classes, self.latent_dim), dtype=np.float64)
+        counts = np.zeros(self.num_classes, dtype=np.float64)
+        for payload in payloads:
+            proto = payload["prototypes"]
+            count = payload["counts"]
+            for class_idx in range(self.num_classes):
+                n = float(count[class_idx])
+                if n <= 0:
+                    continue
+                sums[class_idx] += proto[class_idx] * n
+                counts[class_idx] += n
+        new_proto = np.zeros((self.num_classes, self.latent_dim), dtype=np.float64)
+        valid = counts > 0
+        new_proto[valid] = sums[valid] / counts[valid, None]
+        if self.global_prototypes is None:
+            self.global_prototypes = new_proto
+            self.global_prototype_counts = counts
+            return
+        momentum = float(np.clip(self.prototype_momentum, 0.0, 0.999))
+        old = self.global_prototypes.copy()
+        old[valid] = momentum * old[valid] + (1.0 - momentum) * new_proto[valid]
+        self.global_prototypes = old
+        self.global_prototype_counts = np.maximum(self.global_prototype_counts, 0.0) * momentum + counts * (1.0 - momentum)
+
+    def _aggregation_weights(self, payloads: list[dict[str, Any]]) -> tuple[np.ndarray, np.ndarray]:
+        samples = np.asarray([p["num_examples"] for p in payloads], dtype=np.float64)
+        sample_norm = self._normalize(samples)
+        if self.global_prototypes is None:
+            return sample_norm, sample_norm
+
+        distances = np.asarray([self._prototype_distance(p["prototypes"], p["counts"]) for p in payloads], dtype=np.float64)
+        similarity = 1.0 / (distances + self.eps)
+        sim_norm = self._normalize(similarity)
+        feature_weights = self._normalize(self.mu * sim_norm + (1.0 - self.mu) * sample_norm)
+
+        variances = np.asarray([
+            self._weighted_variance(p["variances"], p["counts"]) for p in payloads
+        ], dtype=np.float64)
+        classifier_score = 1.0 / (distances + variances + self.eps)
+        classifier_similarity = self._normalize(classifier_score)
+        classifier_weights = self._normalize(
+            (1.0 - self.classifier_sample_blend) * classifier_similarity
+            + self.classifier_sample_blend * sample_norm
+        )
+        feature_weights = self._cap_weight_vector(feature_weights)
+        classifier_weights = self._cap_weight_vector(classifier_weights)
+        return feature_weights, classifier_weights
+
+    def _prototype_distance(self, prototypes: np.ndarray, counts: np.ndarray) -> float:
+        if self.global_prototypes is None:
+            return 1.0
+        valid = (counts > 0) & (self.global_prototype_counts > 0)
+        if not np.any(valid):
+            return 1.0
+        class_weights = counts[valid] / max(float(np.sum(counts[valid])), self.eps)
+        diff = prototypes[valid] - self.global_prototypes[valid]
+        dist = np.sum(diff * diff, axis=1)
+        return float(np.sum(class_weights * dist) + self.eps)
+
+    def _weighted_variance(self, variances: np.ndarray, counts: np.ndarray) -> float:
+        valid = counts > 0
+        if not np.any(valid):
+            return 1.0
+        weights = counts[valid] / max(float(np.sum(counts[valid])), self.eps)
+        return float(np.sum(weights * np.maximum(variances[valid], 0.0)) + self.eps)
+
+    def _cap_weight_vector(self, weights: np.ndarray) -> np.ndarray:
+        cap = float(np.clip(self.max_client_weight_fraction, 0.0, 1.0))
+        if cap <= 0.0 or cap >= 1.0 or weights.size == 0:
+            return self._normalize(weights)
+        feasible_cap = max(cap, 1.0 / float(weights.size))
+        normalized = self._normalize(weights).copy()
+        capped = np.zeros_like(normalized, dtype=bool)
+        for _ in range(weights.size):
+            over = normalized > feasible_cap
+            new_over = over & ~capped
+            if not np.any(new_over):
+                break
+            capped |= new_over
+            normalized[new_over] = feasible_cap
+            remaining = ~capped
+            remaining_mass = 1.0 - float(normalized[capped].sum())
+            if remaining_mass <= self.eps or not np.any(remaining):
+                break
+            base = weights[remaining]
+            base_sum = float(base.sum())
+            normalized[remaining] = remaining_mass / float(remaining.sum()) if base_sum <= self.eps else remaining_mass * base / base_sum
+        return self._normalize(normalized)
+
+    def _federated_module_slices(self, num_params: int) -> dict[str, slice]:
+        if GLOBAL_AGENT_REF is None:
+            return {}
+        start = 0
+        slices: dict[str, slice] = {}
+        for name, module in (
+            ("prior_net", GLOBAL_AGENT_REF.prior_net),
+            ("recognition_net", GLOBAL_AGENT_REF.recognition_net),
+            ("value_net_main", GLOBAL_AGENT_REF.value_net_main),
+        ):
+            length = len(module.state_dict())
+            slices[name] = slice(start, min(start + length, num_params))
+            start += length
+        if GLOBAL_AGENT_REF.generation_net is not None and start < num_params:
+            length = len(GLOBAL_AGENT_REF.generation_net.state_dict())
+            slices["generation_net"] = slice(start, min(start + length, num_params))
+        return slices
+
+    @staticmethod
+    def _module_for_index(idx: int, slices: dict[str, slice]) -> str:
+        for name, slc in slices.items():
+            if slc.start <= idx < slc.stop:
+                return name
+        return "unknown"
+
+    def _prototype_matrix(self, value: Any) -> np.ndarray:
+        arr = np.asarray(value, dtype=np.float64)
+        if arr.size == 0:
+            return np.zeros((self.num_classes, self.latent_dim), dtype=np.float64)
+        arr = arr.reshape((min(arr.shape[0], self.num_classes), -1))
+        out = np.zeros((self.num_classes, self.latent_dim), dtype=np.float64)
+        rows = min(out.shape[0], arr.shape[0])
+        cols = min(out.shape[1], arr.shape[1])
+        out[:rows, :cols] = arr[:rows, :cols]
+        return out
+
+    def _class_vector(self, value: Any) -> np.ndarray:
+        arr = np.asarray(value, dtype=np.float64).reshape(-1)
+        out = np.zeros(self.num_classes, dtype=np.float64)
+        length = min(self.num_classes, arr.size)
+        if length:
+            out[:length] = arr[:length]
+        return out
+
+    @staticmethod
+    def _json_array(value: Any) -> Any:
+        try:
+            return json.loads(str(value))
+        except Exception:
+            return []
+
+    @staticmethod
+    def _normalize(values: np.ndarray) -> np.ndarray:
+        values = np.maximum(np.asarray(values, dtype=np.float64), 0.0)
+        total = float(values.sum())
+        if total <= EPS:
+            return np.ones_like(values, dtype=np.float64) / max(values.size, 1)
+        return values / total
+
+    @staticmethod
+    def _float_metric(metrics: dict[str, Scalar], key: str, default: float = 0.0) -> float:
+        value = metrics.get(key, default)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float(default)
+
+    def _write_monitor_event(self, event: dict[str, Any]) -> None:
+        try:
+            with open(self.monitor_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(event, sort_keys=True, default=str) + "\n")
+        except Exception as exc:
+            logger.warning("Failed to write FedGPA monitor event: %s", exc)
+
+    @staticmethod
+    def _log_failures(context: str, failures) -> None:
+        for idx, failure in enumerate(failures, start=1):
+            if isinstance(failure, BaseException):
+                logger.warning("%s failure %d: %r", context, idx, failure)
+            else:
+                logger.warning("%s failure %d: %r", context, idx, failure)
+
+
 class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
     """
     FMRL-AVA for CF-MARLOS-AVA.
@@ -2045,6 +2428,14 @@ def get_strategy(cfg: DictConfig) -> Strategy:
             "--- Strategy: FMRL-AVA (Adaptive Vector-Aligned Aggregation) with Model Saving ---"
         )
         return FMRLAdaptiveVectorAlignedAggregationStrategy(cfg=cfg, **args)
+
+    if strat_name == "fedgpa_glow":
+        logger.info("--- Strategy: FedGPA-GLOW prototype-personalized aggregation with Model Saving ---")
+        return FedGPAGlowStrategy(
+            cfg=cfg,
+            fit_metrics_aggregation_fn=aggregate_fit_metrics,
+            **args,
+        )
 
     if strat_name in {"fedmade", "class_aware", "class_aware_dynamic"}:
         logger.info("--- Strategy: FedMADE-style class-aware aggregation with Model Saving ---")

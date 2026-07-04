@@ -254,3 +254,26 @@ If FoT still collapses after aggregation, sweep:
 python run.py experiment=exp1 +method=fmrl_ava_glow_twa seed=42 federated.strategy.module_delta_scales.prior_net=0.10 federated.strategy.module_delta_scales.recognition_net=0.00
 python run.py experiment=exp1 +method=fmrl_ava_glow_twa seed=42 federated.strategy.module_delta_scales.prior_net=0.50 federated.strategy.module_delta_scales.recognition_net=0.25
 ```
+
+## FedGPA-GLOW run
+
+FedGPA-GLOW is available as a separate method overlay:
+
+```bash
+python run.py experiment=exp3 +method=fedgpa_glow seed=42 \
+  federated.num_clients=10 \
+  dataset.preprocessing.num_clients=10 \
+  dataset.preprocessing.iid=false \
+  dataset.preprocessing.alpha=0.1 \
+  tracking.run_id=e3_FedGPA_GLOW_alpha0.1_c10_seed42
+```
+
+Useful sweeps:
+
+```bash
+python run.py experiment=exp3 +method=fedgpa_glow seed=42 dataset.preprocessing.alpha=0.1 federated.strategy.fedgpa.mu=0.3
+python run.py experiment=exp3 +method=fedgpa_glow seed=42 dataset.preprocessing.alpha=0.1 federated.strategy.fedgpa.mu=0.5
+python run.py experiment=exp3 +method=fedgpa_glow seed=42 dataset.preprocessing.alpha=0.1 federated.strategy.fedgpa.mu=0.7
+```
+
+Check `fedgpa_glow_monitoring.jsonl` for feature/classifier aggregation weights and prototype counts.

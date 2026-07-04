@@ -1,0 +1,77 @@
+# @package _global_
+experiment:
+  method: FedGPA_GLOW
+
+# FedGPA paper-inspired adaptation for the CVAE-DQN/GLOW stack.
+# It keeps one global checkpoint for fair comparison with FedAvg while adding:
+# 1) prototype-based local-global alignment in prior latent space;
+# 2) separate FE/CLS aggregation weights using prototypes and variances.
+training:
+  rl_mode: contextual_bandit
+  gamma: 0.0
+  local_episodes_per_round: 5
+  epsilon_start: 0.20
+  epsilon_end: 0.02
+  epsilon_decay_rate: 0.98
+  prototype_batch_size: 2048
+  loss_weights:
+    prior_kl: 0.05
+    q_td: 0.10
+    bandit_q: 0.50
+    classification: 3.0
+    prototype: 0.05
+    generator_reconstruction: 1.0
+    proximal: 1.0
+  imbalance:
+    enabled: true
+    weight_mode: effective_number
+    effective_number_beta: 0.999
+    min_weight: 0.3
+    max_weight: 3.0
+    normalize: mean
+    class_balanced_sampling: true
+    weighted_reward: true
+    weight_negative_reward: false
+  classification_loss:
+    name: focal
+    focal_gamma: 1.0
+    use_class_weights: true
+  auxiliary_losses:
+    supervised_contrastive_lambda: 0.02
+    supervised_contrastive_temperature: 0.1
+    center_loss_lambda: 0.01
+  kl:
+    free_nats: 2.0
+    warmup_steps: 2000
+  missing_class_gradient:
+    enabled: true
+    mask_value: -20.0
+    q_absent_mode: ignore
+    q_absent_weight: 0.05
+  prior_grad_clip_norm: 1.0
+  q_grad_clip_norm: 1.0
+  generator:
+    enabled: false
+
+federated:
+  strategy:
+    name: fedgpa_glow
+    aggregation_strategy: fedgpa_glow
+    # FedGPA feature extractor aggregation uses mu to blend prototype similarity
+    # and sample count. The paper reports 0.4-0.6 as stable, so 0.5 is the
+    # safest first value. Human beings briefly make a sensible default.
+    fedgpa:
+      mu: 0.5
+      prototype_momentum: 0.80
+      classifier_sample_blend: 0.25
+      max_client_weight_fraction: 0.50
+      eps: 1.0e-8
+      use_module_update_scales: true
+      monitor_path: ${tracking.run_dir}/fedgpa_glow_monitoring.jsonl
+      module_update_scales:
+        prior_net: 0.50
+        recognition_net: 0.25
+        value_net_main: 1.0
+        generation_net: 0.0
+  server:
+    proximal_mu: 0.0

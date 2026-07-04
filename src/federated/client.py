@@ -236,6 +236,16 @@ class FlowerClient(fl.client.NumPyClient):
             proximal_mu = 0.0
         if strategy_name == "fmrl_ava" and phase in {"standard", "train"}:
             self.logger.info("Client %s FMRL local proximal_mu=%.6f", self.cid, proximal_mu)
+        if strategy_name == "fedgpa_glow":
+            self.agent.set_global_prototypes_from_json(
+                config.get("global_prototypes_json") if isinstance(config, dict) else None
+            )
+            if phase == "standard":
+                self.logger.info(
+                    "Client %s FedGPA-GLOW prototype payload active=%s",
+                    self.cid,
+                    bool(config.get("global_prototypes_json")) if isinstance(config, dict) else False,
+                )
 
         execution_device, switched = self._enter_execution_device()
         try:
@@ -260,6 +270,8 @@ class FlowerClient(fl.client.NumPyClient):
                         "full_label_histogram": self.local_data_profile["label_histogram"],
                     }
                 )
+                if strategy_name == "fedgpa_glow":
+                    metrics.update(self._fedgpa_prototype_metrics())
                 updated_params = self.agent.get_federated_parameters()
                 num_examples = int(self.local_data_profile["local_num_examples"])
                 return updated_params, num_examples, metrics
@@ -308,6 +320,8 @@ class FlowerClient(fl.client.NumPyClient):
                         "audit_batch_size": float(audit_signals["audit_batch_size"]),
                     }
                 )
+                if strategy_name == "fedgpa_glow":
+                    self.cached_metrics.update(self._fedgpa_prototype_metrics())
 
                 self.logger.info(
                     f"   > Client {self.cid}: Caching weights. Signals -> "
@@ -362,6 +376,35 @@ class FlowerClient(fl.client.NumPyClient):
                 sort_keys=True,
             ),
         }
+
+    def _fedgpa_prototype_metrics(self) -> dict[str, Any]:
+        """Return FedGPA local prototypes as JSON-safe Flower metrics."""
+        try:
+            proto = self.agent.compute_local_prototypes(
+                self.env.all_features_s,
+                self.env.all_labels_a_t,
+                batch_size=int(getattr(self.cfg.training, "prototype_batch_size", 2048)),
+            )
+            counts = proto.get("counts", []) or []
+            variances = proto.get("variances", []) or []
+            total_count = float(sum(float(v) for v in counts)) if counts else 0.0
+            avg_variance = float(np.mean([float(v) for v in variances])) if variances else 0.0
+            return {
+                "fedgpa_local_prototypes": json.dumps(proto.get("prototypes", [])),
+                "fedgpa_local_prototype_counts": json.dumps(counts),
+                "fedgpa_local_prototype_variances": json.dumps(variances),
+                "fedgpa_local_prototype_total": total_count,
+                "fedgpa_local_prototype_avg_variance": avg_variance,
+            }
+        except Exception as exc:
+            self.logger.warning("Client %s FedGPA prototype computation failed: %s", self.cid, exc)
+            return {
+                "fedgpa_local_prototypes": "[]",
+                "fedgpa_local_prototype_counts": "[]",
+                "fedgpa_local_prototype_variances": "[]",
+                "fedgpa_local_prototype_total": 0.0,
+                "fedgpa_local_prototype_avg_variance": 0.0,
+            }
 
     def _perform_training_loop(self, proximal_mu: float = 0.0) -> tuple[int, dict[str, Any]]:
         """Shared training logic for both Standard and FMRL modes."""

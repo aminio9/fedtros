@@ -1,3 +1,4 @@
+import json
 import logging
 from collections import OrderedDict
 
@@ -180,6 +181,7 @@ class Agent:
             "q_td": _cfg_float(train_cfg, "loss_weights.q_td", 1.0),
             "bandit_q": _cfg_float(train_cfg, "loss_weights.bandit_q", 0.0),
             "classification": _cfg_float(train_cfg, "loss_weights.classification", 0.0),
+            "prototype": _cfg_float(train_cfg, "loss_weights.prototype", 0.0),
             "generator_reconstruction": _cfg_float(
                 train_cfg, "loss_weights.generator_reconstruction", 1.0
             ),
@@ -204,6 +206,13 @@ class Agent:
         # Sync target net initially
         self.value_net_target.load_state_dict(self.value_net_main.state_dict())
         self.value_net_target.eval()
+
+        # FedGPA-GLOW: server-provided class prototypes used for local-global
+        # alignment of the feature/latent extractor.  Prototypes live in the
+        # prior latent space mu_p = p(z|s), which is the representation used by
+        # the classifier at inference time.
+        self.global_prototypes: torch.Tensor | None = None
+        self.global_prototype_mask: torch.Tensor | None = None
 
         self._use_directml_safe_optimizer = device.type in {"dml", "directml", "privateuseone"}
         self.optimizer_prior = self._make_optimizer(
@@ -411,8 +420,17 @@ class Agent:
             )
         if center_lambda > 0.0:
             center_loss = center_compactness_loss(mu_p, labels)
+
+        prototype_loss = self._prototype_alignment_loss(mu_p, labels)
+        prototype_weight = float(self.loss_weights.get("prototype", 0.0))
+
         kl_objective = self.loss_weights["prior_kl"] * kl_warmup * kl_loss
-        kl_objective = kl_objective + supcon_lambda * supcon_loss + center_lambda * center_loss
+        kl_objective = (
+            kl_objective
+            + supcon_lambda * supcon_loss
+            + center_lambda * center_loss
+            + prototype_weight * prototype_loss
+        )
         if proximal_mu > 0.0:
             prior_prox = self._proximal_penalty("prior_net")
             prior_prox_weighted = self.loss_weights["proximal"] * 0.5 * proximal_mu * prior_prox
@@ -562,6 +580,11 @@ class Agent:
             "loss/supervised_contrastive_weighted": float((supcon_lambda * supcon_loss).item()),
             "loss/center_compactness": float(center_loss.item()),
             "loss/center_compactness_weighted": float((center_lambda * center_loss).item()),
+            "loss/prototype_alignment": float(prototype_loss.item()),
+            "loss/prototype_alignment_weighted": float((prototype_weight * prototype_loss).item()),
+            "fedgpa/prototype_classes": float(
+                0.0 if self.global_prototype_mask is None else self.global_prototype_mask.sum().item()
+            ),
             "loss/q_td": float(td_loss.item()),
             "loss/q_td_weighted": float((self.loss_weights["q_td"] * td_loss).item()),
             "loss/bandit_q": float(bandit_loss.item()),
@@ -614,6 +637,134 @@ class Agent:
                         name,
                     )
                     return
+
+
+    def set_global_prototypes(
+        self,
+        prototypes: list[list[float]] | np.ndarray | torch.Tensor | None,
+        counts: list[float] | np.ndarray | torch.Tensor | None = None,
+    ) -> None:
+        """Install server prototypes for FedGPA local-global alignment.
+
+        `prototypes` must be shaped [num_classes, latent_dim].  Counts are
+        optional; classes with count <= 0 are ignored in the prototype loss.
+        """
+        if prototypes is None:
+            self.global_prototypes = None
+            self.global_prototype_mask = None
+            return
+        proto = torch.as_tensor(prototypes, dtype=torch.float32, device=self.device)
+        if proto.numel() == 0:
+            self.global_prototypes = None
+            self.global_prototype_mask = None
+            return
+        if proto.dim() != 2:
+            proto = proto.view(self.action_dim, -1)
+        if proto.shape[0] < self.action_dim:
+            pad_rows = self.action_dim - int(proto.shape[0])
+            proto = F.pad(proto, (0, 0, 0, pad_rows))
+        proto = proto[: self.action_dim]
+        self.global_prototypes = proto.detach()
+        if counts is None:
+            mask = torch.isfinite(proto).all(dim=1) & (proto.abs().sum(dim=1) > 0)
+        else:
+            counts_t = torch.as_tensor(counts, dtype=torch.float32, device=self.device)
+            if counts_t.numel() < self.action_dim:
+                counts_t = F.pad(counts_t, (0, self.action_dim - counts_t.numel()))
+            mask = counts_t[: self.action_dim] > 0
+        self.global_prototype_mask = mask.detach()
+
+    def set_global_prototypes_from_json(self, payload: str | None) -> None:
+        """Decode the JSON payload sent by the FedGPA server strategy."""
+        if not payload:
+            self.set_global_prototypes(None)
+            return
+        try:
+            raw = json.loads(str(payload))
+            self.set_global_prototypes(raw.get("prototypes"), raw.get("counts"))
+        except Exception as exc:
+            self.logger.warning("Failed to parse FedGPA global prototypes: %s", exc)
+            self.set_global_prototypes(None)
+
+    def _prototype_alignment_loss(self, features: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """FedGPA local-global alignment loss in prior latent space."""
+        if self.global_prototypes is None or self.global_prototype_mask is None:
+            return torch.zeros((), device=self.device)
+        labels = labels.long().clamp(0, self.action_dim - 1)
+        valid = self.global_prototype_mask.to(device=self.device)[labels]
+        if not bool(valid.any()):
+            return torch.zeros((), device=self.device)
+        proto = self.global_prototypes.to(device=features.device, dtype=features.dtype)
+        if proto.shape[1] < features.shape[1]:
+            proto = F.pad(proto, (0, features.shape[1] - proto.shape[1]))
+        elif proto.shape[1] > features.shape[1]:
+            proto = proto[:, : features.shape[1]]
+        target = proto[labels]
+        return F.mse_loss(features[valid], target[valid])
+
+    @torch.no_grad()
+    def compute_local_prototypes(
+        self,
+        features: torch.Tensor,
+        labels: torch.Tensor,
+        *,
+        batch_size: int = 2048,
+    ) -> dict[str, object]:
+        """Compute class prototypes and intra-class variance for FedGPA.
+
+        The representation is mu_p from PriorNetwork, matching inference.
+        Returns JSON-serializable lists so Flower can carry them as metrics.
+        """
+        features = features.detach().float().cpu()
+        labels = labels.detach().long().cpu().clamp(0, self.action_dim - 1)
+        was_training = self.prior_net.training
+        self.prior_net.eval()
+
+        sums: torch.Tensor | None = None
+        sq_sums: torch.Tensor | None = None
+        counts = torch.zeros(self.action_dim, dtype=torch.float64)
+        offset = 0
+        while offset < int(features.shape[0]):
+            batch_x = features[offset : offset + batch_size].to(self.device)
+            batch_y = labels[offset : offset + batch_size]
+            mu, _ = self.prior_net(batch_x)
+            mu_cpu = mu.detach().cpu().double()
+            if sums is None:
+                latent_dim = int(mu_cpu.shape[1])
+                sums = torch.zeros(self.action_dim, latent_dim, dtype=torch.float64)
+                sq_sums = torch.zeros(self.action_dim, latent_dim, dtype=torch.float64)
+            for class_idx in range(self.action_dim):
+                mask = batch_y == class_idx
+                if bool(mask.any()):
+                    class_mu = mu_cpu[mask]
+                    sums[class_idx] += class_mu.sum(dim=0)
+                    sq_sums[class_idx] += (class_mu * class_mu).sum(dim=0)
+                    counts[class_idx] += float(class_mu.shape[0])
+            offset += batch_size
+
+        self.prior_net.train(was_training)
+        if sums is None or sq_sums is None:
+            return {"prototypes": [], "counts": [], "variances": [], "latent_dim": 0}
+
+        prototypes = torch.zeros_like(sums)
+        valid = counts > 0
+        prototypes[valid] = sums[valid] / counts[valid].view(-1, 1)
+        variances = torch.zeros(self.action_dim, dtype=torch.float64)
+        # Mean squared distance to the prototype, equivalent to summed feature variance.
+        for class_idx in range(self.action_dim):
+            n = float(counts[class_idx].item())
+            if n <= 1.0:
+                continue
+            mean = prototypes[class_idx]
+            second = sq_sums[class_idx] / n
+            variances[class_idx] = torch.clamp((second - mean * mean).sum(), min=0.0)
+
+        return {
+            "prototypes": prototypes.float().tolist(),
+            "counts": counts.float().tolist(),
+            "variances": variances.float().tolist(),
+            "latent_dim": int(prototypes.shape[1]),
+        }
 
     def update_target_network(self, tau: float):
         """Soft update the target network (Eq. 10)."""
