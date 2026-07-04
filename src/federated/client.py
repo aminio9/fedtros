@@ -210,6 +210,22 @@ class FlowerClient(fl.client.NumPyClient):
     def set_parameters(self, parameters: list[np.ndarray]) -> None:
         self.agent.set_federated_parameters(parameters, hard_target_update=True)
 
+    @staticmethod
+    def _param_list_norm(parameters: list[np.ndarray]) -> float:
+        total = 0.0
+        for param in parameters:
+            arr = np.asarray(param, dtype=np.float64)
+            total += float(np.sum(arr * arr))
+        return float(np.sqrt(max(total, 0.0)))
+
+    @staticmethod
+    def _param_list_distance(a: list[np.ndarray], b: list[np.ndarray]) -> float:
+        total = 0.0
+        for pa, pb in zip(a, b, strict=True):
+            diff = np.asarray(pa, dtype=np.float64) - np.asarray(pb, dtype=np.float64)
+            total += float(np.sum(diff * diff))
+        return float(np.sqrt(max(total, 0.0)))
+
     def fit(
         self, parameters: list[np.ndarray] | Parameters, config: dict[str, Any]
     ) -> tuple[list[np.ndarray], int, dict[str, Any]]:
@@ -230,19 +246,49 @@ class FlowerClient(fl.client.NumPyClient):
                 param_list = (
                     parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
                 )
+                student_before_load = self.agent.get_student_parameters()
+                student_norm_before_load = self._param_list_norm(student_before_load)
                 if param_list:
                     self.agent.set_student_parameters(param_list)
+                student_after_load = self.agent.get_student_parameters()
+                student_norm_after_load = self._param_list_norm(student_after_load)
+                loaded_delta = self._param_list_distance(student_before_load, student_after_load)
+
+                before_local_eval_metrics: dict[str, float] = {}
+                if bool(getattr(self.cfg.training, "dkd_eval_student_before_local", False)) and self.eval_enabled:
+                    try:
+                        round_index = int(round_num) if str(round_num).isdigit() else 0
+                        _, _, before_metrics = self._evaluate_closed_set(
+                            round_index,
+                            prefix="STUDENT_BEFORE_LOCAL_TRAIN",
+                            model_kind="student",
+                        )
+                        before_local_eval_metrics = {
+                            f"student_before_local_{k}": v for k, v in before_metrics.items()
+                        }
+                    except Exception:
+                        self.logger.exception("Client %s: student-before-local eval failed", self.cid)
+
                 num_steps_trained, metrics = self._perform_training_loop(
                     proximal_mu=0.0,
                     dkd_enabled=True,
                     dkd_round=int(round_num) if str(round_num).isdigit() else 0,
                 )
+                student_after_train = self.agent.get_student_parameters()
+                student_norm_after_train = self._param_list_norm(student_after_train)
+                train_delta = self._param_list_distance(student_after_load, student_after_train)
+                metrics.update(before_local_eval_metrics)
                 metrics.setdefault("total_steps", float(num_steps_trained))
                 metrics.update(
                     {
                         "dkd_student_num_parameters": float(
                             sum(p.size for p in self.agent.get_student_parameters())
                         ),
+                        "dkd_student_norm_before_load": float(student_norm_before_load),
+                        "dkd_student_norm_after_load": float(student_norm_after_load),
+                        "dkd_student_norm_after_train": float(student_norm_after_train),
+                        "dkd_student_load_delta_norm": float(loaded_delta),
+                        "dkd_student_train_delta_norm": float(train_delta),
                         "local_num_examples": self.local_data_profile["local_num_examples"],
                         "class_entropy": self.local_data_profile["class_entropy"],
                         "label_coverage": self.local_data_profile["label_coverage"],
@@ -620,8 +666,8 @@ class FlowerClient(fl.client.NumPyClient):
             self._switch_runtime_device(self._simulation_rest_device)
 
         # Optional local evaluation after local training, before server aggregation.
-        # For FedAvg/FedProx this uses the client's own held-out local test file
-        # when preprocessing generated one; it no longer prefers the shared test.
+        # FedAvg/FedProx intentionally evaluate on the shared closed-set test set,
+        # matching the existing DKD-FedOS-style reporting flow.
         if bool(getattr(self.cfg.training, "evaluate_after_local_fit", True)):
             if str(self.cfg.federated.strategy.name).lower() in {"fedavg", "fedprox"}:
                 self._run_standard_eval_logic(
@@ -738,7 +784,7 @@ class FlowerClient(fl.client.NumPyClient):
         report_prefix: str,
         metric_namespace: str,
     ) -> None:
-        """Evaluate a FedAvg/FedProx model on this client's local held-out test set."""
+        """Evaluate a FedAvg/FedProx model on the shared closed-set test set."""
         if not self.eval_enabled or self.eval_loader is None:
             metrics[f"{metric_namespace}_eval_enabled"] = 0.0
             return
@@ -850,28 +896,18 @@ class FlowerClient(fl.client.NumPyClient):
         """Prepare dataloader and output folder for closed-set evaluation."""
         paths_cfg = self.cfg.paths
 
-        test_data_key = f"test_closed_client_{self.cid}"
-        client_rel = getattr(paths_cfg, test_data_key, None)
-        shared_rel = getattr(paths_cfg, "shared_closed_set_test_data", None)
+        # FedAvg/FedProx/DKD-FedOS-style client evaluation uses the shared
+        # closed-set test dataset for every client. Do not prefer client-local
+        # held-out files here; that would change the original reporting flow.
+        test_data_key = "shared_closed_set_test"
         generic_rel = getattr(paths_cfg, "closed_set_test_data", None)
-        output_dir = getattr(getattr(self.cfg, "dataset", object()), "preprocessing", object())
-        output_dir_value = getattr(output_dir, "output_dir", None)
+        shared_rel = getattr(paths_cfg, "shared_closed_set_test_data", None)
 
         candidate_paths: list[tuple[str, str | Path]] = []
-        if client_rel:
-            candidate_paths.append(("client_config", client_rel))
-        if output_dir_value:
-            base_dir = _resolve_project_path(output_dir_value)
-            candidate_paths.extend(
-                [
-                    ("client_local", base_dir / f"client_{self.cid}_test.pt"),
-                    ("client_local_legacy", base_dir / f"test_closed_client_{self.cid}.pt"),
-                ]
-            )
         if generic_rel:
-            candidate_paths.append(("shared_generic_fallback", generic_rel))
+            candidate_paths.append(("shared_closed_set", generic_rel))
         if shared_rel:
-            candidate_paths.append(("shared_fallback", shared_rel))
+            candidate_paths.append(("shared_closed_set_alias", shared_rel))
 
         test_data_path: Path | None = None
         eval_scope = "missing"
@@ -914,13 +950,6 @@ class FlowerClient(fl.client.NumPyClient):
             eval_scope,
             len(dataset),
         )
-        if str(eval_scope).startswith("shared"):
-            self.logger.warning(
-                "Client %s is using shared closed-set eval fallback. Re-run preprocessing "
-                "to create client_%s_test.pt for true local client testing.",
-                self.cid,
-                self.cid,
-            )
 
         self.eval_enabled = True
         self.logger.info(

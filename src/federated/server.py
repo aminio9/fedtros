@@ -119,9 +119,7 @@ def _update_best_checkpoint(
     elif latest_path.exists():
         shutil.copy2(latest_path, best_path)
     else:
-        logger.warning(
-            "Cannot update best checkpoint; latest checkpoint missing: %s", latest_path
-        )
+        logger.warning("Cannot update best checkpoint; latest checkpoint missing: %s", latest_path)
         return
 
     metadata = {
@@ -143,8 +141,8 @@ def _update_best_checkpoint(
 def make_central_evaluate_fn(cfg: DictConfig, device: torch.device):
     """Build a server-side validation evaluator for clean FedAvg/FedProx.
 
-    This replaces duplicated client-side shared-test evaluation.  It evaluates
-    the aggregated global model once per round on validation.pt by default.
+    Client-side shared-test evaluation remains enabled; this central evaluator is
+    only for clean validation logging and best-checkpoint selection.
     """
     if not bool(OmegaConf.select(cfg, "federated.central_evaluate.enabled", default=False)):
         return None
@@ -311,10 +309,9 @@ def save_global_model(
         torch.save(checkpoint, round_path)
         torch.save(checkpoint, model_dir / "global_model_latest.pt")
         torch.save(checkpoint, _resolve_path(cfg.checkpointing.latest_checkpoint_path))
-        # latest_checkpoint.pt is the canonical final FedAvg/FedProx model.
-        # best_model.pt is updated by centralized validation when enabled; if no
-        # monitor metric exists, keep it synced to latest rather than freezing
-        # the first round forever.
+        # latest_checkpoint.pt is the canonical final model. best_model.pt is
+        # updated by monitored validation when available; otherwise, keep legacy
+        # behavior only when central validation is disabled.
         if bool(cfg.checkpointing.save_best):
             best_path = _resolve_path(cfg.checkpointing.best_model_path)
             monitor_metric = str(OmegaConf.select(cfg, "checkpointing.monitor_metric", default=""))
@@ -446,7 +443,7 @@ class DKDFedOSStrategy(FedAvg):
             OmegaConf.select(cfg, "strategy.min_reliable_samples", default=0.0)
         )
         self.student_aggregation_mode = str(
-            OmegaConf.select(cfg, "strategy.student_aggregation_mode", default="warm_avg_then_normalized")
+            OmegaConf.select(cfg, "strategy.student_aggregation_mode", default="reliability_weighted_average")
         ).lower()
         self.student_avg_warmup_rounds = int(
             OmegaConf.select(cfg, "strategy.student_avg_warmup_rounds", default=3)
@@ -454,15 +451,50 @@ class DKDFedOSStrategy(FedAvg):
         self.normalized_momentum_beta = float(
             OmegaConf.select(cfg, "strategy.normalized_server_momentum", default=self.momentum_beta)
         )
+        self.reliability_reference_samples = float(
+            OmegaConf.select(cfg, "strategy.reliability_reference_samples", default=1000.0)
+        )
+        self.reliability_min_weight = float(
+            OmegaConf.select(cfg, "strategy.reliability_min_weight", default=0.02)
+        )
+        self.reliability_coverage_power = float(
+            OmegaConf.select(cfg, "strategy.reliability_coverage_power", default=1.0)
+        )
+        self.reliability_entropy_power = float(
+            OmegaConf.select(cfg, "strategy.reliability_entropy_power", default=1.0)
+        )
         self.global_student_parameters = ndarrays_to_parameters(GLOBAL_AGENT_REF.get_student_parameters())
         self.momentum: list[np.ndarray] | None = None
+
+        expected_hidden = [512, 256, 128]
+        actual_hidden = list(OmegaConf.select(cfg, "training.dkd_student_hidden_dims", default=[]))
+        anchor_weight = float(OmegaConf.select(cfg, "training.dkd_global_anchor_weight", default=0.0))
+        if self.student_aggregation_mode != "reliability_weighted_average":
+            raise ValueError(
+                "DKD-FedOS V5/V6 contract violation: "
+                f"student_aggregation_mode must be reliability_weighted_average, got {self.student_aggregation_mode!r}."
+            )
+        if anchor_weight <= 0.0:
+            raise ValueError(
+                "DKD-FedOS V5/V6 contract violation: training.dkd_global_anchor_weight must be > 0."
+            )
+        if [int(v) for v in actual_hidden] != expected_hidden:
+            raise ValueError(
+                "DKD-FedOS V5/V6 contract violation: "
+                f"student_hidden_dims must be {expected_hidden}, got {actual_hidden}."
+            )
+
         logger.info(
-            "DKD-FedOS configured | student_layers=%d server_lr=%.3f momentum=%.3f min_reliable_samples=%.1f mode=%s warmup=%d",
-            len(GLOBAL_AGENT_REF.get_student_parameters()),
-            self.server_lr,
-            self.momentum_beta,
-            self.min_reliable_samples,
+            "DKD-FedOS V5 STUDENT-ANCHOR ACTIVE | "
+            "student_aggregation_mode=%s | global_anchor_enabled=%s | "
+            "global_anchor_weight=%.3f | student_hidden_dims=%s | student_layers=%d | "
+            "min_reliable_samples=%.1f | warmup=%d",
             self.student_aggregation_mode,
+            bool(anchor_weight > 0.0),
+            anchor_weight,
+            actual_hidden,
+            len(GLOBAL_AGENT_REF.get_student_parameters()),
+            self.min_reliable_samples,
             self.student_avg_warmup_rounds,
         )
 
@@ -511,6 +543,12 @@ class DKDFedOSStrategy(FedAvg):
                     "metrics": dict(fit_res.metrics),
                 }
             )
+        if records:
+            max_client_examples = max(float(record.get("num_examples", 0.0)) for record in records)
+            for record in records:
+                record["reliability_weight"] = self._client_reliability_weight(
+                    record, max_examples=max_client_examples
+                )
         if not records:
             logger.warning("DKD-FedOS round=%d has no usable client updates", server_round)
             return self.global_student_parameters, {}
@@ -532,16 +570,24 @@ class DKDFedOSStrategy(FedAvg):
 
         base = parameters_to_ndarrays(self.global_student_parameters)
         avg_weights = []
+        reliability_weights = [float(record.get("reliability_weight", 1.0)) for record in reliable_records]
+        weight_sum = max(float(np.sum(reliability_weights)), EPS)
         for layer_idx in range(len(base)):
             layer_sum = np.zeros_like(base[layer_idx])
-            for record in reliable_records:
-                layer_sum += record["weights"][layer_idx]
-            avg_weights.append(layer_sum / max(len(reliable_records), 1))
+            for record, reliability_weight in zip(reliable_records, reliability_weights, strict=True):
+                layer_sum += float(reliability_weight) * record["weights"][layer_idx]
+            avg_weights.append(layer_sum / weight_sum)
 
         distance_to_avg_before = self._weight_list_norm(
             [base_layer - avg_layer for base_layer, avg_layer in zip(base, avg_weights, strict=True)]
         )
-        use_warm_average = self.student_aggregation_mode in {"equal_average", "avg", "average"} or (
+        use_warm_average = self.student_aggregation_mode in {
+            "equal_average",
+            "avg",
+            "average",
+            "weighted_average",
+            "reliability_weighted_average",
+        } or (
             self.student_aggregation_mode == "warm_avg_then_normalized"
             and int(server_round) <= int(self.student_avg_warmup_rounds)
         )
@@ -552,7 +598,11 @@ class DKDFedOSStrategy(FedAvg):
         if use_warm_average:
             new_weights = avg_weights
             self.momentum = None
-            aggregation_mode_used = "equal_average_warmup"
+            aggregation_mode_used = (
+                "reliability_weighted_average"
+                if self.student_aggregation_mode == "reliability_weighted_average"
+                else "equal_average_warmup"
+            )
         else:
             for record in reliable_records:
                 grad = [
@@ -568,9 +618,9 @@ class DKDFedOSStrategy(FedAvg):
             mean_grad = []
             for layer_idx in range(len(base)):
                 layer_sum = np.zeros_like(base[layer_idx])
-                for grad in pseudo_gradients:
-                    layer_sum += grad[layer_idx]
-                mean_grad.append(layer_sum / max(len(pseudo_gradients), 1))
+                for grad, reliability_weight in zip(pseudo_gradients, reliability_weights, strict=True):
+                    layer_sum += float(reliability_weight) * grad[layer_idx]
+                mean_grad.append(layer_sum / weight_sum)
 
             if self.momentum is None:
                 self.momentum = [np.zeros_like(layer) for layer in mean_grad]
@@ -602,6 +652,9 @@ class DKDFedOSStrategy(FedAvg):
                 "dkd_fedos_clients": float(len(records)),
                 "dkd_fedos_included_clients": float(len(reliable_records)),
                 "dkd_fedos_excluded_clients": float(len(excluded_records)),
+                "dkd_fedos_mean_reliability_weight": float(np.mean(reliability_weights) if reliability_weights else 0.0),
+                "dkd_fedos_min_reliability_weight": float(np.min(reliability_weights) if reliability_weights else 0.0),
+                "dkd_fedos_max_reliability_weight": float(np.max(reliability_weights) if reliability_weights else 0.0),
                 "dkd_fedos_mean_student_grad_norm": float(np.mean(grad_norms) if grad_norms else 0.0),
                 "dkd_fedos_max_student_grad_norm": float(np.max(grad_norms) if grad_norms else 0.0),
                 "dkd_fedos_mean_normalized_grad_norm": float(np.mean(normalized_grad_norms) if normalized_grad_norms else 0.0),
@@ -622,6 +675,7 @@ class DKDFedOSStrategy(FedAvg):
                 "grad_norms": grad_norms,
                 "normalized_grad_norms": normalized_grad_norms,
                 "aggregation_mode": aggregation_mode_used,
+                "reliability_weights": {str(record["cid"]): float(record.get("reliability_weight", 1.0)) for record in reliable_records},
                 "distance_to_avg_before": distance_to_avg_before,
                 "distance_to_avg_after": distance_to_avg_after,
                 "global_norm_before": global_norm_before,
@@ -642,6 +696,30 @@ class DKDFedOSStrategy(FedAvg):
         )
         return self.global_student_parameters, metrics
 
+    def _client_reliability_weight(self, record: dict[str, Any], *, max_examples: float) -> float:
+        """Reliability score for student aggregation under quantity+label skew.
+
+        v6 formula requested for DKD-FedOS stability:
+
+            reliability_i = sqrt(num_samples_i / max_samples_in_round)
+                            * label_coverage_i
+                            * class_entropy_i
+
+        Then clamp into [reliability_min_weight, 1.0].  This makes clients with
+        many samples but one dominant class contribute only a small, explicit
+        anchor-preserved update instead of dominating the global student.
+        """
+        metrics = record.get("metrics", {}) or {}
+        num_examples = max(float(record.get("num_examples", 0.0)), 0.0)
+        sample_factor = float(np.sqrt(num_examples / max(float(max_examples), 1.0)))
+        sample_factor = float(np.clip(sample_factor, 0.0, 1.0))
+        coverage = float(metrics.get("label_coverage", 0.0) or 0.0)
+        entropy = float(metrics.get("class_entropy", 0.0) or 0.0)
+        coverage_factor = max(0.0, min(1.0, coverage)) ** max(self.reliability_coverage_power, 0.0)
+        entropy_factor = max(0.0, min(1.0, entropy)) ** max(self.reliability_entropy_power, 0.0)
+        weight = sample_factor * coverage_factor * entropy_factor
+        return float(np.clip(weight, self.reliability_min_weight, 1.0))
+
     def _save_student_checkpoint(self, weights: list[np.ndarray], round_num: int) -> None:
         model_dir = _resolve_path(self.cfg.checkpointing.dir)
         model_dir.mkdir(parents=True, exist_ok=True)
@@ -653,7 +731,7 @@ class DKDFedOSStrategy(FedAvg):
             "epoch": round_num,
             "global_step": round_num,
             "method": "dkd_fedos",
-            "metrics": {"federated/round": float(round_num)},
+            "metrics": {"federated/round": float(round_num), **dict(metrics or {})},
             "config": OmegaConf.to_container(self.cfg, resolve=True),
             "student_model": GLOBAL_AGENT_REF.student_model.state_dict(),
         }
@@ -829,6 +907,7 @@ class FedGPAStrategy(FedAvg):
                     "metrics": dict(fit_res.metrics),
                 }
             )
+            records[-1]["reliability_weight"] = self._client_reliability_weight(records[-1])
 
         if not records:
             return (
@@ -1947,6 +2026,7 @@ def get_strategy(cfg: DictConfig) -> Strategy:
     )
 
     central_evaluate_fn = make_central_evaluate_fn(cfg, device)
+
     args = dict(
         fraction_fit=cfg.server.fraction_fit,
         fraction_evaluate=cfg.server.fraction_evaluate,

@@ -32,7 +32,7 @@ def run_local_training_round(
     dkd_enabled: bool = False,
     dkd_round: int = 0,
     round_num: int = 0,
-    client_id: int | str | None = None,
+    client_id: str | int = 0,
     logger: logging.Logger | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """
@@ -74,17 +74,17 @@ def run_local_training_round(
         dkd_present_classes = (counts > 0).to(device)
     dkd_dataset_training = bool(getattr(cfg_training, "dkd_dataset_training", True))
 
-    # Optional deterministic seeding if cfg_training.seed exists.  Clean
-    # FedAvg/FedProx runs use a round/client-aware seed so every communication
-    # round samples a different local trajectory while remaining reproducible.
+    # Optional deterministic seeding if cfg_training.seed exists.
+    # For clean FedAvg/FedProx baselines, round-aware seeding avoids replaying
+    # exactly the same episode sequence on every communication round.
     base_seed = getattr(cfg_training, "seed", None)
     round_aware_seed = bool(getattr(cfg_training, "round_aware_seed", False))
     try:
-        client_seed_offset = int(client_id or 0) * 100_000
+        client_seed_offset = int(client_id)
     except (TypeError, ValueError):
-        client_seed_offset = 0
+        client_seed_offset = sum(ord(ch) for ch in str(client_id))
     try:
-        round_seed_offset = int(round_num or 0) * 1_000
+        round_seed_offset = int(round_num)
     except (TypeError, ValueError):
         round_seed_offset = 0
 
@@ -146,15 +146,18 @@ def run_local_training_round(
         episode_q_value = 0.0
         episode_train_steps = 0
 
-        episode_seed: int | None = None
         if base_seed is None:
             state_s, _ = env.reset()
         else:
             if round_aware_seed:
                 episode_seed = (
-                    int(base_seed) + client_seed_offset + round_seed_offset + int(ep_idx)
+                    int(base_seed)
+                    + int(client_seed_offset) * 100_000
+                    + int(round_seed_offset) * 1_000
+                    + int(ep_idx)
                 )
             else:
+                # Backward-compatible deterministic seed per episode.
                 episode_seed = int(base_seed) + int(ep_idx)
             state_s, _ = env.reset(seed=episode_seed)
 
@@ -388,9 +391,6 @@ def run_local_training_round(
         "buffer_size": float(len(buffer)),
         "epsilon": float(epsilon_scheduler.get_epsilon()),
         "proximal_mu": float(proximal_mu),
-        "round_aware_seed": float(bool(round_aware_seed)),
-        "round_seed_offset": float(round_seed_offset if round_aware_seed else 0),
-        "client_seed_offset": float(client_seed_offset if round_aware_seed else 0),
         "action_histogram": json.dumps(action_counts, sort_keys=True),
         "label_histogram": json.dumps(label_counts, sort_keys=True),
         "per_class_policy_accuracy": json.dumps(per_class_accuracy, sort_keys=True),

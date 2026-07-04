@@ -313,17 +313,8 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
         rng=rng,
         iid=bool(p_cfg.iid),
     )
-    client_test_indices = dirichlet_split(
-        test_y,
-        num_clients=num_clients,
-        alpha=float(p_cfg.alpha),
-        num_classes=num_actions,
-        rng=rng,
-        iid=bool(p_cfg.iid),
-    )
     partition_records: list[dict[str, Any]] = []
     class_distribution_rows: list[dict[str, Any]] = []
-    test_distribution_rows: list[dict[str, Any]] = []
     for zero_based_id, indices in client_indices.items():
         client_id = zero_based_id + 1
         client_indices_array = np.asarray(indices, dtype=np.int64)
@@ -334,40 +325,12 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
             y_client,
             output_dir / f"client_{client_id}_train.pt",
         )
-
-        test_indices_array = np.asarray(client_test_indices.get(zero_based_id, []), dtype=np.int64)
-        rng.shuffle(test_indices_array)
-        y_client_test = test_y[test_indices_array]
-        _save_tensor_dataset(
-            X_test[test_indices_array],
-            y_client_test,
-            output_dir / f"client_{client_id}_test.pt",
-        )
-        # Legacy alias used by older client lookup code.  Keep both names so
-        # FedAvg/FedProx/DKD-FedOS can all find the same local test partition.
-        _save_tensor_dataset(
-            X_test[test_indices_array],
-            y_client_test,
-            output_dir / f"test_closed_client_{client_id}.pt",
-        )
-
         counts = np.bincount(y_client, minlength=num_actions)[:num_actions]
-        test_counts = np.bincount(y_client_test, minlength=num_actions)[:num_actions]
         class_distribution_rows.append(
             {
                 "client_id": client_id,
                 **{
                     idx_to_label[class_id]: int(counts[class_id]) for class_id in range(num_actions)
-                },
-            }
-        )
-        test_distribution_rows.append(
-            {
-                "client_id": client_id,
-                "num_test_samples": int(len(y_client_test)),
-                **{
-                    idx_to_label[class_id]: int(test_counts[class_id])
-                    for class_id in range(num_actions)
                 },
             }
         )
@@ -379,18 +342,6 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
                     "label": int(train_y[local_idx]),
                     "label_name": idx_to_label[int(train_y[local_idx])],
                     "split": "train",
-                    "seed": seed,
-                    "alpha": float(p_cfg.alpha),
-                }
-            )
-        for local_idx in test_indices_array.tolist():
-            partition_records.append(
-                {
-                    "client_id": client_id,
-                    "sample_index": int(local_idx),
-                    "label": int(test_y[local_idx]),
-                    "label_name": idx_to_label[int(test_y[local_idx])],
-                    "split": "client_test",
                     "seed": seed,
                     "alpha": float(p_cfg.alpha),
                 }
@@ -425,10 +376,6 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
         output_dir / "client_class_distribution.csv",
         index=False,
     )
-    pd.DataFrame(test_distribution_rows).to_csv(
-        output_dir / "client_test_class_distribution.csv",
-        index=False,
-    )
     if scaler:
         joblib.dump(scaler, output_dir / "scaler.joblib")
     if encoder:
@@ -452,7 +399,6 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
         "num_validation_samples": len(val_y),
         "num_closed_test_samples": len(test_y),
         "num_open_test_samples": len(open_labels),
-        "client_local_test_files": True,
         "num_clients": num_clients,
         "alpha": float(p_cfg.alpha),
         "iid": bool(p_cfg.iid),

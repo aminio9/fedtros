@@ -2,9 +2,9 @@
 experiment:
   method: FedAvg
 
-# Clean FedAvg baseline: no cross-round local optimizer/replay/epsilon memory,
-# per-client local evaluation before/after local fit, and no generator/open-set
-# training unless explicitly overridden for a dedicated open-set experiment.
+# Clean FedAvg baseline: reset local optimizer/replay/epsilon each round,
+# keep shared-test client evaluation before/after local fit, and use central
+# validation only for best-checkpoint selection.
 federated:
   strategy:
     name: fedavg

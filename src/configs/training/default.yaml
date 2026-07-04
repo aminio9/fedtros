@@ -62,8 +62,21 @@ smoke:
 
 # DKD-FedOS / Sentinel-style dynamic knowledge distillation defaults.
 # These are inert unless the dkd_fedos strategy activates them.
-dkd_student_hidden_dims: [64, 32, 16]
-dkd_student_lr: 0.005
+dkd_student_hidden_dims: [512, 256, 128]
+dkd_student_lr: 0.001
+dkd_student_activation: gelu
+dkd_student_norm: layernorm
+dkd_student_dropout: 0.05
+dkd_dataset_min_steps: 50
+dkd_dataset_epochs_small_client: 10
+dkd_global_anchor_weight: 2.0
+dkd_global_anchor_min_weight: 0.0
+dkd_global_anchor_coverage_power: 1.0
+dkd_student_full_ce_with_anchor: true
+dkd_teacher_to_student_start_round: 1
+dkd_alignment_start_round: 2
+dkd_update_teacher_from_student: false
+dkd_student_to_teacher_start_round: 999
 dkd_task_weight: 1.0
 dkd_kd_base_temperature: 3.0
 dkd_kd_min_temperature: 1.0

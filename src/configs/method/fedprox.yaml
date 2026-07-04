@@ -3,7 +3,7 @@ experiment:
   method: FedProx
 
 # Clean FedProx baseline: identical to clean FedAvg except for the proximal
-# penalty in the local client objective. Local evaluation runs before/after fit.
+# penalty in the local client objective. Shared-test client evaluation stays on.
 federated:
   strategy:
     name: fedprox

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +20,76 @@ from src.tracking import attach_to_existing_run, initialize_run
 from src.training import run_training
 from src.utils.config import resolve_path, validate_config
 from src.utils.entrypoints import prepare_run_context
+
+
+
+
+def _enforce_dkd_fedos_v5_contract(cfg: DictConfig) -> None:
+    """Fail fast if DKD-FedOS is not running the student-anchor setup.
+
+    This prevents silent Hydra/default fallbacks where logs look like DKD-FedOS
+    but the anchor, stronger student, or reliability aggregation are not active.
+    """
+    strategy_name = str(OmegaConf.select(cfg, "strategy.name", default="")).lower()
+    if strategy_name != "dkd_fedos":
+        return
+
+    logger = logging.getLogger("run")
+    aggregation_mode = str(
+        OmegaConf.select(cfg, "federated.strategy.student_aggregation_mode", default="")
+        or OmegaConf.select(cfg, "strategy.student_aggregation_mode", default="")
+    ).lower()
+    anchor_weight = float(OmegaConf.select(cfg, "training.dkd_global_anchor_weight", default=0.0))
+    hidden_dims_raw = OmegaConf.select(cfg, "training.dkd_student_hidden_dims", default=[])
+    hidden_dims = [int(v) for v in list(hidden_dims_raw)]
+    expected_hidden = [512, 256, 128]
+    t2s_start = int(OmegaConf.select(cfg, "training.dkd_teacher_to_student_start_round", default=999))
+    align_start = int(OmegaConf.select(cfg, "training.dkd_alignment_start_round", default=999))
+    s2t_enabled = bool(OmegaConf.select(cfg, "training.dkd_update_teacher_from_student", default=False))
+
+    if aggregation_mode != "reliability_weighted_average":
+        raise ValueError(
+            "DKD-FedOS V5 STUDENT-ANCHOR is not active: "
+            f"student_aggregation_mode must be reliability_weighted_average, got {aggregation_mode!r}."
+        )
+    if anchor_weight <= 0.0:
+        raise ValueError(
+            "DKD-FedOS V5 STUDENT-ANCHOR is not active: "
+            "training.dkd_global_anchor_weight must be > 0."
+        )
+    if hidden_dims != expected_hidden:
+        raise ValueError(
+            "DKD-FedOS V5 STUDENT-ANCHOR is not active: "
+            f"student_hidden_dims must be {expected_hidden}, got {hidden_dims}."
+        )
+    if t2s_start > 1:
+        raise ValueError(
+            "DKD-FedOS V5 STUDENT-ANCHOR contract violation: "
+            f"dkd_teacher_to_student_start_round must be 1, got {t2s_start}."
+        )
+    if align_start > 2:
+        raise ValueError(
+            "DKD-FedOS V5 STUDENT-ANCHOR contract violation: "
+            f"dkd_alignment_start_round must be <= 2, got {align_start}."
+        )
+    if s2t_enabled:
+        raise ValueError(
+            "DKD-FedOS V5 STUDENT-ANCHOR contract violation: "
+            "training.dkd_update_teacher_from_student must stay false for RL safety."
+        )
+
+    logger.info(
+        "DKD-FedOS V5 STUDENT-ANCHOR ACTIVE | "
+        "student_aggregation_mode=%s | global_anchor_enabled=%s | "
+        "global_anchor_weight=%.3f | student_hidden_dims=%s | "
+        "t2s_start_round=%d | alignment_start_round=%d",
+        aggregation_mode,
+        bool(anchor_weight > 0.0),
+        anchor_weight,
+        hidden_dims,
+        t2s_start,
+        align_start,
+    )
 
 
 def _pipeline(cfg: DictConfig) -> str:
@@ -95,6 +166,8 @@ def main(cfg: DictConfig) -> None:
         with_tracker=pipeline not in {"plot"},
     )
 
+    _enforce_dkd_fedos_v5_contract(cfg)
+
     if pipeline == "preprocess":
         assert context.tracker is not None
         metadata = run_preprocessing(cfg, project_root=context.project_root)
@@ -114,6 +187,13 @@ def main(cfg: DictConfig) -> None:
             project_root=context.project_root,
             tracker=context.tracker,
         )
+        if str(OmegaConf.select(cfg, "strategy.name", default="")).lower() == "dkd_fedos":
+            # DKD-FedOS globally aggregates only the compact student.  The normal
+            # evaluator expects a full CVAE-DQN latest_checkpoint.pt, which does
+            # not exist for Sentinel-style student-only FL.  Student/teacher
+            # closed-set reports are produced during Flower evaluation instead.
+            print("DKD-FedOS: skipping standard full-agent evaluation; global object is student-only.")
+            return
         run_evaluation(
             cfg,
             project_root=context.project_root,

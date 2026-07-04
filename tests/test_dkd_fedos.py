@@ -111,3 +111,47 @@ def test_dataset_dkd_freezes_teacher_by_default_but_updates_student():
     assert metrics["dkd_dataset_train_steps"] > 0.0
     assert all(torch.allclose(a, b) for a, b in zip(teacher_before, teacher_after, strict=True))
     assert any(not np.allclose(a, b) for a, b in zip(student_before, student_after, strict=True))
+
+
+def test_one_class_dataset_dkd_updates_student_with_anchor_without_teacher_update():
+    cfg = _training_cfg()
+    cfg.dkd_dataset_training = True
+    cfg.dkd_dataset_update_teacher = False
+    cfg.dkd_update_teacher_from_student = False
+    cfg.dkd_local_epochs = 1
+    cfg.dkd_batch_size = 4
+    cfg.dkd_teacher_to_student_start_round = 1
+    cfg.dkd_alignment_start_round = 1
+    cfg.dkd_student_to_teacher_start_round = 999
+    cfg.dkd_student_full_ce_with_anchor = True
+    cfg.dkd_global_anchor_weight = 0.75
+    factory = OpenSetQChainModelFactory(_model_cfg())
+    agent = Agent(factory, cfg, torch.device("cpu"))
+
+    teacher_before = [p.detach().clone() for p in agent.prior_net.parameters()] + [
+        p.detach().clone() for p in agent.value_net_main.parameters()
+    ]
+    student_before = [p.copy() for p in agent.get_student_parameters()]
+
+    features = torch.randn(12, 5)
+    labels = torch.zeros(12, dtype=torch.long)
+    metrics = agent.train_dkd_fedos_dataset(
+        features=features,
+        labels=labels,
+        cfg_training=cfg,
+        round_num=2,
+        class_weights=torch.ones(4),
+        present_classes=torch.tensor([1, 0, 0, 0], dtype=torch.bool),
+        device=torch.device("cpu"),
+    )
+
+    teacher_after = [p.detach().clone() for p in agent.prior_net.parameters()] + [
+        p.detach().clone() for p in agent.value_net_main.parameters()
+    ]
+    student_after = agent.get_student_parameters()
+
+    assert metrics["avg_dkd_student_task_loss"] > 0.0
+    assert metrics["avg_dkd_global_anchor_loss"] >= 0.0
+    assert metrics["dkd_global_anchor_weight"] > 0.0
+    assert all(torch.allclose(a, b) for a, b in zip(teacher_before, teacher_after, strict=True))
+    assert any(not np.allclose(a, b) for a, b in zip(student_before, student_after, strict=True))

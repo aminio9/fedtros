@@ -13,6 +13,7 @@ from src.models.models import OpenSetQChainModelFactory, ValueNetwork
 from src.models.student import StudentIDSModel
 from src.rl.class_balance import class_balanced_cross_entropy
 from src.rl.distillation import (
+    directional_kd_loss,
     kd_temperature,
     mse_cosine_alignment,
     sentinel_bidirectional_kd_components,
@@ -166,7 +167,22 @@ class Agent:
             input_dim=model_factory.state_dim,
             num_classes=model_factory.num_actions,
             hidden_dims=student_hidden,
+            activation=str(getattr(train_cfg, "dkd_student_activation", "relu")),
+            dropout=float(getattr(train_cfg, "dkd_student_dropout", 0.0)),
+            norm=str(getattr(train_cfg, "dkd_student_norm", "none")),
         ).to(device)
+        self.student_anchor_model = StudentIDSModel(
+            input_dim=model_factory.state_dim,
+            num_classes=model_factory.num_actions,
+            hidden_dims=student_hidden,
+            activation=str(getattr(train_cfg, "dkd_student_activation", "relu")),
+            dropout=float(getattr(train_cfg, "dkd_student_dropout", 0.0)),
+            norm=str(getattr(train_cfg, "dkd_student_norm", "none")),
+        ).to(device)
+        self.student_anchor_model.load_state_dict(self.student_model.state_dict())
+        self.student_anchor_model.eval()
+        for param in self.student_anchor_model.parameters():
+            param.requires_grad_(False)
         teacher_feature_dim = int(model_factory.latent_dim) + int(model_factory.num_actions)
         self.teacher_to_student_aligner = nn.Linear(
             teacher_feature_dim, int(self.student_model.feature_dim)
@@ -216,6 +232,8 @@ class Agent:
             self.generation_net.to(target_device)
         if hasattr(self, "student_model"):
             self.student_model.to(target_device)
+        if hasattr(self, "student_anchor_model"):
+            self.student_anchor_model.to(target_device)
         if hasattr(self, "teacher_to_student_aligner"):
             self.teacher_to_student_aligner.to(target_device)
         self._move_optimizer_state(self.optimizer_prior, target_device)
@@ -650,13 +668,50 @@ class Agent:
             teacher_features = self._teacher_distillation_features(mu_teacher, teacher_logits_snapshot)
 
         student_features, student_logits = self.student_model(states_s)
-        student_task_loss = self._masked_class_balanced_ce(
-            student_logits,
-            labels,
-            class_weights,
-            present_classes,
-            label_smoothing=label_smoothing,
-        )
+        # v5: local student CE should still learn on one-class clients.
+        # Missing global knowledge is protected by the frozen global-student
+        # anchor below, instead of returning zero CE for one-class clients.
+        if bool(getattr(self.train_cfg, "dkd_student_full_ce_with_anchor", True)):
+            student_task_loss = class_balanced_cross_entropy(
+                student_logits,
+                labels,
+                class_weights,
+                label_smoothing=label_smoothing,
+            )
+        else:
+            student_task_loss = self._masked_class_balanced_ce(
+                student_logits,
+                labels,
+                class_weights,
+                present_classes,
+                label_smoothing=label_smoothing,
+            )
+
+        anchor_loss = torch.zeros((), device=self.device)
+        anchor_weight = 0.0
+        class_coverage = 1.0
+        if present_classes is not None:
+            present_mask = present_classes.to(self.device).bool().view(-1)[: self.action_dim]
+            class_coverage = float(present_mask.float().mean().detach().item()) if present_mask.numel() else 1.0
+        base_anchor_weight = float(getattr(self.train_cfg, "dkd_global_anchor_weight", 2.0))
+        if base_anchor_weight > 0.0 and hasattr(self, "student_anchor_model"):
+            anchor_power = float(getattr(self.train_cfg, "dkd_global_anchor_coverage_power", 1.0))
+            anchor_min = float(getattr(self.train_cfg, "dkd_global_anchor_min_weight", 0.0))
+            # v6 hard rule: low-coverage clients must be anchored strongly.
+            # With default base_anchor_weight=2.0, one-class/5-class clients use
+            # roughly 1.6x anchor pressure, while all-class clients use 0.0.
+            coverage_gap = max(0.0, min(1.0, 1.0 - float(class_coverage)))
+            coverage_factor = max(anchor_min, coverage_gap ** max(anchor_power, 0.0))
+            anchor_weight = base_anchor_weight * coverage_factor
+            self.student_anchor_model.eval()
+            with torch.no_grad():
+                _anchor_features, anchor_logits = self.student_anchor_model(states_s)
+            anchor_loss = directional_kd_loss(
+                anchor_logits,
+                student_logits,
+                temperature=temperature,
+                mean_class_weight=1.0,
+            )
         t2s_component, _s2t_component_for_stats, stats = sentinel_bidirectional_kd_components(
             teacher_logits_snapshot,
             student_logits,
@@ -681,6 +736,8 @@ class Agent:
         student_objective = (
             float(getattr(self.train_cfg, "dkd_student_task_weight", 1.0)) * student_task_loss
         )
+        if anchor_weight > 0.0:
+            student_objective = student_objective + anchor_weight * anchor_loss
         if t2s_enabled:
             student_objective = student_objective + self.dkd_lambda_kd * t2s_component
         if align_enabled:
@@ -692,6 +749,10 @@ class Agent:
                 max_norm=float(getattr(self.train_cfg, "dkd_grad_clip_norm", 1.0)),
             )
             self.optimizer_dkd.step()
+
+        stats["global_anchor_loss"] = float(anchor_loss.detach().item())
+        stats["global_anchor_weight"] = float(anchor_weight)
+        stats["class_coverage"] = float(class_coverage)
 
         # Stage C: global student -> teacher.  Crucially, this pass is not
         # protected against absent classes; it is the only path that can teach
@@ -775,6 +836,12 @@ class Agent:
         if len(dataset) == 0:
             return {"dkd_dataset_train_steps": 0.0}
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=False)
+        steps_per_epoch = max(int(np.ceil(len(dataset) / max(batch_size, 1))), 1)
+        min_steps = max(int(getattr(cfg_training, "dkd_dataset_min_steps", 0)), 0)
+        small_client_epochs = max(int(getattr(cfg_training, "dkd_dataset_epochs_small_client", local_epochs)), 1)
+        if steps_per_epoch * local_epochs < min_steps:
+            local_epochs = max(local_epochs, small_client_epochs)
+        target_steps = max(steps_per_epoch * local_epochs, min_steps)
         if class_weights is not None:
             class_weights = class_weights.to(device)
         if present_classes is not None:
@@ -794,10 +861,16 @@ class Agent:
             "student_conf": 0.0,
             "t2s_enabled": 0.0,
             "s2t_enabled": 0.0,
+            "global_anchor": 0.0,
+            "global_anchor_weight": 0.0,
         }
         train_steps = 0
-        for _epoch in range(local_epochs):
+        epoch_idx = 0
+        while train_steps < target_steps:
+            epoch_idx += 1
             for batch_features, batch_labels in loader:
+                if train_steps >= target_steps:
+                    break
                 batch_features = batch_features.to(device)
                 batch_labels = batch_labels.to(device).long().view(-1).clamp(0, self.action_dim - 1)
 
@@ -885,6 +958,8 @@ class Agent:
                 totals["t2s"] += float(t2s_loss.detach().item())
                 totals["s2t"] += float(s2t_loss.detach().item())
                 totals["align"] += float(align_loss.detach().item())
+                totals["global_anchor"] += float(stats.get("global_anchor_loss", 0.0))
+                totals["global_anchor_weight"] += float(stats.get("global_anchor_weight", 0.0))
                 totals["agreement"] += float(stats.get("agreement", 0.0))
                 totals["correct_agreement"] += float(stats.get("correct_agreement", 0.0))
                 totals["teacher_acc"] += float(stats.get("teacher_batch_accuracy", 0.0))
@@ -898,11 +973,15 @@ class Agent:
         denom = max(train_steps, 1)
         metrics = {
             "dkd_dataset_train_steps": float(train_steps),
+            "dkd_dataset_target_steps": float(target_steps),
+            "dkd_dataset_effective_epochs": float(epoch_idx),
             "avg_dkd_teacher_task_loss": totals["teacher_task"] / denom,
             "avg_dkd_student_task_loss": totals["student_task"] / denom,
             "avg_dkd_t2s_loss": totals["t2s"] / denom,
             "avg_dkd_s2t_loss": totals["s2t"] / denom,
             "avg_dkd_align_loss": totals["align"] / denom,
+            "avg_dkd_global_anchor_loss": totals["global_anchor"] / denom,
+            "dkd_global_anchor_weight": totals["global_anchor_weight"] / denom,
             "dkd_agreement": totals["agreement"] / denom,
             "dkd_correct_agreement": totals["correct_agreement"] / denom,
             "dkd_teacher_batch_accuracy": totals["teacher_acc"] / denom,
@@ -931,10 +1010,11 @@ class Agent:
             metrics["avg_dkd_teacher_task_loss"] + metrics["avg_dkd_student_task_loss"]
         )
         active_logger.info(
-            "DKD-FedOS dataset training | steps=%d teacher_ce=%.4f student_ce=%.4f t2s=%.4f s2t=%.4f align=%.4f",
+            "DKD-FedOS dataset training | steps=%d teacher_ce=%.4f student_ce=%.4f anchor=%.4f t2s=%.4f s2t=%.4f align=%.4f",
             train_steps,
             metrics["avg_dkd_teacher_task_loss"],
             metrics["avg_dkd_student_task_loss"],
+            metrics["avg_dkd_global_anchor_loss"],
             metrics["avg_dkd_t2s_loss"],
             metrics["avg_dkd_s2t_loss"],
             metrics["avg_dkd_align_loss"],
@@ -1107,11 +1187,16 @@ class Agent:
             raise ValueError(
                 f"Student parameter mismatch: expected {len(keys)}, received {len(parameters)}"
             )
-        self.student_model.load_state_dict(
-            OrderedDict(
-                zip(keys, [torch.tensor(p, device=self.device) for p in parameters], strict=True)
-            )
+        state = OrderedDict(
+            zip(keys, [torch.tensor(p, device=self.device) for p in parameters], strict=True)
         )
+        self.student_model.load_state_dict(state)
+        # Frozen copy of the just-received global student.  Local DKD uses this
+        # as an anchor so one/two-class clients can adapt locally without
+        # erasing global logits for absent classes.
+        if hasattr(self, "student_anchor_model"):
+            self.student_anchor_model.load_state_dict(self.student_model.state_dict())
+            self.student_anchor_model.eval()
 
     def get_federated_parameters(self) -> list[np.ndarray]:
         """

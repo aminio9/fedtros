@@ -52,7 +52,6 @@ paths:
   closed_set_test_data: ${dataset.preprocessing.output_dir}/shared_closed_set_test.pt
   open_set_test_data: ${dataset.preprocessing.output_dir}/shared_open_set_test.pt
   data_client_template: ${dataset.preprocessing.output_dir}/client_{client_id}_train.pt
-  test_client_template: ${dataset.preprocessing.output_dir}/client_{client_id}_test.pt
   data_client_1: ${dataset.preprocessing.output_dir}/client_1_train.pt
   model_dir: ${checkpointing.dir}
   class_names: ${dataset.preprocessing.output_dir}/class_names.json

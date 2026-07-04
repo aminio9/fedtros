@@ -242,3 +242,19 @@ training.dkd_student_to_teacher_start_round=999
 ```
 
 So the RL teacher is still trained by the normal replay-buffer path, while the dataset DKD phase trains only the shared student and aligner from a frozen teacher.
+
+## DKD-FedOS v5
+
+v5 adds global-student anchoring, reliability-weighted aggregation, a stronger student MLP, and before/after student diagnostics.  The RL teacher remains protected: dataset DKD trains the student and aligner by default, not the CVAE-DQN teacher.
+
+Recommended debug run:
+
+```bash
+poetry run python run.py experiment=exp1 +method=dkd_fedos seed=42 \
+  federated.num_clients=3 federated.num_rounds=8 \
+  training.local_episodes_per_round=10 dataset.preprocessing.iid=true \
+  dataset.preprocessing.validation_split=0.1 \
+  2>&1 | tee dkd_fedos_v5_iid.log
+```
+
+For harsh non-IID, check `dkd_student_train_delta_norm`, `avg_dkd_global_anchor_loss`, `dkd_global_anchor_weight`, and server reliability weights before trusting accuracy.

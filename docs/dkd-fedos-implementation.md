@@ -249,3 +249,85 @@ dkd_dataset_updates_teacher = 0
 dkd_update_teacher_from_student = 0
 dkd_replay_buffer_delta = 0
 ```
+
+## DKD-FedOS v5 student-anchor fix
+
+v5 fixes the issue where one-class or low-coverage clients barely changed the local student, or changed it only toward their local class.  The student now uses full-logit class-balanced CE plus a frozen copy of the incoming global student as an anchor.
+
+At the start of each client round:
+
+```text
+server global student -> client student
+client copies that loaded student into student_anchor_model (frozen)
+```
+
+During dataset DKD:
+
+```text
+L_student = CBCE_full(student_logits, y)
+          + lambda_anchor * KL(anchor_logits || student_logits)
+          + lambda_KD * KD(teacher_logits || student_logits)
+          + lambda_align * feature_alignment
+```
+
+The anchor weight grows when label coverage is low:
+
+```text
+anchor_weight = base_anchor_weight * max(min_anchor, (1 - label_coverage)^power)
+```
+
+So a one-class client can still learn its local class, but the frozen global-student anchor prevents it from erasing logits for missing classes.
+
+The teacher remains RL-safe by default:
+
+```yaml
+dkd_dataset_update_teacher: false
+dkd_update_teacher_from_student: false
+```
+
+Only the student and aligner are updated by dataset DKD.
+
+## v5 aggregation fix
+
+Server aggregation is now reliability-weighted by default:
+
+```yaml
+student_aggregation_mode: reliability_weighted_average
+```
+
+Each client receives a reliability score from:
+
+```text
+sample_factor * label_coverage * class_entropy
+```
+
+This prevents a high-sample but one-class client from dominating the global student.  The monitor log includes reliability weights for each included client.
+
+## v5 stronger student
+
+The default student is now stronger but still much smaller than the CVAE-DQN teacher:
+
+```yaml
+dkd_student_hidden_dims: [256, 128, 64]
+dkd_student_activation: gelu
+dkd_student_norm: layernorm
+dkd_student_dropout: 0.1
+```
+
+## v5 debugging logs
+
+Client fit metrics now include:
+
+```text
+dkd_student_norm_before_load
+dkd_student_norm_after_load
+dkd_student_norm_after_train
+dkd_student_load_delta_norm
+dkd_student_train_delta_norm
+student_before_local_accuracy
+student_before_local_prediction_histogram
+avg_dkd_global_anchor_loss
+dkd_global_anchor_weight
+```
+
+These show whether the global student is actually loaded and whether local student training changes it.
