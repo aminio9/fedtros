@@ -155,3 +155,44 @@ def test_one_class_dataset_dkd_updates_student_with_anchor_without_teacher_updat
     assert metrics["dkd_global_anchor_weight"] > 0.0
     assert all(torch.allclose(a, b) for a, b in zip(teacher_before, teacher_after, strict=True))
     assert any(not np.allclose(a, b) for a, b in zip(student_before, student_after, strict=True))
+
+
+def test_student_reconstruction_head_trains_only_when_enabled():
+    cfg = _training_cfg()
+    cfg.dkd_dataset_training = True
+    cfg.dkd_dataset_update_teacher = False
+    cfg.dkd_update_teacher_from_student = False
+    cfg.dkd_local_epochs = 1
+    cfg.dkd_batch_size = 4
+    cfg.dkd_teacher_to_student_start_round = 1
+    cfg.dkd_alignment_start_round = 1
+    cfg.dkd_student_to_teacher_start_round = 999
+    cfg.dkd_student_reconstruction_enabled = True
+    cfg.dkd_student_reconstruction_weight = 0.1
+    cfg.dkd_student_decoder_hidden_dims = [6]
+    cfg.dkd_student_decoder_dropout = 0.0
+    cfg.dkd_student_decoder_class_condition = True
+
+    factory = OpenSetQChainModelFactory(_model_cfg())
+    agent = Agent(factory, cfg, torch.device("cpu"))
+    decoder_params_before = [p.detach().clone() for p in agent.student_model.decoder.parameters()]
+
+    features = torch.randn(16, 5)
+    labels = torch.tensor([0, 1, 2, 3] * 4, dtype=torch.long)
+    metrics = agent.train_dkd_fedos_dataset(
+        features=features,
+        labels=labels,
+        cfg_training=cfg,
+        round_num=2,
+        class_weights=torch.ones(4),
+        present_classes=torch.ones(4, dtype=torch.bool),
+        device=torch.device("cpu"),
+    )
+
+    decoder_params_after = [p.detach().clone() for p in agent.student_model.decoder.parameters()]
+    assert metrics["dkd_student_reconstruction_enabled_rate"] > 0.0
+    assert metrics["avg_dkd_student_reconstruction_loss"] > 0.0
+    assert any(
+        not torch.allclose(a, b)
+        for a, b in zip(decoder_params_before, decoder_params_after, strict=True)
+    )

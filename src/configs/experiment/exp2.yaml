@@ -31,9 +31,22 @@ dataset:
     output_dir: ${tracking.run_dir}/processed
     alpha: 1.0
     iid: true
+training:
+  # Phase 1: train the global student reconstruction head only for open-set
+  # experiments. Closed-set E1/E3 keep the old classifier-only behavior.
+  generator:
+    enabled: true
+  dkd_student_reconstruction_enabled: true
+  dkd_student_reconstruction_weight: 0.10
+  dkd_student_decoder_hidden_dims: [128, 256]
+  dkd_student_decoder_dropout: 0.05
+  dkd_student_decoder_class_condition: true
 open_set:
   evt:
     enabled: true
+    backend: student_decoder
+    classwise: true
+    threshold_method: mef
 evaluation:
   mode: open_set
   export_latent_embeddings: true

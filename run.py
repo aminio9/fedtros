@@ -12,7 +12,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from src.artifacts.suite import build_suite_artifacts
 from src.data import run_preprocessing
-from src.evaluation import run_evaluation
+from src.evaluation import run_dkd_fedos_student_open_set_evaluation, run_evaluation
 from src.evaluation.compare import compare_runs
 from src.federated import run_federated_simulation
 from src.plotting import generate_plots
@@ -78,17 +78,26 @@ def _enforce_dkd_fedos_v5_contract(cfg: DictConfig) -> None:
             "training.dkd_update_teacher_from_student must stay false for RL safety."
         )
 
+    student_rec_enabled = bool(
+        OmegaConf.select(cfg, "training.dkd_student_reconstruction_enabled", default=False)
+    )
+    student_rec_weight = float(
+        OmegaConf.select(cfg, "training.dkd_student_reconstruction_weight", default=0.0)
+    )
     logger.info(
         "DKD-FedOS V5 STUDENT-ANCHOR ACTIVE | "
         "student_aggregation_mode=%s | global_anchor_enabled=%s | "
         "global_anchor_weight=%.3f | student_hidden_dims=%s | "
-        "t2s_start_round=%d | alignment_start_round=%d",
+        "t2s_start_round=%d | alignment_start_round=%d | "
+        "student_reconstruction_enabled=%s | student_reconstruction_weight=%.3f",
         aggregation_mode,
         bool(anchor_weight > 0.0),
         anchor_weight,
         hidden_dims,
         t2s_start,
         align_start,
+        student_rec_enabled,
+        student_rec_weight,
     )
 
 
@@ -188,11 +197,20 @@ def main(cfg: DictConfig) -> None:
             tracker=context.tracker,
         )
         if str(OmegaConf.select(cfg, "strategy.name", default="")).lower() == "dkd_fedos":
-            # DKD-FedOS globally aggregates only the compact student.  The normal
-            # evaluator expects a full CVAE-DQN latest_checkpoint.pt, which does
-            # not exist for Sentinel-style student-only FL.  Student/teacher
-            # closed-set reports are produced during Flower evaluation instead.
-            print("DKD-FedOS: skipping standard full-agent evaluation; global object is student-only.")
+            # DKD-FedOS globally aggregates only the compact student.  For
+            # closed-set experiments the client-side Flower reports are enough.
+            # For open-set E2/E4 Phase 2, evaluate the aggregated global student
+            # decoder with class-wise Yang-style EVT instead of the local teacher
+            # generator.
+            if bool(OmegaConf.select(cfg, "open_set.evt.enabled", default=False)):
+                run_dkd_fedos_student_open_set_evaluation(
+                    cfg,
+                    project_root=context.project_root,
+                    device=context.device,
+                    tracker=context.tracker,
+                )
+            else:
+                print("DKD-FedOS: skipping standard full-agent evaluation; global object is student-only.")
             return
         run_evaluation(
             cfg,

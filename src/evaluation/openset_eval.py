@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import json
 import logging
 from pathlib import Path
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -25,9 +28,9 @@ logger = logging.getLogger("OpenSetEval")
 
 UNKNOWN_LABEL_ID = -1
 OPEN_SET_LABEL_ID = 99
-
-# CRITICAL: Scaling factor to prevent precision collapse on tiny errors
 ERROR_SCALE_FACTOR = 100000.0
+
+BackendName = Literal["student_decoder", "teacher_generator"]
 
 
 def _ensure_dir(path: Path) -> Path:
@@ -41,6 +44,19 @@ def _cfg_value(cfg, key: str, default):
 
 def _error_scale_factor(evt_cfg) -> float:
     return float(_cfg_value(evt_cfg, "error_scale_factor", ERROR_SCALE_FACTOR))
+
+
+def _evt_backend(evt_cfg) -> BackendName:
+    raw = str(
+        _cfg_value(
+            evt_cfg,
+            "backend",
+            _cfg_value(evt_cfg, "reconstruction_backend", "teacher_generator"),
+        )
+    ).lower()
+    if raw in {"student", "student_decoder", "global_student", "global_student_decoder"}:
+        return "student_decoder"
+    return "teacher_generator"
 
 
 def _open_set_label_order(
@@ -64,7 +80,75 @@ def _save_labeled_confusion_matrix(
     return frame
 
 
-def _compute_reconstruction_errors(
+def _student_reconstruct(
+    *,
+    student_model: torch.nn.Module,
+    states_s: torch.Tensor,
+    class_condition: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if not bool(getattr(student_model, "reconstruction_enabled", False)):
+        raise RuntimeError(
+            "EVT backend=student_decoder requires training.dkd_student_reconstruction_enabled=true."
+        )
+    features, logits = student_model(states_s)
+    recon = student_model.reconstruct(features, class_condition)
+    return features, logits, recon
+
+
+def _compute_student_reconstruction_errors(
+    features: torch.Tensor,
+    labels: torch.Tensor,
+    *,
+    batch_size: int,
+    student_model: torch.nn.Module,
+    device: torch.device,
+    error_scale_factor: float,
+    num_classes: int | None = None,
+    correct_only: bool = True,
+) -> dict[int, np.ndarray]:
+    """Collect class-wise known reconstruction errors from the global student decoder.
+
+    EVT fitting uses the true known label as the decoder condition and keeps only
+    correctly classified samples by default. This mirrors the Yang-style known
+    reconstruction-error calibration and avoids fitting unknown tails from
+    misclassified/ambiguous known samples.
+    """
+    loss_fn = nn.MSELoss(reduction="none")
+    dataset = TensorDataset(features.float(), labels.long())
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    per_class_errs: dict[int, list[np.ndarray]] = {}
+    num_classes = int(num_classes or getattr(student_model, "num_classes"))
+
+    with torch.no_grad():
+        student_model.eval()
+        for states_s, true_labels in loader:
+            states_s = states_s.to(device).float()
+            true_labels = true_labels.to(device).long()
+            known_mask = (true_labels >= 0) & (true_labels < num_classes)
+            if not bool(known_mask.any().item()):
+                continue
+
+            states_known = states_s[known_mask]
+            labels_known = true_labels[known_mask]
+            _features_s, logits_s, recon = _student_reconstruct(
+                student_model=student_model,
+                states_s=states_known,
+                class_condition=labels_known,
+            )
+            preds = logits_s.argmax(dim=1)
+            errs = loss_fn(recon, states_known).mean(dim=1) * error_scale_factor
+
+            for cls_id in torch.unique(labels_known).tolist():
+                class_mask = labels_known == int(cls_id)
+                if correct_only:
+                    class_mask = class_mask & (preds == labels_known)
+                if class_mask.any():
+                    per_class_errs.setdefault(int(cls_id), []).append(errs[class_mask].cpu().numpy())
+
+    return {cls_id: np.concatenate(chunks) for cls_id, chunks in per_class_errs.items() if chunks}
+
+
+def _compute_teacher_reconstruction_errors(
     features: torch.Tensor,
     labels: torch.Tensor,
     *,
@@ -77,9 +161,8 @@ def _compute_reconstruction_errors(
     error_scale_factor: float,
 ) -> dict[int, np.ndarray]:
     loss_fn = nn.MSELoss(reduction="none")
-    dataset = TensorDataset(features, labels)
+    dataset = TensorDataset(features.float(), labels.long())
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
-
     per_class_errs: dict[int, list[np.ndarray]] = {}
 
     with torch.no_grad():
@@ -89,16 +172,19 @@ def _compute_reconstruction_errors(
         generation_net.eval()
 
         for states_s, true_actions in loader:
-            states_s = states_s.to(device)
-            true_actions = true_actions.to(device)
+            states_s = states_s.to(device).float()
+            true_actions = true_actions.to(device).long()
+            known_mask = (true_actions >= 0) & (true_actions < int(value_net_main.num_actions))
+            if not bool(known_mask.any().item()):
+                continue
+            states_s = states_s[known_mask]
+            true_actions = true_actions[known_mask]
 
             mu_p, _ = prior_net(states_s)
             preds = value_net_main(mu_p, states_s).argmax(dim=1)
-
-            a_onehot = to_one_hot(preds, value_net_main.num_actions)
+            a_onehot = to_one_hot(true_actions, value_net_main.num_actions)
             mu_q, _ = recognition_net(states_s, a_onehot)
             s_recon = generation_net(mu_q, a_onehot)
-
             errs = loss_fn(s_recon, states_s).mean(dim=1) * error_scale_factor
 
             for cls_id in torch.unique(true_actions).tolist():
@@ -109,23 +195,20 @@ def _compute_reconstruction_errors(
     return {cls_id: np.concatenate(chunks) for cls_id, chunks in per_class_errs.items() if chunks}
 
 
-def fit_evt_models(
+# Backward-compatible name used by older tests/imports.
+def _compute_reconstruction_errors(
     features: torch.Tensor,
     labels: torch.Tensor,
     *,
     batch_size: int,
-    evt_cfg,
     prior_net: torch.nn.Module,
     recognition_net: torch.nn.Module,
     value_net_main: torch.nn.Module,
     generation_net: torch.nn.Module,
     device: torch.device,
-    logger: logging.Logger | None = None,
-) -> dict[int, EVTModel]:
-    active_logger = logger or logging.getLogger("OpenSetEval")
-    error_scale = _error_scale_factor(evt_cfg)
-
-    per_class_errors = _compute_reconstruction_errors(
+    error_scale_factor: float,
+) -> dict[int, np.ndarray]:
+    return _compute_teacher_reconstruction_errors(
         features,
         labels,
         batch_size=batch_size,
@@ -134,66 +217,134 @@ def fit_evt_models(
         value_net_main=value_net_main,
         generation_net=generation_net,
         device=device,
-        error_scale_factor=error_scale,
+        error_scale_factor=error_scale_factor,
     )
 
+
+def _fit_evt_from_errors(
+    per_class_errors: dict[int, np.ndarray], *, evt_cfg, logger: logging.Logger) -> dict[int, EVTModel]:
     evt_models: dict[int, EVTModel] = {}
+    tail_percent = float(_cfg_value(evt_cfg, "tail_size_percent", 0.10))
+    min_errs = int(_cfg_value(evt_cfg, "min_errors_per_class", 50))
+    min_tail = int(_cfg_value(evt_cfg, "min_tail_size", 20))
+    target_fpr = float(_cfg_value(evt_cfg, "target_known_fpr", 0.05))
+    threshold_method = str(_cfg_value(evt_cfg, "threshold_method", "mef"))
+    mef_min_q = float(_cfg_value(evt_cfg, "mef_min_quantile", 0.60))
+    mef_max_q = float(_cfg_value(evt_cfg, "mef_max_quantile", 0.95))
+    mef_candidates = int(_cfg_value(evt_cfg, "mef_num_candidates", 40))
 
-    # Load config
-    tail_percent = float(evt_cfg.tail_size_percent)
-    min_errs = int(evt_cfg.min_errors_per_class)
-    min_tail = int(evt_cfg.min_tail_size)
-
-    # CRITICAL: Calculate q directly from tail_percent.
-    # If tail_percent is 1.0, q becomes 0.0 (use all data).
-    q = max(0.0, 1.0 - tail_percent)
-
-    for cls_id, errs in per_class_errors.items():
+    for cls_id, errs in sorted(per_class_errors.items()):
+        errs = np.asarray(errs, dtype=np.float64)
+        errs = errs[np.isfinite(errs)]
         if len(errs) < min_errs:
-            active_logger.warning("Insufficient training errors for class %d; skipping EVT.", cls_id)
+            logger.warning(
+                "Insufficient reconstruction errors for class %d; skipping EVT | have=%d min=%d",
+                cls_id,
+                len(errs),
+                min_errs,
+            )
             continue
-
-        # Determine Threshold
-        threshold = float(np.quantile(errs, q))
-
-        # IMPORTANT: If using 100% tail (q=0), threshold is min(errs).
-        # We subtract epsilon to ensure the min value is included in 'tail' > threshold
-        if q == 0.0:
-            threshold -= 1e-9
-
-        tail = errs[errs > threshold] - threshold
-
-        # Fallback: If tail is somehow too small, relax q
-        if tail.size < min_tail:
-            active_logger.warning("Insufficient tail for class %d; relaxing percentile.", cls_id)
-            new_q = max(0.0, q - 0.2)
-            threshold = float(np.quantile(errs, new_q))
-            if new_q == 0.0:
-                threshold -= 1e-9
-
-            tail = errs[errs > threshold] - threshold
-
-            if tail.size < min_tail:
-                active_logger.warning("Still insufficient tail for class %d; skipping.", cls_id)
-                continue
-
-        # Fit EVT with the FIXED threshold
-        evt_model = EVTModel(tail_percent)
-        evt_model.fit(errs, fixed_threshold=threshold, logger=active_logger)
-
-        evt_models[cls_id] = evt_model
-        active_logger.info(
-            "Fitted EVT for class %d: %d tail samples (q=%.2f), threshold %.6f",
-            cls_id,
-            tail.size,
-            q,
-            threshold,
+        evt_model = EVTModel(
+            tail_size_percent=tail_percent,
+            threshold_method=threshold_method,
+            target_fpr=target_fpr,
+        )
+        evt_model.fit(
+            errs,
+            target_fpr=target_fpr,
+            min_tail_size=min_tail,
+            threshold_method=threshold_method,
+            mef_min_quantile=mef_min_q,
+            mef_max_quantile=mef_max_q,
+            mef_num_candidates=mef_candidates,
+            logger=logger,
+        )
+        evt_models[int(cls_id)] = evt_model
+        logger.info(
+            "Fitted class-wise EVT | class=%d | errors=%d | u=%.6g | decision_T=%.6g | tail=%d | method=%s",
+            int(cls_id),
+            int(evt_model.num_errors),
+            float(evt_model.threshold_u or 0.0),
+            float(evt_model.decision_threshold or 0.0),
+            int(evt_model.tail_size),
+            str(evt_model.threshold_selection.get("method", threshold_method)),
         )
 
     if not evt_models:
         raise RuntimeError("Failed to fit any EVT models.")
-
     return evt_models
+
+
+def fit_evt_models(
+    features: torch.Tensor,
+    labels: torch.Tensor,
+    *,
+    batch_size: int,
+    evt_cfg,
+    prior_net: torch.nn.Module | None = None,
+    recognition_net: torch.nn.Module | None = None,
+    value_net_main: torch.nn.Module | None = None,
+    generation_net: torch.nn.Module | None = None,
+    student_model: torch.nn.Module | None = None,
+    device: torch.device,
+    logger: logging.Logger | None = None,
+) -> dict[int, EVTModel]:
+    active_logger = logger or logging.getLogger("OpenSetEval")
+    error_scale = _error_scale_factor(evt_cfg)
+    backend = _evt_backend(evt_cfg)
+
+    if backend == "student_decoder":
+        if student_model is None:
+            raise ValueError("fit_evt_models backend=student_decoder requires student_model.")
+        per_class_errors = _compute_student_reconstruction_errors(
+            features,
+            labels,
+            batch_size=batch_size,
+            student_model=student_model,
+            device=device,
+            error_scale_factor=error_scale,
+            correct_only=bool(_cfg_value(evt_cfg, "fit_correct_only", True)),
+        )
+    else:
+        if any(m is None for m in (prior_net, recognition_net, value_net_main, generation_net)):
+            raise ValueError("teacher_generator EVT requires prior/recognition/value/generation nets.")
+        per_class_errors = _compute_teacher_reconstruction_errors(
+            features,
+            labels,
+            batch_size=batch_size,
+            prior_net=prior_net,
+            recognition_net=recognition_net,
+            value_net_main=value_net_main,
+            generation_net=generation_net,
+            device=device,
+            error_scale_factor=error_scale,
+        )
+
+    active_logger.info(
+        "EVT fitting backend=%s | classes_with_errors=%s | error_scale=%.3g",
+        backend,
+        sorted(per_class_errors.keys()),
+        error_scale,
+    )
+    try:
+        return _fit_evt_from_errors(per_class_errors, evt_cfg=evt_cfg, logger=active_logger)
+    except RuntimeError:
+        if backend == "student_decoder" and bool(_cfg_value(evt_cfg, "fit_correct_only", True)):
+            active_logger.warning(
+                "Class-wise EVT could not be fitted from correctly classified known samples; "
+                "falling back to all known validation samples for calibration."
+            )
+            per_class_errors = _compute_student_reconstruction_errors(
+                features,
+                labels,
+                batch_size=batch_size,
+                student_model=student_model,
+                device=device,
+                error_scale_factor=error_scale,
+                correct_only=False,
+            )
+            return _fit_evt_from_errors(per_class_errors, evt_cfg=evt_cfg, logger=active_logger)
+        raise
 
 
 def calibrate_evt_thresholds(
@@ -203,69 +354,83 @@ def calibrate_evt_thresholds(
     batch_size: int,
     evt_models: dict[int, EVTModel],
     evt_cfg,
+    prior_net: torch.nn.Module | None = None,
+    recognition_net: torch.nn.Module | None = None,
+    value_net_main: torch.nn.Module | None = None,
+    generation_net: torch.nn.Module | None = None,
+    student_model: torch.nn.Module | None = None,
+    device: torch.device,
+    logger: logging.Logger | None = None,
+) -> dict[str, Any]:
+    """Return metadata for already-fitted class-wise EVT models.
+
+    Phase 2 no longer tunes a global probability delta.  Each class owns its own
+    reconstruction-error rejection threshold derived from GPD/MEF calibration.
+    The function is kept for call-site compatibility and artifact metadata.
+    """
+    active_logger = logger or logging.getLogger("OpenSetEval")
+    _ = features, labels, batch_size, prior_net, recognition_net, value_net_main, generation_net, student_model, device
+    thresholds = {
+        str(cls_id): {
+            "threshold_u": model.threshold_u,
+            "decision_threshold": model.decision_threshold,
+            "target_fpr": model.target_fpr,
+            "tail_size": model.tail_size,
+            "num_errors": model.num_errors,
+            "tail_fraction": model.tail_fraction,
+            "threshold_selection": model.threshold_selection,
+        }
+        for cls_id, model in sorted(evt_models.items())
+    }
+    active_logger.info(
+        "EVT class-wise calibration complete | backend=%s | classes=%s",
+        _evt_backend(evt_cfg),
+        sorted(evt_models.keys()),
+    )
+    return {
+        "backend": _evt_backend(evt_cfg),
+        "decision_rule": "reconstruction_error_gt_class_evt_threshold",
+        "target_known_fpr": float(_cfg_value(evt_cfg, "target_known_fpr", 0.05)),
+        "threshold_method": str(_cfg_value(evt_cfg, "threshold_method", "mef")),
+        "error_scale_factor": _error_scale_factor(evt_cfg),
+        "unknown_label_id": int(_cfg_value(evt_cfg, "unknown_label_id", UNKNOWN_LABEL_ID)),
+        "open_set_label_id": int(_cfg_value(evt_cfg, "open_set_label_id", OPEN_SET_LABEL_ID)),
+        "class_thresholds": thresholds,
+    }
+
+
+def _teacher_predict_reconstruct_batch(
+    *,
+    states_s: torch.Tensor,
     prior_net: torch.nn.Module,
     recognition_net: torch.nn.Module,
     value_net_main: torch.nn.Module,
     generation_net: torch.nn.Module,
-    device: torch.device,
-    logger: logging.Logger | None = None,
-) -> dict:
-    active_logger = logger or logging.getLogger("OpenSetEval")
-    error_scale = _error_scale_factor(evt_cfg)
-    dataset = TensorDataset(features, labels)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
-    loss_fn = nn.MSELoss(reduction="none")
+    loss_fn: nn.Module,
+    error_scale: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    mu_p, _ = prior_net(states_s)
+    logits = value_net_main(mu_p, states_s)
+    preds = logits.argmax(dim=1)
+    one_hot = to_one_hot(preds, value_net_main.num_actions)
+    mu_q, _ = recognition_net(states_s, one_hot)
+    recon = generation_net(mu_q, one_hot)
+    errs = loss_fn(recon, states_s).mean(dim=1) * error_scale
+    return preds, logits, errs
 
-    probs_unknown = []
-    with torch.no_grad():
-        prior_net.eval()
-        recognition_net.eval()
-        value_net_main.eval()
-        generation_net.eval()
 
-        for states_s, lbls in loader:
-            states_s = states_s.to(device)
-            lbls = lbls.to(device)
-            mu_p, _ = prior_net(states_s)
-            preds = value_net_main(mu_p, states_s).argmax(dim=1)
-            one_hot = to_one_hot(preds, value_net_main.num_actions)
-            mu_r, _ = recognition_net(states_s, one_hot)
-            recon = generation_net(mu_r, one_hot)
-
-            errs = loss_fn(recon, states_s).mean(dim=1) * error_scale
-
-            for i in range(states_s.size(0)):
-                pred_label = int(preds[i].item())
-                true_label = int(lbls[i].item())
-                if pred_label == true_label and pred_label in evt_models:
-                    model = evt_models[pred_label]
-                    prob = model.predict_probability_unknown(float(errs[i].item()))
-                    probs_unknown.append(prob)
-
-    probs_unknown = np.array(probs_unknown)
-    target_fpr = float(evt_cfg.target_known_fpr)
-
-    if probs_unknown.size > 0:
-        qf = 1.0 - target_fpr
-        qf = min(max(qf, 0.0), 1.0)
-        delta_global = float(np.quantile(probs_unknown, qf))
-    else:
-        delta_global = float(_cfg_value(evt_cfg, "decision_threshold", 0.5))
-
-    active_logger.info(
-        "Calibrated global EVT threshold delta=%.6f (target known-FPR~=%.3f).",
-        delta_global,
-        target_fpr,
-    )
-
-    return {
-        "global_delta": delta_global,
-        "target_known_fpr": target_fpr,
-        "decision_threshold": float(_cfg_value(evt_cfg, "decision_threshold", delta_global)),
-        "error_scale_factor": error_scale,
-        "unknown_label_id": int(_cfg_value(evt_cfg, "unknown_label_id", UNKNOWN_LABEL_ID)),
-        "open_set_label_id": int(_cfg_value(evt_cfg, "open_set_label_id", OPEN_SET_LABEL_ID)),
-    }
+def _student_predict_reconstruct_batch(
+    *,
+    states_s: torch.Tensor,
+    student_model: torch.nn.Module,
+    loss_fn: nn.Module,
+    error_scale: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    features, logits = student_model(states_s)
+    preds = logits.argmax(dim=1)
+    recon = student_model.reconstruct(features, preds)
+    errs = loss_fn(recon, states_s).mean(dim=1) * error_scale
+    return preds, logits, errs
 
 
 def evaluate_open_set(
@@ -273,10 +438,11 @@ def evaluate_open_set(
     labels: torch.Tensor,
     *,
     batch_size: int,
-    prior_net: torch.nn.Module,
-    recognition_net: torch.nn.Module,
-    value_net_main: torch.nn.Module,
-    generation_net: torch.nn.Module,
+    prior_net: torch.nn.Module | None = None,
+    recognition_net: torch.nn.Module | None = None,
+    value_net_main: torch.nn.Module | None = None,
+    generation_net: torch.nn.Module | None = None,
+    student_model: torch.nn.Module | None = None,
     evt_models: dict[int, EVTModel],
     evt_meta: dict,
     class_names: dict[int, str],
@@ -287,90 +453,115 @@ def evaluate_open_set(
     logger: logging.Logger | None = None,
 ) -> dict[str, float]:
     active_logger = logger or logging.getLogger("OpenSetEval")
-    dataset = TensorDataset(features, labels)
+    dataset = TensorDataset(features.float(), labels.long())
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
     loss_fn = nn.MSELoss(reduction="none")
     output_dir = _ensure_dir(output_dir)
 
-    decision_threshold = float(_cfg_value(evt_cfg, "decision_threshold", 0.1))
-    delta_global = float(evt_meta.get("global_delta", decision_threshold))
+    backend = str(evt_meta.get("backend", _evt_backend(evt_cfg))).lower()
+    if backend not in {"student_decoder", "teacher_generator"}:
+        backend = _evt_backend(evt_cfg)
     error_scale = float(evt_meta.get("error_scale_factor", _error_scale_factor(evt_cfg)))
     unknown_label_id = int(evt_meta.get("unknown_label_id", _cfg_value(evt_cfg, "unknown_label_id", UNKNOWN_LABEL_ID)))
-    open_set_label_id = int(
-        evt_meta.get("open_set_label_id", _cfg_value(evt_cfg, "open_set_label_id", OPEN_SET_LABEL_ID))
-    )
+    open_set_label_id = int(evt_meta.get("open_set_label_id", _cfg_value(evt_cfg, "open_set_label_id", OPEN_SET_LABEL_ID)))
+
     y_true_list: list[int] = []
     raw_pred_list: list[int] = []
     y_pred_list: list[int] = []
     y_score_unknown: list[float] = []
+    reconstruction_errors: list[float] = []
+    evt_thresholds_used: list[float] = []
     missing_evt_model_count = 0
 
     with torch.no_grad():
-        prior_net.eval()
-        recognition_net.eval()
-        value_net_main.eval()
-        generation_net.eval()
+        if backend == "student_decoder":
+            if student_model is None:
+                raise ValueError("evaluate_open_set backend=student_decoder requires student_model.")
+            if not bool(getattr(student_model, "reconstruction_enabled", False)):
+                raise RuntimeError("Student decoder EVT requested but student reconstruction head is disabled.")
+            student_model.eval()
+        else:
+            if any(m is None for m in (prior_net, recognition_net, value_net_main, generation_net)):
+                raise ValueError("teacher_generator open-set eval requires teacher/generator modules.")
+            prior_net.eval()
+            recognition_net.eval()
+            value_net_main.eval()
+            generation_net.eval()
 
         for states_s, lbls in loader:
-            states_s = states_s.to(device)
-            lbls = lbls.to(device)
-            mu_p, _ = prior_net(states_s)
-            preds = value_net_main(mu_p, states_s).argmax(dim=1)
-
-            one_hot = to_one_hot(preds, value_net_main.num_actions)
-            mu_q, _ = recognition_net(states_s, one_hot)
-            recon = generation_net(mu_q, one_hot)
-
-            errs = loss_fn(recon, states_s).mean(dim=1) * error_scale
+            states_s = states_s.to(device).float()
+            lbls = lbls.to(device).long()
+            if backend == "student_decoder":
+                preds, _logits, errs = _student_predict_reconstruct_batch(
+                    states_s=states_s,
+                    student_model=student_model,
+                    loss_fn=loss_fn,
+                    error_scale=error_scale,
+                )
+            else:
+                preds, _logits, errs = _teacher_predict_reconstruct_batch(
+                    states_s=states_s,
+                    prior_net=prior_net,
+                    recognition_net=recognition_net,
+                    value_net_main=value_net_main,
+                    generation_net=generation_net,
+                    loss_fn=loss_fn,
+                    error_scale=error_scale,
+                )
 
             for i in range(states_s.size(0)):
                 pred_label = int(preds[i].item())
                 true_label = int(lbls[i].item())
+                err_value = float(errs[i].item())
                 model = evt_models.get(pred_label)
 
                 if model is None:
-                    # A predicted class without a calibrated EVT tail is outside
-                    # the fitted support and should not be silently accepted as known.
-                    prob = 1.0
+                    unknown_score = 1.0
+                    final_pred = open_set_label_id
+                    threshold_value = float("nan")
                     missing_evt_model_count += 1
                 else:
-                    prob = model.predict_probability_unknown(float(errs[i].item()))
-                y_score_unknown.append(prob)
-                raw_pred_list.append(pred_label)
-
-                final_pred = pred_label
-                if prob >= delta_global:
-                    final_pred = open_set_label_id
+                    unknown_score = model.predict_probability_unknown(err_value)
+                    final_pred = open_set_label_id if model.is_unknown(err_value) else pred_label
+                    threshold_value = float(model.decision_threshold or model.threshold_u or np.nan)
 
                 mapped_true = open_set_label_id if true_label == unknown_label_id else true_label
                 y_true_list.append(mapped_true)
+                raw_pred_list.append(pred_label)
                 y_pred_list.append(final_pred)
+                y_score_unknown.append(float(unknown_score))
+                reconstruction_errors.append(err_value)
+                evt_thresholds_used.append(threshold_value)
 
     y_true = np.array(y_true_list, dtype=int)
     y_raw_pred = np.array(raw_pred_list, dtype=int)
     y_pred = np.array(y_pred_list, dtype=int)
     y_scores = np.array(y_score_unknown, dtype=float)
+    rec_errors = np.array(reconstruction_errors, dtype=float)
     y_binary = (y_true == open_set_label_id).astype(int)
 
+    # For ROC/AUPRC, reconstruction error is the most direct monotonic Yang-style
+    # score.  EVT tail probability is still exported for inspection.
+    roc_scores = rec_errors if rec_errors.size else y_scores
     if np.unique(y_binary).size < 2:
         auroc = 0.0
         auprc = 0.0
         fpr95 = 1.0
     else:
         try:
-            auroc = float(roc_auc_score(y_binary, y_scores))
+            auroc = float(roc_auc_score(y_binary, roc_scores))
         except ValueError:
             auroc = 0.0
         if not np.isfinite(auroc):
             auroc = 0.0
         try:
-            auprc = float(average_precision_score(y_binary, y_scores))
+            auprc = float(average_precision_score(y_binary, roc_scores))
         except ValueError:
             auprc = 0.0
         if not np.isfinite(auprc):
             auprc = 0.0
         try:
-            fpr, tpr, _ = roc_curve(y_binary, y_scores)
+            fpr, tpr, _ = roc_curve(y_binary, roc_scores)
             valid = np.where(tpr >= 0.95)[0]
             fpr95 = float(fpr[valid[0]]) if valid.size else 1.0
         except ValueError:
@@ -382,24 +573,19 @@ def evaluate_open_set(
     unknown_mask = ~known_mask
 
     known_acc = accuracy_score(y_true[known_mask], y_pred[known_mask]) if known_mask.any() else 0.0
-    unknown_recall = (
-        accuracy_score(y_true[unknown_mask], y_pred[unknown_mask]) if unknown_mask.any() else 0.0
-    )
+    unknown_recall = accuracy_score(y_true[unknown_mask], y_pred[unknown_mask]) if unknown_mask.any() else 0.0
     overall_acc = accuracy_score(y_true, y_pred) if y_true.size else 0.0
 
     report_labels, class_name_list = _open_set_label_order(class_names, open_set_label_id)
-
-    before_cm_path = output_dir / "before_osr_confusion_matrix.csv"
-    after_cm_path = output_dir / "after_osr_confusion_matrix.csv"
     _save_labeled_confusion_matrix(
-        before_cm_path,
+        output_dir / "before_osr_confusion_matrix.csv",
         y_true,
         y_raw_pred,
         label_ids=report_labels,
         label_names=class_name_list,
     )
     _save_labeled_confusion_matrix(
-        after_cm_path,
+        output_dir / "after_osr_confusion_matrix.csv",
         y_true,
         y_pred,
         label_ids=report_labels,
@@ -415,30 +601,50 @@ def evaluate_open_set(
         zero_division=0,
     )
     (output_dir / "openset_report.txt").write_text(report, encoding="utf-8")
+
     scores_df = pd.DataFrame(
         {
             "y_true": y_true,
             "raw_pred": y_raw_pred,
             "y_pred": y_pred,
             "unknown_score": y_scores,
+            "reconstruction_error": rec_errors,
+            "evt_threshold": np.array(evt_thresholds_used, dtype=float),
             "is_unknown": y_binary,
+            "backend": backend,
         }
     )
     scores_df.to_csv(output_dir / "open_set_scores.csv", index=False)
+    scores_df[scores_df["is_unknown"] == 0].to_csv(
+        output_dir / "student_reconstruction_errors_known.csv", index=False
+    )
+    scores_df[scores_df["is_unknown"] == 1].to_csv(
+        output_dir / "student_reconstruction_errors_unknown.csv", index=False
+    )
+
+    evt_threshold_payload = {
+        str(k): v.to_payload() for k, v in sorted(evt_models.items())
+    }
+    (output_dir / "evt_thresholds.json").write_text(
+        json.dumps(evt_threshold_payload, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
     if np.unique(y_binary).size >= 2:
-        fpr, tpr, roc_thresholds = roc_curve(y_binary, y_scores)
+        fpr, tpr, roc_thresholds = roc_curve(y_binary, roc_scores)
         pd.DataFrame({"fpr": fpr, "tpr": tpr, "threshold": roc_thresholds}).to_csv(
             output_dir / "open_set_roc_curve.csv",
             index=False,
         )
-        precision, recall, pr_thresholds = precision_recall_curve(y_binary, y_scores)
+        precision, recall, pr_thresholds = precision_recall_curve(y_binary, roc_scores)
         padded_thresholds = np.concatenate([pr_thresholds, [np.nan]])
         pd.DataFrame(
             {"precision": precision, "recall": recall, "threshold": padded_thresholds}
         ).to_csv(output_dir / "open_set_pr_curve.csv", index=False)
 
     active_logger.info(
-        "Open-set metrics | AUROC=%.4f | AUPRC=%.4f | FPR95=%.4f | F1_macro=%.4f | Known_Acc=%.4f | Unknown_Recall=%.4f | Overall_Acc=%.4f",
+        "Open-set metrics | backend=%s | AUROC=%.4f | AUPRC=%.4f | FPR95=%.4f | F1_macro=%.4f | Known_Acc=%.4f | Unknown_Recall=%.4f | Overall_Acc=%.4f | missing_evt=%d",
+        backend,
         auroc,
         auprc,
         fpr95,
@@ -446,6 +652,7 @@ def evaluate_open_set(
         known_acc,
         unknown_recall,
         overall_acc,
+        missing_evt_model_count,
     )
 
     if report_to_stdout:
@@ -453,25 +660,28 @@ def evaluate_open_set(
         print(report)
 
     metrics = {
-        "openset_f1_macro": f1_macro,
-        "openset_auroc": auroc,
-        "openset_auprc": auprc,
-        "openset_fpr95": fpr95,
+        "openset_f1_macro": float(f1_macro),
+        "openset_auroc": float(auroc),
+        "openset_auprc": float(auprc),
+        "openset_fpr95": float(fpr95),
         "openset_unknown_f1": float(unknown_f1),
-        "openset_known_acc": known_acc,
-        "openset_unknown_recall": unknown_recall,
-        "openset_overall_acc": overall_acc,
+        "openset_known_acc": float(known_acc),
+        "openset_unknown_recall": float(unknown_recall),
+        "openset_overall_acc": float(overall_acc),
         "openset_missing_evt_model_count": float(missing_evt_model_count),
-        "openset_global_delta": delta_global,
-        "openset_error_scale_factor": error_scale,
-        "open_set/auroc": auroc,
-        "open_set/auprc": auprc,
-        "open_set/fpr95": fpr95,
-        "open_set/unknown_detection_rate": unknown_recall,
+        "openset_error_scale_factor": float(error_scale),
+        "openset_evt_backend": 1.0 if backend == "student_decoder" else 0.0,
+        "open_set/auroc": float(auroc),
+        "open_set/auprc": float(auprc),
+        "open_set/fpr95": float(fpr95),
+        "open_set/unknown_detection_rate": float(unknown_recall),
         "open_set/unknown_f1": float(unknown_f1),
-        "open_set/global_delta": delta_global,
-        "open_set/error_scale_factor": error_scale,
+        "open_set/error_scale_factor": float(error_scale),
     }
+    # Compatibility with old tests/artifacts. There is no global delta in phase 2.
+    metrics["openset_global_delta"] = float(evt_meta.get("global_delta", 0.0))
+    metrics["open_set/global_delta"] = float(evt_meta.get("global_delta", 0.0))
+
     (output_dir / "open_set_metrics.json").write_text(
         json.dumps(metrics, indent=2, sort_keys=True),
         encoding="utf-8",

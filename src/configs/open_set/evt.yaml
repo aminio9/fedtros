@@ -2,18 +2,24 @@ name: evt
 enabled: true
 evt:
   enabled: true
+  # Phase 2 default: Yang-style reconstruction-error EVT using the globally
+  # aggregated student decoder. The legacy local teacher/generator backend can
+  # still be selected with backend=teacher_generator for ablations only.
+  backend: student_decoder
   score: reconstruction_error
-  tail_size_percent: 1.0
-  min_errors_per_class: 10
-  min_tail_size: 10
-  q: 0.0
-  target_known_fpr: 0.20
-  decision_threshold: 0.5
-  delta_grid:
-    - 1.0e-6
-    - 0.99
-    - 200
-  per_class_thresholds: true
+  classwise: true
+  threshold_method: mef       # mef | quantile | fixed
+  tail_size_percent: 0.10     # upper-tail fallback if MEF is not stable
+  mef_min_quantile: 0.60
+  mef_max_quantile: 0.95
+  mef_num_candidates: 40
+  min_errors_per_class: 50
+  min_tail_size: 20
+  target_known_fpr: 0.05
+  fit_correct_only: true
   unknown_label_id: -1
   open_set_label_id: 99
   error_scale_factor: 100000.0
+  # Kept only for backward compatibility with old artifacts/tests. Phase 2 uses
+  # class-specific reconstruction thresholds, not a global probability delta.
+  decision_threshold: 0.5

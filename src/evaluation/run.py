@@ -115,6 +115,7 @@ def run_evaluation(
             recognition_net=agent.recognition_net,
             value_net_main=agent.value_net_main,
             generation_net=agent.generation_net,
+            student_model=agent.student_model,
             device=device,
         )
         evt_meta = calibrate_evt_thresholds(
@@ -127,6 +128,7 @@ def run_evaluation(
             recognition_net=agent.recognition_net,
             value_net_main=agent.value_net_main,
             generation_net=agent.generation_net,
+            student_model=agent.student_model,
             device=device,
         )
         save_evt_collection(evt_models, evt_output_dir / "evt_models.pkl")
@@ -143,6 +145,7 @@ def run_evaluation(
             recognition_net=agent.recognition_net,
             value_net_main=agent.value_net_main,
             generation_net=agent.generation_net,
+            student_model=agent.student_model,
             evt_models=evt_models,
             evt_meta=evt_meta,
             class_names=class_names,
@@ -181,3 +184,126 @@ def run_evaluation(
     )
     logger.info("Evaluation complete. Metrics saved under %s", output_dir)
     return all_metrics
+
+
+def run_dkd_fedos_student_open_set_evaluation(
+    cfg: DictConfig,
+    *,
+    project_root: Path,
+    device: torch.device,
+    tracker: LocalRunTracker | None = None,
+) -> dict[str, Any]:
+    """Evaluate the DKD-FedOS global student with the phase-2 student-decoder EVT.
+
+    DKD-FedOS uploads/aggregates only the compact student, so the standard
+    full-agent evaluator cannot load a CVAE-DQN checkpoint.  This evaluator
+    loads ``dkd_fedos_student_latest.pt``, fits class-wise EVT on the known
+    validation split, and evaluates the shared open-set tensor with the global
+    student decoder.
+    """
+    evt_cfg = cfg.open_set.evt
+    if not bool(getattr(evt_cfg, "enabled", False)):
+        logger.info("DKD-FedOS student open-set evaluation skipped: EVT disabled.")
+        return {}
+    backend = str(getattr(evt_cfg, "backend", "student_decoder")).lower()
+    if backend not in {"student_decoder", "student", "global_student", "global_student_decoder"}:
+        logger.info("DKD-FedOS student open-set evaluation skipped: evt.backend=%s", backend)
+        return {}
+    if not bool(getattr(cfg.training, "dkd_student_reconstruction_enabled", False)):
+        raise ValueError(
+            "Phase-2 DKD-FedOS open-set evaluation requires "
+            "training.dkd_student_reconstruction_enabled=true."
+        )
+
+    output_dir = resolve_path(project_root, cfg.evaluation.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    agent = build_agent(cfg, device)
+
+    student_ckpt = resolve_path(
+        project_root,
+        Path(str(cfg.checkpointing.dir)) / "dkd_fedos_student_latest.pt",
+    )
+    if not student_ckpt.exists():
+        raise FileNotFoundError(f"DKD-FedOS student checkpoint not found: {student_ckpt}")
+    payload = torch.load(student_ckpt, map_location=device, weights_only=False)
+    state = payload.get("student_model")
+    if state is None:
+        raise KeyError(f"Missing 'student_model' in DKD-FedOS checkpoint: {student_ckpt}")
+    agent.student_model.load_state_dict(state, strict=True)
+    agent.student_model.to(device).eval()
+    logger.info(
+        "Loaded DKD-FedOS global student for phase-2 open-set EVT | checkpoint=%s | decoder_enabled=%s",
+        student_ckpt,
+        bool(getattr(agent.student_model, "reconstruction_enabled", False)),
+    )
+
+    class_names = load_class_names(
+        resolve_path(project_root, cfg.evaluation.class_names),
+        int(cfg.model.num_actions),
+    )
+    calibration_features, calibration_labels = load_tensor_dataset(
+        resolve_path(project_root, cfg.evaluation.validation_data),
+        map_location="cpu",
+    )
+    open_features, open_labels = load_tensor_dataset(
+        resolve_path(project_root, cfg.evaluation.open_set_data),
+        map_location="cpu",
+    )
+
+    num_unknown_train = int((calibration_labels < 0).sum().item())
+    num_unknown_test = int((open_labels == int(getattr(evt_cfg, "unknown_label_id", -1))).sum().item())
+    logger.info(
+        "OPEN-SET PROTOCOL ACTIVE | known_classes=%s | unknown_label_id=%s | "
+        "num_actions=%d | calibration_unknown_samples=%d | open_test_unknown_samples=%d | backend=student_decoder",
+        [class_names[k] for k in sorted(class_names)],
+        int(getattr(evt_cfg, "unknown_label_id", -1)),
+        int(cfg.model.num_actions),
+        num_unknown_train,
+        num_unknown_test,
+    )
+    if num_unknown_train != 0:
+        raise ValueError("EVT calibration data must contain known classes only; found unknown labels.")
+
+    evt_output_dir = output_dir / "evt"
+    evt_output_dir.mkdir(parents=True, exist_ok=True)
+    evt_models = fit_evt_models(
+        features=calibration_features,
+        labels=calibration_labels,
+        batch_size=int(cfg.evaluation.batch_size),
+        evt_cfg=evt_cfg,
+        student_model=agent.student_model,
+        device=device,
+    )
+    evt_meta = calibrate_evt_thresholds(
+        features=calibration_features,
+        labels=calibration_labels,
+        batch_size=int(cfg.evaluation.batch_size),
+        evt_models=evt_models,
+        evt_cfg=evt_cfg,
+        student_model=agent.student_model,
+        device=device,
+    )
+    save_evt_collection(evt_models, evt_output_dir / "evt_models.pkl")
+    save_evt_meta(evt_meta, evt_output_dir / "evt_meta.json")
+
+    metrics = evaluate_open_set(
+        features=open_features,
+        labels=open_labels,
+        batch_size=int(cfg.evaluation.batch_size),
+        student_model=agent.student_model,
+        evt_models=evt_models,
+        evt_meta=evt_meta,
+        class_names=class_names,
+        output_dir=output_dir,
+        device=device,
+        evt_cfg=evt_cfg,
+        report_to_stdout=bool(cfg.evaluation.report_to_stdout),
+    )
+    if tracker:
+        tracker.log_metrics(metrics)
+    (output_dir / "evaluation_metrics.json").write_text(
+        json.dumps(metrics, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    logger.info("DKD-FedOS phase-2 student open-set evaluation complete: %s", output_dir)
+    return metrics

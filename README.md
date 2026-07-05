@@ -258,3 +258,19 @@ poetry run python run.py experiment=exp1 +method=dkd_fedos seed=42 \
 ```
 
 For harsh non-IID, check `dkd_student_train_delta_norm`, `avg_dkd_global_anchor_loss`, `dkd_global_anchor_weight`, and server reliability weights before trusting accuracy.
+
+### DKD-FedOS Phase 1 open-set student decoder
+
+Open-set experiments now optionally train a **global student reconstruction head** as preparation for Yang-style reconstruction-error EVT. This is enabled only in E2 and E4 through `training.dkd_student_reconstruction_enabled=true`. Closed-set E1/E3 keep the previous classifier-only DKD-FedOS behavior.
+
+See:
+- `docs/dkd-fedos-open-set-student-decoder-phase1.md`
+- `docs/dkd-fedos-open-set-student-decoder-phase2.md`
+
+```bash
+poetry run python run.py experiment=exp4 +method=dkd_fedos seed=42 \
+  federated.num_clients=10 federated.num_rounds=30 \
+  dataset.preprocessing.alpha=0.1
+```
+
+Check the log for `avg_dkd_student_reconstruction_loss` and `dkd_student_reconstruction_enabled_rate`.

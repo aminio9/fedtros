@@ -1138,16 +1138,41 @@ class FlowerClient(fl.client.NumPyClient):
             self.logger.warning("Client %s: open-set paths missing for %s", self.cid, test_open_key)
             return {}
 
+        # Phase 2: calibrate EVT on the shared known validation split when it is
+        # available.  Falling back to the local client tensor is allowed for
+        # debugging, but the final paper metrics use the server-side student EVT
+        # evaluator after federated aggregation.
+        calibration_features = features.float()
+        calibration_labels = labels.long()
+        validation_rel = getattr(paths_cfg, "validation_data", None)
+        if validation_rel:
+            validation_path = _resolve_project_path(validation_rel)
+            if validation_path.exists():
+                try:
+                    val_data = torch.load(validation_path, map_location="cpu", weights_only=True)
+                    calibration_features = val_data["features"].float()
+                    calibration_labels = val_data["labels"].long()
+                    self.logger.info(
+                        "Client %s: EVT calibration uses shared validation data | samples=%d",
+                        self.cid,
+                        int(calibration_labels.numel()),
+                    )
+                except Exception:
+                    self.logger.exception(
+                        "Client %s: failed to load shared validation data; falling back to local EVT calibration.",
+                        self.cid,
+                    )
         try:
             evt_models = fit_evt_models(
-                features=features.float(),
-                labels=labels.long(),
+                features=calibration_features,
+                labels=calibration_labels,
                 batch_size=int(self.cfg.training.batch_size),
                 evt_cfg=evt_cfg,
                 prior_net=self.agent.prior_net,
                 recognition_net=self.agent.recognition_net,
                 value_net_main=self.agent.value_net_main,
                 generation_net=self.agent.generation_net,
+                student_model=self.agent.student_model,
                 device=self.device,
                 logger=self.logger,
             )
@@ -1160,8 +1185,8 @@ class FlowerClient(fl.client.NumPyClient):
 
         try:
             meta = calibrate_evt_thresholds(
-                features=features.float(),
-                labels=labels.long(),
+                features=calibration_features,
+                labels=calibration_labels,
                 batch_size=int(self.cfg.training.batch_size),
                 evt_models=evt_models,
                 evt_cfg=evt_cfg,
@@ -1169,6 +1194,7 @@ class FlowerClient(fl.client.NumPyClient):
                 recognition_net=self.agent.recognition_net,
                 value_net_main=self.agent.value_net_main,
                 generation_net=self.agent.generation_net,
+                student_model=self.agent.student_model,
                 device=self.device,
                 logger=self.logger,
             )
@@ -1220,6 +1246,7 @@ class FlowerClient(fl.client.NumPyClient):
             recognition_net=self.agent.recognition_net,
             value_net_main=self.agent.value_net_main,
             generation_net=self.agent.generation_net,
+            student_model=self.agent.student_model,
             evt_models=evt_models,
             evt_meta=meta,
             class_names=class_map,

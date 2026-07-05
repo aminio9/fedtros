@@ -331,3 +331,60 @@ dkd_global_anchor_weight
 ```
 
 These show whether the global student is actually loaded and whether local student training changes it.
+
+## Phase 1 open-set student reconstruction head
+
+The Phase 1 open-set update adds an optional reconstruction decoder to the
+shared `StudentIDSModel`.  The old closed-set student path is unchanged unless
+`training.dkd_student_reconstruction_enabled=true`.
+
+When enabled, the student contains:
+
+```text
+student backbone E_s
+student classifier C_s
+student decoder G_s
+```
+
+The decoder receives the student feature vector and a class condition:
+
+```text
+h_s = E_s(x)
+logits_s = C_s(h_s)
+x_hat = G_s(h_s, y)
+L_rec = ||x - x_hat||^2
+```
+
+This reconstruction loss is added only to the student-side DKD objective.  It
+does not update the local CVAE-DQN teacher and it does not change replay-buffer
+RL.  Because the decoder is part of the student `state_dict`, DKD-FedOS server
+aggregation automatically shares it with the student encoder/classifier.
+
+The feature is enabled only for open-set experiments E2 and E4 in this phase:
+
+```yaml
+training:
+  dkd_student_reconstruction_enabled: true
+  dkd_student_reconstruction_weight: 0.10
+```
+
+Closed-set E1/E3 keep the previous classifier-only DKD-FedOS behavior.  The
+local teacher `generation_net` still exists and can train in open-set runs, but
+Phase 1 prepares the global student decoder that Phase 2 will use for class-wise
+EVT unknown rejection.
+
+## Phase 2 open-set EVT refactor
+
+Phase 2 replaces the local teacher/generator EVT path with a global student-decoder EVT path for open-set experiments E2/E4. The local CVAE-DQN teacher remains private and personalized. Only the student family is aggregated:
+
+```text
+student encoder + student classifier + student decoder
+```
+
+EVT calibration is class-wise and uses the reconstruction-error tail of correctly classified known validation samples. The high threshold is selected with a Mean Excess Function heuristic and the exceedances are fitted with a Generalized Pareto Distribution by maximum likelihood. The final open-set decision uses only:
+
+```text
+reconstruction_error > class_evt_threshold
+```
+
+The Yang 2025 dynamic update stage is intentionally not implemented.
