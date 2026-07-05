@@ -1,8 +1,8 @@
 """Extreme Value Theory utilities for reconstruction-error open-set detection.
 
 This module implements the Yang-2025 style EVT calibration used by the
-student-decoder open-set pipeline: fit a Generalized Pareto Distribution (GPD)
-on exceedances over a high reconstruction-error threshold.  The threshold can
+open-set pipeline: fit a Generalized Pareto Distribution (GPD)
+on exceedances over a high score threshold.  The threshold can
 be selected by a Mean Excess Function (MEF) stability heuristic, with a robust
 quantile fallback for small validation sets.
 """

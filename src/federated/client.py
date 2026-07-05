@@ -26,6 +26,13 @@ from src.evaluation.openset_eval import (
 )
 from src.models.models import OpenSetQChainModelFactory
 from src.openset.evt import save_evt_collection, save_evt_meta
+from src.openset.feature_evt import (
+    evaluate_feature_evt_open_set,
+    fit_local_generator_evt_models,
+    fit_student_feature_evt_models,
+    save_feature_evt_collection,
+    save_local_generator_evt_collection,
+)
 from src.rl.environment import BlockchainIntrusionEnv
 from src.rl.local_training import run_local_training_round
 from src.rl.replay_buffer import ExperienceReplayBuffer
@@ -37,6 +44,17 @@ PROJECT_ROOT = project_root()
 def _resolve_project_path(path_like: str | Path) -> Path:
     path = Path(path_like)
     return path if path.is_absolute() else PROJECT_ROOT / path
+
+
+def _dkd_fedos_final_eval_backend(evt_cfg: Any) -> bool:
+    backend = str(getattr(evt_cfg, "backend", "teacher_generator")).lower()
+    return bool(getattr(evt_cfg, "enabled", False)) and backend in {
+        "student_feature_evt",
+        "student_feature",
+        "feature_evt",
+        "dual_boundary_evt",
+        "dual_evt",
+    }
 
 
 class FlowerClient(fl.client.NumPyClient):
@@ -866,15 +884,33 @@ class FlowerClient(fl.client.NumPyClient):
             # EVT Logic (Optional)
             evt_cfg = self.cfg.evt
             if bool(evt_cfg.enabled):
-                try:
-                    features = self.env.all_features_s.clone()
-                    labels = self.env.all_labels_a_t.clone()
-                    evt_metrics = self._fit_evt_and_run_openset_eval(
-                        features, labels, evt_cfg, prefix="GLOBAL"
-                    )
-                    metrics.update(evt_metrics)
-                except Exception as e:
-                    self.logger.error(f"EVT Eval failed: {e}")
+                phase_name = str(config.get("phase", "")).lower()
+                client_evt_enabled = bool(getattr(evt_cfg, "client_eval_enabled", False))
+                if phase_name == "dkd_fedos" and _dkd_fedos_final_eval_backend(evt_cfg):
+                    # Phase 2 evaluates the single aggregated global student once
+                    # after federated training. Fitting EVT on every Flower client
+                    # evaluation round is redundant, noisy, and can run before the
+                    # global student has been aggregated. Keep a clear log/metric
+                    # and avoid redundant per-client EVT during round evaluation.
+                    metrics["openset_client_evt_skipped"] = 1.0
+                    metrics["openset_final_global_eval_required"] = 1.0
+                    if int(round_index) <= 1:
+                        self.logger.info(
+                            "Client %s: skipping per-client EVT during DKD-FedOS evaluate(); "
+                            "final global open-set EVT runs after FL. backend=%s",
+                            self.cid,
+                            str(getattr(evt_cfg, "backend", "student_feature_evt")),
+                        )
+                elif client_evt_enabled or phase_name != "dkd_fedos":
+                    try:
+                        features = self.env.all_features_s.clone()
+                        labels = self.env.all_labels_a_t.clone()
+                        evt_metrics = self._fit_evt_and_run_openset_eval(
+                            features, labels, evt_cfg, prefix="GLOBAL"
+                        )
+                        metrics.update(evt_metrics)
+                    except Exception:
+                        self.logger.exception("Client %s: EVT evaluation failed.", self.cid)
 
             metrics["cid"] = self.cid
             return loss, num_examples, metrics
@@ -936,9 +972,12 @@ class FlowerClient(fl.client.NumPyClient):
         self.eval_class_names = self._load_class_names(
             class_names_path, int(self.cfg.model.num_actions)
         )
+        eval_mode = str(getattr(self.cfg.evaluation, "mode", "closed_set")).lower()
+        eval_label = "Known-class eval" if eval_mode == "open_set" else "Closed-set eval"
         self.logger.info(
-            "Client %s: Closed-set eval data loaded (%s) | scope=%s | samples=%d",
+            "Client %s: %s data loaded (%s) | scope=%s | samples=%d",
             self.cid,
+            eval_label,
             test_data_path.name,
             eval_scope,
             len(dataset),
@@ -946,8 +985,9 @@ class FlowerClient(fl.client.NumPyClient):
 
         self.eval_enabled = True
         self.logger.info(
-            "Client %s: Closed-set eval enabled using %s (scope=%s)",
+            "Client %s: %s enabled using %s (scope=%s)",
             self.cid,
+            eval_label,
             test_data_path.name,
             eval_scope,
         )
@@ -1094,7 +1134,12 @@ class FlowerClient(fl.client.NumPyClient):
         self._save_client_report(round_index, report, prefix)
         self._plot_client_confusion_matrix(round_index, y_true, y_pred, prefix)
 
-        self.logger.info(f"\n[Client {self.cid} | {prefix}] Closed-Set Report:\n{report}")
+        report_label = (
+            "Known-Class Report (pre-OSR)"
+            if str(getattr(self.cfg.evaluation, "mode", "closed_set")).lower() == "open_set"
+            else "Closed-Set Report"
+        )
+        self.logger.info(f"\n[Client {self.cid} | {prefix}] {report_label}:\n{report}")
 
         return (
             loss,
@@ -1120,6 +1165,13 @@ class FlowerClient(fl.client.NumPyClient):
         evt_cfg: DictConfig,
         prefix: str = "GLOBAL",
     ) -> dict[str, float]:
+        """Fit and evaluate an open-set backend for client-side ablations.
+
+        DKD-FedOS paper metrics use final server-side global student Feature-EVT
+        unless client_eval_enabled=true.  This helper remains useful for
+        ablations, especially the dual-boundary path where the local teacher
+        generator exists only on the client.
+        """
         paths_cfg = self.cfg.paths
 
         test_open_key = f"test_open_client_{self.cid}"
@@ -1138,10 +1190,6 @@ class FlowerClient(fl.client.NumPyClient):
             self.logger.warning("Client %s: open-set paths missing for %s", self.cid, test_open_key)
             return {}
 
-        # Phase 2: calibrate EVT on the shared known validation split when it is
-        # available.  Falling back to the local client tensor is allowed for
-        # debugging, but the final paper metrics use the server-side student EVT
-        # evaluator after federated aggregation.
         calibration_features = features.float()
         calibration_labels = labels.long()
         validation_rel = getattr(paths_cfg, "validation_data", None)
@@ -1162,71 +1210,18 @@ class FlowerClient(fl.client.NumPyClient):
                         "Client %s: failed to load shared validation data; falling back to local EVT calibration.",
                         self.cid,
                     )
-        try:
-            evt_models = fit_evt_models(
-                features=calibration_features,
-                labels=calibration_labels,
-                batch_size=int(self.cfg.training.batch_size),
-                evt_cfg=evt_cfg,
-                prior_net=self.agent.prior_net,
-                recognition_net=self.agent.recognition_net,
-                value_net_main=self.agent.value_net_main,
-                generation_net=self.agent.generation_net,
-                student_model=self.agent.student_model,
-                device=self.device,
-                logger=self.logger,
-            )
-        except Exception:
-            self.logger.exception("Client %s: EVT fitting failed.", self.cid)
-            return {}
-
-        evt_model_path = self.evt_output_dir / f"evt_models_{prefix}.pkl"
-        save_evt_collection(evt_models, evt_model_path, logger=self.logger)
-
-        try:
-            meta = calibrate_evt_thresholds(
-                features=calibration_features,
-                labels=calibration_labels,
-                batch_size=int(self.cfg.training.batch_size),
-                evt_models=evt_models,
-                evt_cfg=evt_cfg,
-                prior_net=self.agent.prior_net,
-                recognition_net=self.agent.recognition_net,
-                value_net_main=self.agent.value_net_main,
-                generation_net=self.agent.generation_net,
-                student_model=self.agent.student_model,
-                device=self.device,
-                logger=self.logger,
-            )
-        except Exception:
-            self.logger.exception("Client %s: EVT threshold calibration failed.", self.cid)
-            return {}
-
-        default_delta = float(evt_cfg.decision_threshold)
-        meta.setdefault("global_delta", default_delta)
-        save_evt_meta(meta, self.evt_output_dir / f"evt_meta_{prefix}.json", logger=self.logger)
 
         open_set_path = _resolve_project_path(open_set_rel)
         class_names_path = _resolve_project_path(class_names_rel)
         self.open_set_data_path = open_set_path
-
         try:
             with open(class_names_path, encoding="utf-8") as fh:
                 class_map = {int(k): v for k, v in json.load(fh).items()}
-
             data = torch.load(open_set_path, map_location="cpu", weights_only=True)
-            open_features = (
-                data["features"]
-                .to(device=(self.device if self._move_data_to_device else torch.device("cpu")))
-                .float()
-            )
-            open_labels = (
-                data["labels"]
-                .to(device=(self.device if self._move_data_to_device else torch.device("cpu")))
-                .long()
-            )
+            open_features = data["features"].float()
+            open_labels = data["labels"].long()
             openset_examples = int(open_labels.numel())
-            num_unknown = int((open_labels == -1).sum().item())
+            num_unknown = int((open_labels == int(getattr(evt_cfg, "unknown_label_id", -1))).sum().item())
             self.logger.info(
                 "Client %s: Open-set eval data loaded (%s) | total=%d | unknown=%d",
                 self.cid,
@@ -1238,31 +1233,139 @@ class FlowerClient(fl.client.NumPyClient):
             self.logger.error("Client %s: Error loading open set data: %s", self.cid, exc)
             return {}
 
-        metrics = evaluate_open_set(
-            features=open_features,
-            labels=open_labels,
-            batch_size=int(self.cfg.training.batch_size),
-            prior_net=self.agent.prior_net,
-            recognition_net=self.agent.recognition_net,
-            value_net_main=self.agent.value_net_main,
-            generation_net=self.agent.generation_net,
-            student_model=self.agent.student_model,
-            evt_models=evt_models,
-            evt_meta=meta,
-            class_names=class_map,
-            output_dir=self.openset_output_dir,
-            device=self.device,
-            evt_cfg=evt_cfg,
-            report_to_stdout=False,
-            logger=self.logger,
-        )
+        backend_raw = str(getattr(evt_cfg, "backend", "student_feature_evt")).lower()
+        if backend_raw in {"feature", "feature_evt", "student_feature"}:
+            backend = "student_feature_evt"
+        elif backend_raw in {"dual", "dual_evt"}:
+            backend = "dual_boundary_evt"
+        else:
+            backend = backend_raw
+
+        if backend in {"student_feature_evt", "dual_boundary_evt"}:
+            try:
+                feature_boundaries, meta, calibration_df = fit_student_feature_evt_models(
+                    features=calibration_features,
+                    labels=calibration_labels,
+                    batch_size=int(self.cfg.training.batch_size),
+                    student_model=self.agent.student_model,
+                    evt_cfg=evt_cfg,
+                    device=self.device,
+                    logger_=self.logger,
+                )
+                if backend == "dual_boundary_evt":
+                    meta["backend"] = "dual_boundary_evt"
+                save_feature_evt_collection(
+                    feature_boundaries,
+                    self.evt_output_dir / f"feature_evt_models_{prefix}.pkl",
+                    logger_=self.logger,
+                )
+                calibration_df.to_csv(
+                    self.openset_output_dir / f"student_feature_distances_calibration_{prefix}.csv",
+                    index=False,
+                )
+                local_boundaries = None
+                if backend == "dual_boundary_evt":
+                    local_boundaries = fit_local_generator_evt_models(
+                        features=calibration_features,
+                        labels=calibration_labels,
+                        batch_size=int(self.cfg.training.batch_size),
+                        prior_net=self.agent.prior_net,
+                        recognition_net=self.agent.recognition_net,
+                        value_net_main=self.agent.value_net_main,
+                        generation_net=self.agent.generation_net,
+                        evt_cfg=evt_cfg,
+                        device=self.device,
+                        logger_=self.logger,
+                    )
+                    save_local_generator_evt_collection(
+                        local_boundaries,
+                        self.evt_output_dir / f"local_generator_evt_models_{prefix}.pkl",
+                        logger_=self.logger,
+                    )
+                metrics = evaluate_feature_evt_open_set(
+                    features=open_features,
+                    labels=open_labels,
+                    batch_size=int(self.cfg.training.batch_size),
+                    student_model=self.agent.student_model,
+                    feature_boundaries=feature_boundaries,
+                    evt_meta=meta,
+                    class_names=class_map,
+                    output_dir=self.openset_output_dir,
+                    device=self.device,
+                    evt_cfg=evt_cfg,
+                    report_to_stdout=False,
+                    logger_=self.logger,
+                    local_generator_boundaries=local_boundaries,
+                    prior_net=self.agent.prior_net if backend == "dual_boundary_evt" else None,
+                    recognition_net=self.agent.recognition_net if backend == "dual_boundary_evt" else None,
+                    value_net_main=self.agent.value_net_main if backend == "dual_boundary_evt" else None,
+                    generation_net=self.agent.generation_net if backend == "dual_boundary_evt" else None,
+                )
+            except Exception:
+                self.logger.exception("Client %s: Feature/Dual EVT evaluation failed.", self.cid)
+                return {}
+        else:
+            try:
+                evt_models = fit_evt_models(
+                    features=calibration_features,
+                    labels=calibration_labels,
+                    batch_size=int(self.cfg.training.batch_size),
+                    evt_cfg=evt_cfg,
+                    prior_net=self.agent.prior_net,
+                    recognition_net=self.agent.recognition_net,
+                    value_net_main=self.agent.value_net_main,
+                    generation_net=self.agent.generation_net,
+                    student_model=self.agent.student_model,
+                    device=self.device,
+                    logger=self.logger,
+                )
+                evt_model_path = self.evt_output_dir / f"evt_models_{prefix}.pkl"
+                save_evt_collection(evt_models, evt_model_path, logger=self.logger)
+                meta = calibrate_evt_thresholds(
+                    features=calibration_features,
+                    labels=calibration_labels,
+                    batch_size=int(self.cfg.training.batch_size),
+                    evt_models=evt_models,
+                    evt_cfg=evt_cfg,
+                    prior_net=self.agent.prior_net,
+                    recognition_net=self.agent.recognition_net,
+                    value_net_main=self.agent.value_net_main,
+                    generation_net=self.agent.generation_net,
+                    student_model=self.agent.student_model,
+                    device=self.device,
+                    logger=self.logger,
+                )
+                save_evt_meta(meta, self.evt_output_dir / f"evt_meta_{prefix}.json", logger=self.logger)
+                metrics = evaluate_open_set(
+                    features=open_features,
+                    labels=open_labels,
+                    batch_size=int(self.cfg.training.batch_size),
+                    prior_net=self.agent.prior_net,
+                    recognition_net=self.agent.recognition_net,
+                    value_net_main=self.agent.value_net_main,
+                    generation_net=self.agent.generation_net,
+                    student_model=self.agent.student_model,
+                    evt_models=evt_models,
+                    evt_meta=meta,
+                    class_names=class_map,
+                    output_dir=self.openset_output_dir,
+                    device=self.device,
+                    evt_cfg=evt_cfg,
+                    report_to_stdout=False,
+                    logger=self.logger,
+                )
+            except Exception:
+                self.logger.exception("Client %s: legacy EVT evaluation failed.", self.cid)
+                return {}
+
         metrics["openset_examples"] = openset_examples
         metrics["openset_unknown"] = num_unknown
         metrics["open_set_dataset"] = open_set_path.name
         self.logger.info(
-            "[Client %s | %s] Open-Set AUROC: %.4f",
+            "[Client %s | %s] Open-Set AUROC: %.4f UnknownRecall: %.4f",
             self.cid,
             prefix,
             metrics.get("openset_auroc", 0.0),
+            metrics.get("openset_unknown_recall", 0.0),
         )
         return metrics

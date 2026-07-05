@@ -259,18 +259,6 @@ poetry run python run.py experiment=exp1 +method=dkd_fedos seed=42 \
 
 For harsh non-IID, check `dkd_student_train_delta_norm`, `avg_dkd_global_anchor_loss`, `dkd_global_anchor_weight`, and server reliability weights before trusting accuracy.
 
-### DKD-FedOS Phase 1 open-set student decoder
+### DKD-FedOS v7 open-set backend
 
-Open-set experiments now optionally train a **global student reconstruction head** as preparation for Yang-style reconstruction-error EVT. This is enabled only in E2 and E4 through `training.dkd_student_reconstruction_enabled=true`. Closed-set E1/E3 keep the previous classifier-only DKD-FedOS behavior.
-
-See:
-- `docs/dkd-fedos-open-set-student-decoder-phase1.md`
-- `docs/dkd-fedos-open-set-student-decoder-phase2.md`
-
-```bash
-poetry run python run.py experiment=exp4 +method=dkd_fedos seed=42 \
-  federated.num_clients=10 federated.num_rounds=30 \
-  dataset.preprocessing.alpha=0.1
-```
-
-Check the log for `avg_dkd_student_reconstruction_loss` and `dkd_student_reconstruction_enabled_rate`.
+The default open-set detector for E2/E4 is **global student feature-distance EVT** (`open_set.evt.backend=student_feature_evt`). The optional `dual_boundary_evt` backend adds support-gated local teacher-generator reconstruction EVT only for client-side ablation/debug. See `docs/dkd-fedos-open-set-v7-feature-dual-evt.md`.

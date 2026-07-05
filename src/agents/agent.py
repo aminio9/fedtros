@@ -163,22 +163,6 @@ class Agent:
         # require a different Agent class, but it is trained/federated only by
         # the dkd_fedos strategy.
         student_hidden = list(getattr(train_cfg, "dkd_student_hidden_dims", [64, 32, 16]))
-        student_reconstruction_enabled = bool(
-            getattr(train_cfg, "dkd_student_reconstruction_enabled", False)
-        )
-        student_decoder_hidden = list(
-            getattr(train_cfg, "dkd_student_decoder_hidden_dims", [128, 256])
-        )
-        student_decoder_dropout = float(
-            getattr(
-                train_cfg,
-                "dkd_student_decoder_dropout",
-                getattr(train_cfg, "dkd_student_dropout", 0.0),
-            )
-        )
-        student_decoder_class_condition = bool(
-            getattr(train_cfg, "dkd_student_decoder_class_condition", True)
-        )
         self.student_model = StudentIDSModel(
             input_dim=model_factory.state_dim,
             num_classes=model_factory.num_actions,
@@ -186,10 +170,6 @@ class Agent:
             activation=str(getattr(train_cfg, "dkd_student_activation", "relu")),
             dropout=float(getattr(train_cfg, "dkd_student_dropout", 0.0)),
             norm=str(getattr(train_cfg, "dkd_student_norm", "none")),
-            reconstruction_enabled=student_reconstruction_enabled,
-            decoder_hidden_dims=student_decoder_hidden,
-            decoder_dropout=student_decoder_dropout,
-            decoder_class_condition=student_decoder_class_condition,
         ).to(device)
         self.student_anchor_model = StudentIDSModel(
             input_dim=model_factory.state_dim,
@@ -198,10 +178,6 @@ class Agent:
             activation=str(getattr(train_cfg, "dkd_student_activation", "relu")),
             dropout=float(getattr(train_cfg, "dkd_student_dropout", 0.0)),
             norm=str(getattr(train_cfg, "dkd_student_norm", "none")),
-            reconstruction_enabled=student_reconstruction_enabled,
-            decoder_hidden_dims=student_decoder_hidden,
-            decoder_dropout=student_decoder_dropout,
-            decoder_class_condition=student_decoder_class_condition,
         ).to(device)
         self.student_anchor_model.load_state_dict(self.student_model.state_dict())
         self.student_anchor_model.eval()
@@ -244,11 +220,9 @@ class Agent:
         self.last_dkd_s2t_enabled = 0.0
         self._capture_proximal_reference()
         self.logger.info(
-            "Student reconstruction head | enabled=%s | decoder_hidden_dims=%s | "
-            "decoder_class_condition=%s | student_parameter_tensors=%d",
-            bool(getattr(self.student_model, "reconstruction_enabled", False)),
-            student_decoder_hidden,
-            bool(getattr(self.student_model, "decoder_class_condition", False)),
+            "Global student classifier initialized | hidden_dims=%s | feature_dim=%d | parameter_tensors=%d",
+            student_hidden,
+            int(self.student_model.feature_dim),
             len(self.student_model.state_dict()),
         )
         self.logger.debug("Agent initialized with Double-DQN: %s", self.use_double_dqn)
@@ -759,16 +733,6 @@ class Agent:
             mse_weight=float(getattr(self.train_cfg, "dkd_align_mse_weight", 1.0)),
         )
 
-        student_reconstruction_loss = torch.zeros((), device=self.device)
-        student_reconstruction_weight = float(
-            getattr(self.train_cfg, "dkd_student_reconstruction_weight", 0.0)
-        )
-        student_reconstruction_enabled = bool(
-            getattr(self.train_cfg, "dkd_student_reconstruction_enabled", False)
-        ) and bool(getattr(self.student_model, "reconstruction_enabled", False))
-        if student_reconstruction_enabled and student_reconstruction_weight > 0.0:
-            student_reconstruction = self.student_model.reconstruct(student_features, labels)
-            student_reconstruction_loss = F.mse_loss(student_reconstruction, states_s)
 
         t2s_start = int(getattr(self.train_cfg, "dkd_teacher_to_student_start_round", 4))
         align_start = int(getattr(self.train_cfg, "dkd_alignment_start_round", 4))
@@ -785,10 +749,6 @@ class Agent:
             student_objective = student_objective + self.dkd_lambda_kd * t2s_component
         if align_enabled:
             student_objective = student_objective + self.dkd_lambda_align * align_loss
-        if student_reconstruction_enabled and student_reconstruction_weight > 0.0:
-            student_objective = student_objective + (
-                student_reconstruction_weight * student_reconstruction_loss
-            )
         if student_objective.requires_grad:
             student_objective.backward()
             torch.nn.utils.clip_grad_norm_(
@@ -800,9 +760,6 @@ class Agent:
         stats["global_anchor_loss"] = float(anchor_loss.detach().item())
         stats["global_anchor_weight"] = float(anchor_weight)
         stats["class_coverage"] = float(class_coverage)
-        stats["student_reconstruction_enabled"] = float(bool(student_reconstruction_enabled))
-        stats["student_reconstruction_weight"] = float(student_reconstruction_weight)
-        stats["student_reconstruction_loss"] = float(student_reconstruction_loss.detach().item())
 
         # Stage C: global student -> teacher.  Crucially, this pass is not
         # protected against absent classes; it is the only path that can teach
@@ -913,8 +870,6 @@ class Agent:
             "s2t_enabled": 0.0,
             "global_anchor": 0.0,
             "global_anchor_weight": 0.0,
-            "student_reconstruction": 0.0,
-            "student_reconstruction_enabled": 0.0,
         }
         train_steps = 0
         epoch_idx = 0
@@ -1012,8 +967,6 @@ class Agent:
                 totals["align"] += float(align_loss.detach().item())
                 totals["global_anchor"] += float(stats.get("global_anchor_loss", 0.0))
                 totals["global_anchor_weight"] += float(stats.get("global_anchor_weight", 0.0))
-                totals["student_reconstruction"] += float(stats.get("student_reconstruction_loss", 0.0))
-                totals["student_reconstruction_enabled"] += float(stats.get("student_reconstruction_enabled", 0.0))
                 totals["agreement"] += float(stats.get("agreement", 0.0))
                 totals["correct_agreement"] += float(stats.get("correct_agreement", 0.0))
                 totals["teacher_acc"] += float(stats.get("teacher_batch_accuracy", 0.0))
@@ -1036,11 +989,6 @@ class Agent:
             "avg_dkd_align_loss": totals["align"] / denom,
             "avg_dkd_global_anchor_loss": totals["global_anchor"] / denom,
             "dkd_global_anchor_weight": totals["global_anchor_weight"] / denom,
-            "avg_dkd_student_reconstruction_loss": totals["student_reconstruction"] / denom,
-            "dkd_student_reconstruction_enabled_rate": totals["student_reconstruction_enabled"] / denom,
-            "dkd_student_reconstruction_weight": float(
-                getattr(cfg_training, "dkd_student_reconstruction_weight", 0.0)
-            ),
             "dkd_agreement": totals["agreement"] / denom,
             "dkd_correct_agreement": totals["correct_agreement"] / denom,
             "dkd_teacher_batch_accuracy": totals["teacher_acc"] / denom,
@@ -1070,12 +1018,10 @@ class Agent:
         )
         active_logger.info(
             "DKD-FedOS dataset training | steps=%d teacher_ce=%.4f student_ce=%.4f "
-            "student_rec=%.4f rec_enabled=%.1f anchor=%.4f t2s=%.4f s2t=%.4f align=%.4f",
+            "anchor=%.4f t2s=%.4f s2t=%.4f align=%.4f",
             train_steps,
             metrics["avg_dkd_teacher_task_loss"],
             metrics["avg_dkd_student_task_loss"],
-            metrics["avg_dkd_student_reconstruction_loss"],
-            metrics["dkd_student_reconstruction_enabled_rate"],
             metrics["avg_dkd_global_anchor_loss"],
             metrics["avg_dkd_t2s_loss"],
             metrics["avg_dkd_s2t_loss"],

@@ -30,7 +30,7 @@ UNKNOWN_LABEL_ID = -1
 OPEN_SET_LABEL_ID = 99
 ERROR_SCALE_FACTOR = 100000.0
 
-BackendName = Literal["student_decoder", "teacher_generator"]
+BackendName = Literal["teacher_generator"]
 
 
 def _ensure_dir(path: Path) -> Path:
@@ -47,17 +47,9 @@ def _error_scale_factor(evt_cfg) -> float:
 
 
 def _evt_backend(evt_cfg) -> BackendName:
-    raw = str(
-        _cfg_value(
-            evt_cfg,
-            "backend",
-            _cfg_value(evt_cfg, "reconstruction_backend", "teacher_generator"),
-        )
-    ).lower()
-    if raw in {"student", "student_decoder", "global_student", "global_student_decoder"}:
-        return "student_decoder"
+    # Legacy evaluator supports only the local teacher/generator reconstruction
+    # backend. DKD-FedOS open-set uses src.openset.feature_evt instead.
     return "teacher_generator"
-
 
 def _open_set_label_order(
     class_names: dict[int, str], open_set_label_id: int
@@ -78,74 +70,6 @@ def _save_labeled_confusion_matrix(
     frame = pd.DataFrame(matrix, index=label_names, columns=label_names)
     frame.to_csv(path)
     return frame
-
-
-def _student_reconstruct(
-    *,
-    student_model: torch.nn.Module,
-    states_s: torch.Tensor,
-    class_condition: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    if not bool(getattr(student_model, "reconstruction_enabled", False)):
-        raise RuntimeError(
-            "EVT backend=student_decoder requires training.dkd_student_reconstruction_enabled=true."
-        )
-    features, logits = student_model(states_s)
-    recon = student_model.reconstruct(features, class_condition)
-    return features, logits, recon
-
-
-def _compute_student_reconstruction_errors(
-    features: torch.Tensor,
-    labels: torch.Tensor,
-    *,
-    batch_size: int,
-    student_model: torch.nn.Module,
-    device: torch.device,
-    error_scale_factor: float,
-    num_classes: int | None = None,
-    correct_only: bool = True,
-) -> dict[int, np.ndarray]:
-    """Collect class-wise known reconstruction errors from the global student decoder.
-
-    EVT fitting uses the true known label as the decoder condition and keeps only
-    correctly classified samples by default. This mirrors the Yang-style known
-    reconstruction-error calibration and avoids fitting unknown tails from
-    misclassified/ambiguous known samples.
-    """
-    loss_fn = nn.MSELoss(reduction="none")
-    dataset = TensorDataset(features.float(), labels.long())
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
-    per_class_errs: dict[int, list[np.ndarray]] = {}
-    num_classes = int(num_classes or getattr(student_model, "num_classes"))
-
-    with torch.no_grad():
-        student_model.eval()
-        for states_s, true_labels in loader:
-            states_s = states_s.to(device).float()
-            true_labels = true_labels.to(device).long()
-            known_mask = (true_labels >= 0) & (true_labels < num_classes)
-            if not bool(known_mask.any().item()):
-                continue
-
-            states_known = states_s[known_mask]
-            labels_known = true_labels[known_mask]
-            _features_s, logits_s, recon = _student_reconstruct(
-                student_model=student_model,
-                states_s=states_known,
-                class_condition=labels_known,
-            )
-            preds = logits_s.argmax(dim=1)
-            errs = loss_fn(recon, states_known).mean(dim=1) * error_scale_factor
-
-            for cls_id in torch.unique(labels_known).tolist():
-                class_mask = labels_known == int(cls_id)
-                if correct_only:
-                    class_mask = class_mask & (preds == labels_known)
-                if class_mask.any():
-                    per_class_errs.setdefault(int(cls_id), []).append(errs[class_mask].cpu().numpy())
-
-    return {cls_id: np.concatenate(chunks) for cls_id, chunks in per_class_errs.items() if chunks}
 
 
 def _compute_teacher_reconstruction_errors(
@@ -293,32 +217,19 @@ def fit_evt_models(
     error_scale = _error_scale_factor(evt_cfg)
     backend = _evt_backend(evt_cfg)
 
-    if backend == "student_decoder":
-        if student_model is None:
-            raise ValueError("fit_evt_models backend=student_decoder requires student_model.")
-        per_class_errors = _compute_student_reconstruction_errors(
-            features,
-            labels,
-            batch_size=batch_size,
-            student_model=student_model,
-            device=device,
-            error_scale_factor=error_scale,
-            correct_only=bool(_cfg_value(evt_cfg, "fit_correct_only", True)),
-        )
-    else:
-        if any(m is None for m in (prior_net, recognition_net, value_net_main, generation_net)):
-            raise ValueError("teacher_generator EVT requires prior/recognition/value/generation nets.")
-        per_class_errors = _compute_teacher_reconstruction_errors(
-            features,
-            labels,
-            batch_size=batch_size,
-            prior_net=prior_net,
-            recognition_net=recognition_net,
-            value_net_main=value_net_main,
-            generation_net=generation_net,
-            device=device,
-            error_scale_factor=error_scale,
-        )
+    if any(m is None for m in (prior_net, recognition_net, value_net_main, generation_net)):
+        raise ValueError("teacher_generator EVT requires prior/recognition/value/generation nets.")
+    per_class_errors = _compute_teacher_reconstruction_errors(
+        features,
+        labels,
+        batch_size=batch_size,
+        prior_net=prior_net,
+        recognition_net=recognition_net,
+        value_net_main=value_net_main,
+        generation_net=generation_net,
+        device=device,
+        error_scale_factor=error_scale,
+    )
 
     active_logger.info(
         "EVT fitting backend=%s | classes_with_errors=%s | error_scale=%.3g",
@@ -326,25 +237,7 @@ def fit_evt_models(
         sorted(per_class_errors.keys()),
         error_scale,
     )
-    try:
-        return _fit_evt_from_errors(per_class_errors, evt_cfg=evt_cfg, logger=active_logger)
-    except RuntimeError:
-        if backend == "student_decoder" and bool(_cfg_value(evt_cfg, "fit_correct_only", True)):
-            active_logger.warning(
-                "Class-wise EVT could not be fitted from correctly classified known samples; "
-                "falling back to all known validation samples for calibration."
-            )
-            per_class_errors = _compute_student_reconstruction_errors(
-                features,
-                labels,
-                batch_size=batch_size,
-                student_model=student_model,
-                device=device,
-                error_scale_factor=error_scale,
-                correct_only=False,
-            )
-            return _fit_evt_from_errors(per_class_errors, evt_cfg=evt_cfg, logger=active_logger)
-        raise
+    return _fit_evt_from_errors(per_class_errors, evt_cfg=evt_cfg, logger=active_logger)
 
 
 def calibrate_evt_thresholds(
@@ -419,20 +312,6 @@ def _teacher_predict_reconstruct_batch(
     return preds, logits, errs
 
 
-def _student_predict_reconstruct_batch(
-    *,
-    states_s: torch.Tensor,
-    student_model: torch.nn.Module,
-    loss_fn: nn.Module,
-    error_scale: float,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    features, logits = student_model(states_s)
-    preds = logits.argmax(dim=1)
-    recon = student_model.reconstruct(features, preds)
-    errs = loss_fn(recon, states_s).mean(dim=1) * error_scale
-    return preds, logits, errs
-
-
 def evaluate_open_set(
     features: torch.Tensor,
     labels: torch.Tensor,
@@ -459,8 +338,8 @@ def evaluate_open_set(
     output_dir = _ensure_dir(output_dir)
 
     backend = str(evt_meta.get("backend", _evt_backend(evt_cfg))).lower()
-    if backend not in {"student_decoder", "teacher_generator"}:
-        backend = _evt_backend(evt_cfg)
+    if backend != "teacher_generator":
+        backend = "teacher_generator"
     error_scale = float(evt_meta.get("error_scale_factor", _error_scale_factor(evt_cfg)))
     unknown_label_id = int(evt_meta.get("unknown_label_id", _cfg_value(evt_cfg, "unknown_label_id", UNKNOWN_LABEL_ID)))
     open_set_label_id = int(evt_meta.get("open_set_label_id", _cfg_value(evt_cfg, "open_set_label_id", OPEN_SET_LABEL_ID)))
@@ -474,40 +353,25 @@ def evaluate_open_set(
     missing_evt_model_count = 0
 
     with torch.no_grad():
-        if backend == "student_decoder":
-            if student_model is None:
-                raise ValueError("evaluate_open_set backend=student_decoder requires student_model.")
-            if not bool(getattr(student_model, "reconstruction_enabled", False)):
-                raise RuntimeError("Student decoder EVT requested but student reconstruction head is disabled.")
-            student_model.eval()
-        else:
-            if any(m is None for m in (prior_net, recognition_net, value_net_main, generation_net)):
-                raise ValueError("teacher_generator open-set eval requires teacher/generator modules.")
-            prior_net.eval()
-            recognition_net.eval()
-            value_net_main.eval()
-            generation_net.eval()
+        if any(m is None for m in (prior_net, recognition_net, value_net_main, generation_net)):
+            raise ValueError("teacher_generator open-set eval requires teacher/generator modules.")
+        prior_net.eval()
+        recognition_net.eval()
+        value_net_main.eval()
+        generation_net.eval()
 
         for states_s, lbls in loader:
             states_s = states_s.to(device).float()
             lbls = lbls.to(device).long()
-            if backend == "student_decoder":
-                preds, _logits, errs = _student_predict_reconstruct_batch(
-                    states_s=states_s,
-                    student_model=student_model,
-                    loss_fn=loss_fn,
-                    error_scale=error_scale,
-                )
-            else:
-                preds, _logits, errs = _teacher_predict_reconstruct_batch(
-                    states_s=states_s,
-                    prior_net=prior_net,
-                    recognition_net=recognition_net,
-                    value_net_main=value_net_main,
-                    generation_net=generation_net,
-                    loss_fn=loss_fn,
-                    error_scale=error_scale,
-                )
+            preds, _logits, errs = _teacher_predict_reconstruct_batch(
+                states_s=states_s,
+                prior_net=prior_net,
+                recognition_net=recognition_net,
+                value_net_main=value_net_main,
+                generation_net=generation_net,
+                loss_fn=loss_fn,
+                error_scale=error_scale,
+            )
 
             for i in range(states_s.size(0)):
                 pred_label = int(preds[i].item())
@@ -616,10 +480,10 @@ def evaluate_open_set(
     )
     scores_df.to_csv(output_dir / "open_set_scores.csv", index=False)
     scores_df[scores_df["is_unknown"] == 0].to_csv(
-        output_dir / "student_reconstruction_errors_known.csv", index=False
+        output_dir / "teacher_reconstruction_errors_known.csv", index=False
     )
     scores_df[scores_df["is_unknown"] == 1].to_csv(
-        output_dir / "student_reconstruction_errors_unknown.csv", index=False
+        output_dir / "teacher_reconstruction_errors_unknown.csv", index=False
     )
 
     evt_threshold_payload = {
@@ -670,7 +534,7 @@ def evaluate_open_set(
         "openset_overall_acc": float(overall_acc),
         "openset_missing_evt_model_count": float(missing_evt_model_count),
         "openset_error_scale_factor": float(error_scale),
-        "openset_evt_backend": 1.0 if backend == "student_decoder" else 0.0,
+        "openset_evt_backend": 0.0,
         "open_set/auroc": float(auroc),
         "open_set/auprc": float(auprc),
         "open_set/fpr95": float(fpr95),

@@ -67,14 +67,7 @@ dkd_student_lr: 0.001
 dkd_student_activation: gelu
 dkd_student_norm: layernorm
 dkd_student_dropout: 0.05
-# Phase-1 open-set preparation: optional global student reconstruction head.
-# Disabled by default so closed-set experiments (E1/E3/E7) keep the previous
-# classifier-only student behavior. Open-set experiments E2/E4 enable this.
-dkd_student_reconstruction_enabled: false
-dkd_student_reconstruction_weight: 0.0
-dkd_student_decoder_hidden_dims: [128, 256]
-dkd_student_decoder_dropout: 0.05
-dkd_student_decoder_class_condition: true
+# Open-set v7 uses Feature-EVT over the student feature space.
 dkd_dataset_min_steps: 50
 dkd_dataset_epochs_small_client: 10
 dkd_global_anchor_weight: 2.0

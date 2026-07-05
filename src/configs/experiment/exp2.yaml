@@ -32,19 +32,15 @@ dataset:
     alpha: 1.0
     iid: true
 training:
-  # Phase 1: train the global student reconstruction head only for open-set
-  # experiments. Closed-set E1/E3 keep the old classifier-only behavior.
+  # v7 open-set uses global-student feature-distance EVT. The local teacher
+  # generator remains available only for the gated dual-boundary backend.
   generator:
     enabled: true
-  dkd_student_reconstruction_enabled: true
-  dkd_student_reconstruction_weight: 0.10
-  dkd_student_decoder_hidden_dims: [128, 256]
-  dkd_student_decoder_dropout: 0.05
-  dkd_student_decoder_class_condition: true
 open_set:
   evt:
     enabled: true
-    backend: student_decoder
+    backend: student_feature_evt
+    score: mahalanobis_feature_distance
     classwise: true
     threshold_method: mef
 evaluation:

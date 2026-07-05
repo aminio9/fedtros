@@ -65,6 +65,12 @@ REQUIRED_CONFIG_KEYS = (
 )
 
 
+def _select_str(cfg: DictConfig, key: str, default: str = "") -> str:
+    value = OmegaConf.select(cfg, key, default=default)
+    return str(value or default)
+
+
+
 def validate_config(cfg: DictConfig, extra_required: Iterable[str] = ()) -> None:
     """Fail early when a required Hydra key is missing or unresolved."""
     # missing: list[str] = []
@@ -150,6 +156,7 @@ def validate_config(cfg: DictConfig, extra_required: Iterable[str] = ()) -> None
     #     raise ValueError("federated.strategy.max_agents must match federated.num_clients.")
     # if not 0.0 < max_selected_fraction <= 1.0:
     #     raise ValueError("federated.strategy.max_selected_fraction must be in (0, 1].")
+
 
 
 def _validate_runtime(cfg: DictConfig) -> None:

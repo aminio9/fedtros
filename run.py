@@ -78,26 +78,27 @@ def _enforce_dkd_fedos_v5_contract(cfg: DictConfig) -> None:
             "training.dkd_update_teacher_from_student must stay false for RL safety."
         )
 
-    student_rec_enabled = bool(
-        OmegaConf.select(cfg, "training.dkd_student_reconstruction_enabled", default=False)
-    )
-    student_rec_weight = float(
-        OmegaConf.select(cfg, "training.dkd_student_reconstruction_weight", default=0.0)
-    )
+    evt_enabled = bool(OmegaConf.select(cfg, "open_set.evt.enabled", default=False))
+    evt_backend = str(OmegaConf.select(cfg, "open_set.evt.backend", default="teacher_generator")).lower()
+    if evt_enabled and evt_backend not in {"student_feature_evt", "student_feature", "feature_evt", "dual_boundary_evt", "dual", "dual_evt"}:
+        raise ValueError(
+            "DKD-FedOS v7 supports only open_set.evt.backend=student_feature_evt "
+            "or dual_boundary_evt for DKD-FedOS open-set runs."
+        )
     logger.info(
         "DKD-FedOS V5 STUDENT-ANCHOR ACTIVE | "
         "student_aggregation_mode=%s | global_anchor_enabled=%s | "
         "global_anchor_weight=%.3f | student_hidden_dims=%s | "
         "t2s_start_round=%d | alignment_start_round=%d | "
-        "student_reconstruction_enabled=%s | student_reconstruction_weight=%.3f",
+        "open_set_evt_enabled=%s | open_set_evt_backend=%s",
         aggregation_mode,
         bool(anchor_weight > 0.0),
         anchor_weight,
         hidden_dims,
         t2s_start,
         align_start,
-        student_rec_enabled,
-        student_rec_weight,
+        evt_enabled,
+        evt_backend,
     )
 
 
@@ -199,9 +200,9 @@ def main(cfg: DictConfig) -> None:
         if str(OmegaConf.select(cfg, "strategy.name", default="")).lower() == "dkd_fedos":
             # DKD-FedOS globally aggregates only the compact student.  For
             # closed-set experiments the client-side Flower reports are enough.
-            # For open-set E2/E4 Phase 2, evaluate the aggregated global student
-            # decoder with class-wise Yang-style EVT instead of the local teacher
-            # generator.
+            # For open-set E2/E4, evaluate the aggregated global student with
+            # class-wise Feature-EVT. The optional local generator branch is
+            # client-side only and is not uploaded to the server.
             if bool(OmegaConf.select(cfg, "open_set.evt.enabled", default=False)):
                 run_dkd_fedos_student_open_set_evaluation(
                     cfg,

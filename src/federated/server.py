@@ -424,7 +424,7 @@ class DKDFedOSStrategy(FedAvg):
 
     Only the compact student model is sent to and aggregated by the server.
     The CVAE-DQN teacher remains local for personalization and open-set
-    reconstruction, preventing extreme non-IID clients from overwriting a shared
+    classifier, preventing extreme non-IID clients from overwriting a shared
     global teacher with one-class local evidence.
     """
 
@@ -484,18 +484,11 @@ class DKDFedOSStrategy(FedAvg):
                 f"student_hidden_dims must be {expected_hidden}, got {actual_hidden}."
             )
 
-        student_rec_enabled = bool(
-            OmegaConf.select(cfg, "training.dkd_student_reconstruction_enabled", default=False)
-        )
-        student_rec_weight = float(
-            OmegaConf.select(cfg, "training.dkd_student_reconstruction_weight", default=0.0)
-        )
         logger.info(
-            "DKD-FedOS V5 STUDENT-ANCHOR ACTIVE | "
+            "DKD-FedOS V7 FEATURE-EVT READY | "
             "student_aggregation_mode=%s | global_anchor_enabled=%s | "
             "global_anchor_weight=%.3f | student_hidden_dims=%s | student_layers=%d | "
-            "min_reliable_samples=%.1f | warmup=%d | "
-            "student_reconstruction_enabled=%s | student_reconstruction_weight=%.3f",
+            "min_reliable_samples=%.1f | warmup=%d",
             self.student_aggregation_mode,
             bool(anchor_weight > 0.0),
             anchor_weight,
@@ -503,8 +496,6 @@ class DKDFedOSStrategy(FedAvg):
             len(GLOBAL_AGENT_REF.get_student_parameters()),
             self.min_reliable_samples,
             self.student_avg_warmup_rounds,
-            student_rec_enabled,
-            student_rec_weight,
         )
 
     def configure_fit(self, server_round: int, parameters: Parameters, client_manager):
