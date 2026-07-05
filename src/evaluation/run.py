@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import logging
 from pathlib import Path
@@ -197,6 +198,10 @@ def run_dkd_fedos_student_open_set_evaluation(
     project_root: Path,
     device: torch.device,
     tracker: LocalRunTracker | None = None,
+    output_dir: Path | None = None,
+    server_round: int | None = None,
+    save_scores: bool | None = None,
+    append_round_metrics: bool = False,
 ) -> dict[str, Any]:
     """Evaluate the DKD-FedOS global student with the configured open-set backend.
 
@@ -230,8 +235,13 @@ def run_dkd_fedos_student_open_set_evaluation(
         logger.info("DKD-FedOS open-set evaluation skipped: unsupported evt.backend=%s", backend)
         return {}
 
-    output_dir = resolve_path(project_root, cfg.evaluation.output_dir)
+    base_output_dir = resolve_path(project_root, cfg.evaluation.output_dir)
+    output_dir = Path(output_dir) if output_dir is not None else base_output_dir
+    if not output_dir.is_absolute():
+        output_dir = project_root / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
+    if save_scores is None:
+        save_scores = True
     agent = build_agent(cfg, device)
 
     student_ckpt = resolve_path(
@@ -267,7 +277,7 @@ def run_dkd_fedos_student_open_set_evaluation(
         "OPEN-SET PROTOCOL ACTIVE | known_classes=%s | heldout_unknown=%s | "
         "unknown_label_id=%s | num_actions=%d | calibration_samples=%d | "
         "calibration_unknown_samples=%d | open_test_samples=%d | open_test_unknown_samples=%d | "
-        "backend=%s",
+        "backend=%s | server_round=%s",
         [class_names[k] for k in sorted(class_names)],
         "FoT",
         unknown_label_id,
@@ -277,6 +287,7 @@ def run_dkd_fedos_student_open_set_evaluation(
         int(open_labels.numel()),
         num_unknown_test,
         backend,
+        "final" if server_round is None else int(server_round),
     )
     if num_unknown_train != 0:
         raise ValueError("EVT calibration data must contain known classes only; found unknown labels.")
@@ -336,8 +347,46 @@ def run_dkd_fedos_student_open_set_evaluation(
             evt_cfg=evt_cfg,
             report_to_stdout=bool(cfg.evaluation.report_to_stdout),
             logger_=logger,
+            save_scores=bool(save_scores),
         )
 
+
+    if server_round is not None:
+        metrics["server_round"] = int(server_round)
+        metrics["open_set/server_round"] = float(server_round)
+
+    if append_round_metrics and server_round is not None:
+        curve_path = base_output_dir / "open_set_round_metrics.csv"
+        curve_path.parent.mkdir(parents=True, exist_ok=True)
+        round_row = {
+            "round": int(server_round),
+            "backend": backend,
+            "openset_known_acc": float(metrics.get("openset_known_acc", 0.0)),
+            "openset_unknown_recall": float(metrics.get("openset_unknown_recall", 0.0)),
+            "openset_unknown_f1": float(metrics.get("openset_unknown_f1", 0.0)),
+            "openset_f1_macro": float(metrics.get("openset_f1_macro", 0.0)),
+            "openset_overall_acc": float(metrics.get("openset_overall_acc", 0.0)),
+            "openset_auroc": float(metrics.get("openset_auroc", 0.0)),
+            "openset_auprc": float(metrics.get("openset_auprc", 0.0)),
+            "openset_fpr95": float(metrics.get("openset_fpr95", 1.0)),
+            "openset_known_false_unknown_rate": float(metrics.get("openset_known_false_unknown_rate", 0.0)),
+            "openset_global_reject_count": float(metrics.get("openset_global_reject_count", 0.0)),
+            "openset_local_reject_count": float(metrics.get("openset_local_reject_count", 0.0)),
+        }
+        write_header = not curve_path.exists()
+        with curve_path.open("a", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(round_row.keys()))
+            if write_header:
+                writer.writeheader()
+            writer.writerow(round_row)
+        logger.info(
+            "Open-set round metrics appended | round=%s | path=%s | AUROC=%.4f | Unknown_Recall=%.4f | Known_FU=%.4f",
+            int(server_round),
+            curve_path,
+            float(metrics.get("openset_auroc", 0.0)),
+            float(metrics.get("openset_unknown_recall", 0.0)),
+            float(metrics.get("openset_known_false_unknown_rate", 0.0)),
+        )
 
     if tracker:
         tracker.log_metrics(metrics)

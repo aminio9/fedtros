@@ -509,6 +509,7 @@ def evaluate_feature_evt_open_set(
     evt_cfg: Any = None,
     report_to_stdout: bool = False,
     logger_: logging.Logger | None = None,
+    save_scores: bool = True,
     local_generator_boundaries: dict[int, LocalGeneratorBoundary] | None = None,
     prior_net: torch.nn.Module | None = None,
     recognition_net: torch.nn.Module | None = None,
@@ -681,9 +682,10 @@ def evaluate_feature_evt_open_set(
         "is_unknown": y_binary,
         "backend": backend,
     })
-    scores_df.to_csv(output_dir / "open_set_scores.csv", index=False)
-    scores_df[scores_df["is_unknown"] == 0].to_csv(output_dir / "student_feature_distances_known.csv", index=False)
-    scores_df[scores_df["is_unknown"] == 1].to_csv(output_dir / "student_feature_distances_unknown.csv", index=False)
+    if bool(save_scores):
+        scores_df.to_csv(output_dir / "open_set_scores.csv", index=False)
+        scores_df[scores_df["is_unknown"] == 0].to_csv(output_dir / "student_feature_distances_known.csv", index=False)
+        scores_df[scores_df["is_unknown"] == 1].to_csv(output_dir / "student_feature_distances_unknown.csv", index=False)
 
     (output_dir / "feature_evt_thresholds.json").write_text(
         json.dumps({str(k): v.to_payload() for k, v in sorted(feature_boundaries.items())}, indent=2, sort_keys=True),
@@ -695,7 +697,7 @@ def evaluate_feature_evt_open_set(
             encoding="utf-8",
         )
 
-    if np.unique(y_binary).size >= 2:
+    if bool(save_scores) and np.unique(y_binary).size >= 2:
         fpr, tpr, roc_thresholds = roc_curve(y_binary, score_arr)
         pd.DataFrame({"fpr": fpr, "tpr": tpr, "threshold": roc_thresholds}).to_csv(output_dir / "open_set_roc_curve.csv", index=False)
         precision, recall, pr_thresholds = precision_recall_curve(y_binary, score_arr)

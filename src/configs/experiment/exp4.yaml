@@ -38,6 +38,10 @@ open_set:
   evt:
     enabled: true
     backend: student_feature_evt
+    evaluate_each_round: true
+    evaluate_every_n_rounds: 1
+    round_eval_dir: open_set_rounds
+    save_round_scores: false
     score: mahalanobis_feature_distance
     classwise: true
     threshold_method: mef

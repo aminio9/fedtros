@@ -484,11 +484,25 @@ class DKDFedOSStrategy(FedAvg):
                 f"student_hidden_dims must be {expected_hidden}, got {actual_hidden}."
             )
 
+        self.round_open_set_eval_enabled = bool(
+            OmegaConf.select(cfg, "open_set.evt.evaluate_each_round", default=False)
+        )
+        self.round_open_set_eval_every_n = max(
+            1, int(OmegaConf.select(cfg, "open_set.evt.evaluate_every_n_rounds", default=1) or 1)
+        )
+        self.round_open_set_eval_dir = str(
+            OmegaConf.select(cfg, "open_set.evt.round_eval_dir", default="open_set_rounds")
+            or "open_set_rounds"
+        )
+        self.round_open_set_save_scores = bool(
+            OmegaConf.select(cfg, "open_set.evt.save_round_scores", default=False)
+        )
+
         logger.info(
             "DKD-FedOS V7 FEATURE-EVT READY | "
             "student_aggregation_mode=%s | global_anchor_enabled=%s | "
             "global_anchor_weight=%.3f | student_hidden_dims=%s | student_layers=%d | "
-            "min_reliable_samples=%.1f | warmup=%d",
+            "min_reliable_samples=%.1f | warmup=%d | round_open_set_eval=%s every=%d",
             self.student_aggregation_mode,
             bool(anchor_weight > 0.0),
             anchor_weight,
@@ -496,6 +510,8 @@ class DKDFedOSStrategy(FedAvg):
             len(GLOBAL_AGENT_REF.get_student_parameters()),
             self.min_reliable_samples,
             self.student_avg_warmup_rounds,
+            self.round_open_set_eval_enabled,
+            self.round_open_set_eval_every_n,
         )
 
     def configure_fit(self, server_round: int, parameters: Parameters, client_manager):
@@ -665,6 +681,9 @@ class DKDFedOSStrategy(FedAvg):
             }
         )
         self._save_student_checkpoint(new_weights, server_round, metrics)
+        round_open_set_metrics = self._run_round_open_set_evaluation(server_round)
+        if round_open_set_metrics:
+            metrics.update({f"round_{k}": v for k, v in round_open_set_metrics.items() if isinstance(v, (int, float))})
         self._write_monitor_event(
             {
                 "event": "dkd_fedos_aggregation",
@@ -695,6 +714,70 @@ class DKDFedOSStrategy(FedAvg):
             distance_to_avg_after,
         )
         return self.global_student_parameters, metrics
+
+    def _run_round_open_set_evaluation(self, server_round: int) -> dict[str, float]:
+        """Run one server-side global-student open-set evaluation after aggregation.
+
+        This hook is intentionally server-side and uses only the aggregated global
+        student checkpoint saved for the current round.  When the configured
+        backend is ``dual_boundary_evt``, the round evaluation reports the
+        global Feature-EVT boundary only; local generator boundaries remain a
+        client-side ablation because teacher/generator parameters are not
+        uploaded to the server.
+        """
+        if not self.round_open_set_eval_enabled:
+            return {}
+        if int(server_round) % int(self.round_open_set_eval_every_n) != 0:
+            return {}
+        if not bool(OmegaConf.select(self.cfg, "open_set.evt.enabled", default=False)):
+            return {}
+
+        backend = str(OmegaConf.select(self.cfg, "open_set.evt.backend", default="student_feature_evt")).lower()
+        if backend not in {"student_feature_evt", "student_feature", "feature_evt", "feature", "dual_boundary_evt", "dual_evt", "dual"}:
+            logger.info(
+                "DKD-FedOS round=%d open-set evaluation skipped: backend=%s is not a global student Feature-EVT backend.",
+                server_round,
+                backend,
+            )
+            return {}
+
+        eval_base = _resolve_path(OmegaConf.select(self.cfg, "evaluation.output_dir", default="outputs/evaluation"))
+        output_dir = eval_base / self.round_open_set_eval_dir / f"round_{int(server_round):04d}"
+        try:
+            from src.evaluation.run import run_dkd_fedos_student_open_set_evaluation
+
+            logger.info(
+                "[Round %d] Running server-side global open-set evaluation | backend=%s | output_dir=%s",
+                server_round,
+                backend,
+                output_dir,
+            )
+            metrics = run_dkd_fedos_student_open_set_evaluation(
+                self.cfg,
+                project_root=_project_root(),
+                device=torch.device("cpu"),
+                tracker=None,
+                output_dir=output_dir,
+                server_round=int(server_round),
+                save_scores=bool(self.round_open_set_save_scores),
+                append_round_metrics=True,
+            )
+            logger.info(
+                "[Round %d] Global open-set eval complete | AUROC=%.4f | Unknown_Recall=%.4f | Known_FU=%.4f | MacroF1=%.4f",
+                server_round,
+                float(metrics.get("openset_auroc", 0.0)),
+                float(metrics.get("openset_unknown_recall", 0.0)),
+                float(metrics.get("openset_known_false_unknown_rate", 0.0)),
+                float(metrics.get("openset_f1_macro", 0.0)),
+            )
+            return {str(k): float(v) for k, v in metrics.items() if isinstance(v, (int, float))}
+        except Exception as exc:
+            logger.exception(
+                "[Round %d] Global open-set evaluation failed; training will continue. Error: %s",
+                server_round,
+                exc,
+            )
+            return {"open_set_round_eval_failed": 1.0}
 
     def _client_reliability_weight(self, record: dict[str, Any], *, max_examples: float) -> float:
         """Reliability score for student aggregation under quantity+label skew.

@@ -28,6 +28,13 @@ evt:
   # DKD-FedOS performs one clean final global open-set evaluation after FL.
   # Enable only for client-side ablation/debug of local generator dual-boundary.
   client_eval_enabled: false
+
+  # Optional server-side round evaluation for DKD-FedOS open-set experiments.
+  # This evaluates the aggregated global student once after each server aggregation round.
+  evaluate_each_round: false
+  evaluate_every_n_rounds: 1
+  round_eval_dir: open_set_rounds
+  save_round_scores: false
   dual_boundary:
     enabled: false
     rule: or

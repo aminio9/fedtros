@@ -148,3 +148,32 @@ Open-set metrics | backend=student_feature_evt
 ```
 
 Logs should show the Feature-EVT backend and should not include reconstruction-decoder training metrics.
+
+## Server-side open-set evaluation after each round
+
+For E2/E4 DKD-FedOS runs, the server can now evaluate the aggregated global student after every aggregation round. This is controlled by:
+
+```yaml
+open_set:
+  evt:
+    evaluate_each_round: true
+    evaluate_every_n_rounds: 1
+    round_eval_dir: open_set_rounds
+    save_round_scores: false
+```
+
+The round hook runs after the server has aggregated client student updates and saved `dkd_fedos_student_latest.pt`. It then fits class-wise Feature-EVT on the current global student using the known validation set and evaluates the open-set test set. Per-round outputs are saved under:
+
+```text
+<evaluation.output_dir>/open_set_rounds/round_0001/
+<evaluation.output_dir>/open_set_rounds/round_0002/
+...
+```
+
+A compact curve is appended to:
+
+```text
+<evaluation.output_dir>/open_set_round_metrics.csv
+```
+
+When `backend=dual_boundary_evt`, server-side round evaluation uses the primary global student Feature-EVT boundary only. The local generator branch remains client-side because local teacher/generator parameters are private and are not uploaded to the server.
