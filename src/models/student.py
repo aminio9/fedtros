@@ -81,6 +81,7 @@ class StudentIDSModel(nn.Module):
         osr_norm: str = "layernorm",
         osr_activation: str = "gelu",
         osr_detach_features: bool = True,
+        open_set_enabled: bool = False,
     ):
         super().__init__()
         hidden = [int(v) for v in hidden_dims]
@@ -95,6 +96,12 @@ class StudentIDSModel(nn.Module):
             output_dim=None,
         )
         self.head = nn.Linear(hidden[-1], int(num_classes))
+        # PROSER/FedPD++-style placeholder detector.  This auxiliary head has
+        # K+1 outputs: K known classes plus one learned open-set placeholder.
+        # It is federated as part of the global student and is trained only from
+        # known samples plus known-derived feature/input mixup placeholders.
+        self.open_set_enabled = bool(open_set_enabled)
+        self.open_set_head = nn.Linear(hidden[-1], int(num_classes) + 1) if self.open_set_enabled else None
         self.input_dim = int(input_dim)
         self.num_classes = int(num_classes)
         self.feature_dim = int(hidden[-1])
@@ -147,6 +154,57 @@ class StudentIDSModel(nn.Module):
 
     def classifier_parameters(self):
         return list(self.backbone.parameters()) + list(self.head.parameters())
+
+    def open_set_parameters(self):
+        if not self.open_set_enabled or self.open_set_head is None:
+            return []
+        return list(self.open_set_head.parameters())
+
+    def open_set_forward(
+        self,
+        x: torch.Tensor,
+        *,
+        detach_features: bool = True,
+    ) -> torch.Tensor:
+        if not self.open_set_enabled or self.open_set_head is None:
+            raise RuntimeError("Student open-set placeholder head is disabled.")
+        features = self.backbone(x)
+        if detach_features:
+            features = features.detach()
+        return self.open_set_head(features)
+
+    def open_set_logits_from_features(
+        self,
+        features: torch.Tensor,
+        *,
+        detach_features: bool = True,
+    ) -> torch.Tensor:
+        if not self.open_set_enabled or self.open_set_head is None:
+            raise RuntimeError("Student open-set placeholder head is disabled.")
+        if detach_features:
+            features = features.detach()
+        return self.open_set_head(features)
+
+    def open_set_score(
+        self,
+        x: torch.Tensor,
+        *,
+        detach_features: bool = True,
+        score_type: str = "margin",
+    ) -> dict[str, torch.Tensor]:
+        logits = self.open_set_forward(x, detach_features=detach_features)
+        known_logits = logits[:, : self.num_classes]
+        unknown_logit = logits[:, self.num_classes]
+        probs = F.softmax(logits, dim=1)
+        unknown_prob = probs[:, self.num_classes]
+        margin = unknown_logit - known_logits.max(dim=1).values
+        score = unknown_prob if str(score_type).lower() in {"prob", "probability", "softmax"} else margin
+        return {
+            "logits": logits,
+            "unknown_prob": unknown_prob,
+            "unknown_margin": margin,
+            "score": score,
+        }
 
     def _onehot(self, labels: torch.Tensor) -> torch.Tensor:
         labels = labels.long().view(-1).clamp(0, self.num_classes - 1)

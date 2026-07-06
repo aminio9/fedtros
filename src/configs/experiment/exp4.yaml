@@ -35,6 +35,7 @@ training:
   generator:
     enabled: false
   dkd_student_osr_enabled: true
+  dkd_student_open_set_enabled: true
 open_set:
   method: fed_digos
   evt:

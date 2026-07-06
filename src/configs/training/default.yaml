@@ -113,3 +113,9 @@ dkd_student_osr_lr: 0.001
 dkd_student_osr_weight_decay: 0.0001
 dkd_student_energy_lr: 0.0002
 dkd_student_energy_weight_decay: 0.0001
+
+# FedPD++/PROSER-style K+1 open-set placeholder head on the federated student.
+# Enabled by open-set experiments; trained from known data and known-derived mixup only.
+dkd_student_open_set_enabled: false
+dkd_student_open_set_lr: 0.001
+dkd_student_open_set_weight_decay: 0.0001

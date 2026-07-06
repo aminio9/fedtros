@@ -39,6 +39,20 @@ fed_digos:
     mask_probability: 0.05
     noise_std: 0.01
 
+  proser:
+    enabled: true
+    # FedPD++ local OSR training uses PROSER-style classifier/data placeholders:
+    # K known logits + one K+1 placeholder, trained from known samples plus
+    # feature-level/input mixup. No real FoT/unknown is used.
+    score_type: margin   # margin | prob
+    weight: 1.0
+    known_weight: 1.0
+    masked_placeholder_weight: 0.25
+    boundary_placeholder_weight: 1.0
+    feature_mixup_weight: 1.0
+    detach_features: true
+    label_smoothing: 0.02
+
   energy:
     enabled: true
     temperature: 1.0
@@ -55,17 +69,18 @@ fed_digos:
     boundary_margin: 1.0
 
   score_fusion:
-    # Default main score is generator/reconstruction rank. It is more stable
-    # across later rounds than equal fusion when energy/prototype drift.
-    # All component and fusion metrics are still evaluated/logged every round.
-    # Options: generator_rank, energy_rank, prototype_rank, mean_rank, weighted_rank, max_rank.
-    method: generator_rank
+    # Default main score is the FedPD++/PROSER K+1 placeholder rank.
+    # Generator, energy, prototype, and all fusions are still evaluated/logged
+    # every round as ablations.
+    # Options: proser_rank, generator_rank, energy_rank, prototype_rank, mean_rank, weighted_rank, max_rank.
+    method: proser_rank
     calibration_scope: global
     generator_score_column: recon_error
     decision_rule: selected_rank_threshold
     weights:
-      generator: 0.50
-      energy: 0.25
+      proser: 0.40
+      generator: 0.25
+      energy: 0.10
       prototype: 0.25
 
   prototype:

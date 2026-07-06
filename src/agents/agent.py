@@ -164,6 +164,7 @@ class Agent:
         # the dkd_fedos strategy.
         student_hidden = list(getattr(train_cfg, "dkd_student_hidden_dims", [64, 32, 16]))
         student_osr_enabled = bool(getattr(train_cfg, "dkd_student_osr_enabled", False))
+        student_open_set_enabled = bool(getattr(train_cfg, "dkd_student_open_set_enabled", False))
         student_osr_hidden = list(getattr(train_cfg, "dkd_student_osr_hidden_dims", [128, 64]))
         student_osr_decoder_hidden = list(getattr(train_cfg, "dkd_student_osr_decoder_hidden_dims", [64, 128]))
         self.student_model = StudentIDSModel(
@@ -181,6 +182,7 @@ class Agent:
             osr_norm=str(getattr(train_cfg, "dkd_student_osr_norm", "layernorm")),
             osr_activation=str(getattr(train_cfg, "dkd_student_osr_activation", "gelu")),
             osr_detach_features=bool(getattr(train_cfg, "dkd_student_osr_detach_features", True)),
+            open_set_enabled=student_open_set_enabled,
         ).to(device)
         self.student_anchor_model = StudentIDSModel(
             input_dim=model_factory.state_dim,
@@ -197,6 +199,7 @@ class Agent:
             osr_norm=str(getattr(train_cfg, "dkd_student_osr_norm", "layernorm")),
             osr_activation=str(getattr(train_cfg, "dkd_student_osr_activation", "gelu")),
             osr_detach_features=bool(getattr(train_cfg, "dkd_student_osr_detach_features", True)),
+            open_set_enabled=student_open_set_enabled,
         ).to(device)
         self.student_anchor_model.load_state_dict(self.student_model.state_dict())
         self.student_anchor_model.eval()
@@ -235,6 +238,17 @@ class Agent:
         else:
             self.optimizer_student_energy = adam_cls(energy_head_params, lr=energy_lr)
 
+        open_set_params = list(self.student_model.open_set_parameters()) if hasattr(self.student_model, "open_set_parameters") else []
+        if open_set_params:
+            open_lr = float(getattr(train_cfg, "dkd_student_open_set_lr", getattr(train_cfg, "dkd_student_lr", train_cfg.lr_q_rl)))
+            open_wd = float(getattr(train_cfg, "dkd_student_open_set_weight_decay", 1.0e-4))
+            if adam_cls is optim.Adam:
+                self.optimizer_student_open_set = optim.AdamW(open_set_params, lr=open_lr, weight_decay=open_wd, foreach=False)
+            else:
+                self.optimizer_student_open_set = adam_cls(open_set_params, lr=open_lr)
+        else:
+            self.optimizer_student_open_set = None
+
         self.dkd_lambda_kd = float(getattr(train_cfg, "dkd_lambda_kd_init", 0.20))
         self.dkd_lambda_align = float(getattr(train_cfg, "dkd_lambda_align_init", 0.08))
 
@@ -262,14 +276,16 @@ class Agent:
         self._capture_proximal_reference()
         self.logger.info(
             "Fed-DiGOS student initialized | hidden_dims=%s | feature_dim=%d | osr_enabled=%s | "
-            "osr_latent_dim=%d | osr_detach_features=%s | parameter_tensors=%d | osr_tensors=%d",
+            "open_set_placeholder=%s | osr_latent_dim=%d | osr_detach_features=%s | parameter_tensors=%d | osr_tensors=%d | open_set_tensors=%d",
             student_hidden,
             int(self.student_model.feature_dim),
             bool(getattr(self.student_model, "osr_enabled", False)),
+            bool(getattr(self.student_model, "open_set_enabled", False)),
             int(getattr(self.student_model, "osr_latent_dim", 0)),
             bool(getattr(self.student_model, "osr_detach_features", True)),
             len(self.student_model.state_dict()),
             len([k for k in self.student_model.state_dict() if k.startswith("osr_")]),
+            len([k for k in self.student_model.state_dict() if k.startswith("open_set_head")]),
         )
         self.logger.debug("Agent initialized with Double-DQN: %s", self.use_double_dqn)
 
@@ -1344,6 +1360,15 @@ class Agent:
         energy_temperature = max(float(getattr(energy_cfg, "temperature", 1.0)) if energy_cfg is not None else 1.0, 1.0e-6)
         energy_known_margin = float(getattr(energy_cfg, "known_margin", 2.0)) if energy_cfg is not None else 2.0
         energy_boundary_margin = float(getattr(energy_cfg, "boundary_margin", 1.0)) if energy_cfg is not None else 1.0
+        proser_cfg = getattr(osr_cfg, "proser", None)
+        proser_enabled = bool(getattr(proser_cfg, "enabled", False)) if proser_cfg is not None else False
+        proser_weight = float(getattr(proser_cfg, "weight", 1.0)) if proser_cfg is not None else 1.0
+        proser_known_weight = float(getattr(proser_cfg, "known_weight", 1.0)) if proser_cfg is not None else 1.0
+        proser_masked_weight = float(getattr(proser_cfg, "masked_placeholder_weight", 0.25)) if proser_cfg is not None else 0.25
+        proser_boundary_weight = float(getattr(proser_cfg, "boundary_placeholder_weight", 1.0)) if proser_cfg is not None else 1.0
+        proser_feature_mixup_weight = float(getattr(proser_cfg, "feature_mixup_weight", 1.0)) if proser_cfg is not None else 1.0
+        proser_detach_features = bool(getattr(proser_cfg, "detach_features", True)) if proser_cfg is not None else True
+        proser_label_smoothing = max(float(getattr(proser_cfg, "label_smoothing", 0.02)) if proser_cfg is not None else 0.02, 0.0)
 
         before = [p.detach().clone() for p in self.student_model.osr_parameters()]
         dataset = TensorDataset(features, labels)
@@ -1354,6 +1379,10 @@ class Agent:
             "pseudo_count": 0.0,
             "energy_loss": 0.0, "energy_known_conf": 0.0, "energy_boundary_conf": 0.0,
             "energy_margin_ok": 0.0, "energy_steps": 0.0,
+            "proser_loss": 0.0, "proser_known_ce": 0.0, "proser_masked_ce": 0.0,
+            "proser_boundary_ce": 0.0, "proser_feature_mixup_ce": 0.0,
+            "proser_unknown_prob_known": 0.0, "proser_unknown_prob_boundary": 0.0,
+            "proser_steps": 0.0,
         }
         steps = 0
         self.student_model.train()
@@ -1395,8 +1424,19 @@ class Agent:
                         )
                         pseudo_score = p_out["recon_error"]
                         pseudo_score_mean = pseudo_score.mean()
-                        pseudo_loss = F.relu(float(pseudo_margin) - pseudo_score).mean()
-                        margin_ok = (pseudo_score > float(pseudo_margin)).float().mean()
+                        # Relative boundary margin, not an absolute score target:
+                        # synthetic boundary samples should reconstruct worse
+                        # than known samples by at least pseudo_margin.  This
+                        # makes the training objective match the logged gap.
+                        known_score_ref = out["recon_error"].detach()
+                        pair_n = min(int(pseudo_score.shape[0]), int(known_score_ref.shape[0]))
+                        if pair_n > 0:
+                            gap_vec = pseudo_score[:pair_n] - known_score_ref[:pair_n]
+                            pseudo_loss = F.relu(float(pseudo_margin) - gap_vec).mean()
+                            margin_ok = (gap_vec > float(pseudo_margin)).float().mean()
+                        else:
+                            pseudo_loss = F.relu(float(pseudo_margin) - (pseudo_score_mean - known_score_ref.mean()))
+                            margin_ok = ((pseudo_score_mean - known_score_ref.mean()) > float(pseudo_margin)).float()
                         loss = loss + (pseudo_weight * pseudo_loss)
                 self.optimizer_student_osr.zero_grad()
                 loss.backward()
@@ -1440,6 +1480,79 @@ class Agent:
                         (s_boundary < float(energy_boundary_margin)).float().mean() * 0.5
                     )
 
+                proser_loss = torch.zeros((), device=self.device)
+                proser_known_ce = torch.zeros((), device=self.device)
+                proser_masked_ce = torch.zeros((), device=self.device)
+                proser_boundary_ce = torch.zeros((), device=self.device)
+                proser_feature_mixup_ce = torch.zeros((), device=self.device)
+                proser_unknown_prob_known = torch.zeros((), device=self.device)
+                proser_unknown_prob_boundary = torch.zeros((), device=self.device)
+                if (
+                    proser_enabled
+                    and getattr(self.student_model, "open_set_enabled", False)
+                    and getattr(self, "optimizer_student_open_set", None) is not None
+                ):
+                    open_idx = int(self.action_dim)
+                    open_logits_known = self.student_model.open_set_forward(
+                        x_b, detach_features=proser_detach_features
+                    )
+                    # PROSER/FedPD++ classifier-placeholder training on known data:
+                    # known CE preserves closed-set labels, masked-placeholder CE
+                    # makes the K+1 placeholder active when the true class is
+                    # removed, and data/feature placeholders train boundary mixups
+                    # as open-set without using real FoT/unknown samples.
+                    proser_known_ce = F.cross_entropy(
+                        open_logits_known,
+                        y_b,
+                        label_smoothing=proser_label_smoothing,
+                    )
+                    masked_logits = open_logits_known.clone()
+                    masked_logits[torch.arange(y_b.shape[0], device=self.device), y_b] = -1.0e6
+                    placeholder_targets = torch.full_like(y_b, open_idx)
+                    proser_masked_ce = F.cross_entropy(masked_logits, placeholder_targets)
+                    proser_loss = (
+                        (proser_known_weight * proser_known_ce)
+                        + (proser_masked_weight * proser_masked_ce)
+                    )
+                    probs_known = F.softmax(open_logits_known, dim=1)
+                    proser_unknown_prob_known = probs_known[:, open_idx].mean()
+
+                    if x_p is not None and y_p is not None and int(y_p.numel()) > 0:
+                        open_logits_boundary = self.student_model.open_set_forward(
+                            x_p, detach_features=proser_detach_features
+                        )
+                        boundary_targets = torch.full((x_p.shape[0],), open_idx, device=self.device, dtype=torch.long)
+                        proser_boundary_ce = F.cross_entropy(open_logits_boundary, boundary_targets)
+                        proser_loss = proser_loss + (proser_boundary_weight * proser_boundary_ce)
+                        probs_boundary = F.softmax(open_logits_boundary, dim=1)
+                        proser_unknown_prob_boundary = probs_boundary[:, open_idx].mean()
+
+                    if x_b.shape[0] >= 2 and proser_feature_mixup_weight > 0.0:
+                        with torch.no_grad():
+                            features_known, _ = self.student_model(x_b)
+                        idx1 = torch.randint(0, x_b.shape[0], (x_b.shape[0],), device=self.device)
+                        idx2 = torch.randint(0, x_b.shape[0], (x_b.shape[0],), device=self.device)
+                        for _retry in range(3):
+                            same = y_b[idx1] == y_b[idx2]
+                            if not bool(same.any().item()):
+                                break
+                            idx2[same] = torch.randint(0, x_b.shape[0], (int(same.sum().item()),), device=self.device)
+                        alpha = max(mixup_alpha, 1.0e-3)
+                        lam = torch.distributions.Beta(alpha, alpha).sample((x_b.shape[0],)).to(self.device).view(-1, 1)
+                        mixed_features = (lam * features_known[idx1]) + ((1.0 - lam) * features_known[idx2])
+                        open_logits_mixed = self.student_model.open_set_logits_from_features(
+                            mixed_features,
+                            detach_features=True,
+                        )
+                        mix_targets = torch.full((mixed_features.shape[0],), open_idx, device=self.device, dtype=torch.long)
+                        proser_feature_mixup_ce = F.cross_entropy(open_logits_mixed, mix_targets)
+                        proser_loss = proser_loss + (proser_feature_mixup_weight * proser_feature_mixup_ce)
+
+                    self.optimizer_student_open_set.zero_grad()
+                    (proser_weight * proser_loss).backward()
+                    torch.nn.utils.clip_grad_norm_(self.student_model.open_set_parameters(), max_norm=grad_clip)
+                    self.optimizer_student_open_set.step()
+
                 totals["loss"] += float(loss.detach().item())
                 totals["recon"] += float(recon.detach().item())
                 totals["kl"] += float(kl.detach().item())
@@ -1453,6 +1566,14 @@ class Agent:
                 totals["energy_boundary_conf"] += float(energy_boundary_conf.detach().item())
                 totals["energy_margin_ok"] += float(energy_margin_ok.detach().item())
                 totals["energy_steps"] += float(bool(energy_train_enabled and int(pseudo_count) > 0))
+                totals["proser_loss"] += float(proser_loss.detach().item())
+                totals["proser_known_ce"] += float(proser_known_ce.detach().item())
+                totals["proser_masked_ce"] += float(proser_masked_ce.detach().item())
+                totals["proser_boundary_ce"] += float(proser_boundary_ce.detach().item())
+                totals["proser_feature_mixup_ce"] += float(proser_feature_mixup_ce.detach().item())
+                totals["proser_unknown_prob_known"] += float(proser_unknown_prob_known.detach().item())
+                totals["proser_unknown_prob_boundary"] += float(proser_unknown_prob_boundary.detach().item())
+                totals["proser_steps"] += float(bool(proser_enabled and getattr(self.student_model, "open_set_enabled", False)))
                 steps += 1
 
         after = [p.detach() for p in self.student_model.osr_parameters()]
@@ -1487,6 +1608,15 @@ class Agent:
             "digos_energy_known_conf_mean": totals["energy_known_conf"] / denom,
             "digos_energy_boundary_conf_mean": totals["energy_boundary_conf"] / denom,
             "digos_energy_margin_satisfied_rate": totals["energy_margin_ok"] / denom,
+            "digos_proser_enabled": 1.0 if (proser_enabled and getattr(self.student_model, "open_set_enabled", False)) else 0.0,
+            "digos_proser_steps": totals["proser_steps"],
+            "digos_proser_loss": totals["proser_loss"] / max(totals["proser_steps"], 1.0),
+            "digos_proser_known_ce": totals["proser_known_ce"] / max(totals["proser_steps"], 1.0),
+            "digos_proser_masked_ce": totals["proser_masked_ce"] / max(totals["proser_steps"], 1.0),
+            "digos_proser_boundary_ce": totals["proser_boundary_ce"] / max(totals["proser_steps"], 1.0),
+            "digos_proser_feature_mixup_ce": totals["proser_feature_mixup_ce"] / max(totals["proser_steps"], 1.0),
+            "digos_proser_unknown_prob_known": totals["proser_unknown_prob_known"] / max(totals["proser_steps"], 1.0),
+            "digos_proser_unknown_prob_boundary": totals["proser_unknown_prob_boundary"] / max(totals["proser_steps"], 1.0),
             "digos_osr_delta_norm": float(torch.sqrt(delta_sq.clamp_min(0.0)).detach().item()),
             "digos_osr_param_norm": float(torch.sqrt(norm_sq.clamp_min(0.0)).detach().item()),
         }
@@ -1494,7 +1624,8 @@ class Agent:
             "Fed-DiGOS local OSR | known=%d class_counts=%s coverage=%.3f entropy=%.3f "
             "steps=%d recon=%.6f kl=%.6f pseudo_score=%.6f known_score=%.6f gap=%.6f "
             "margin_ok=%.3f energy_train=%s energy_loss=%.6f energy_S_known=%.6f energy_S_boundary=%.6f "
-            "energy_margin_ok=%.3f delta_norm=%.6f",
+            "energy_margin_ok=%.3f proser_train=%s proser_loss=%.6f proser_pU_known=%.4f "
+            "proser_pU_boundary=%.4f delta_norm=%.6f",
             known_samples,
             {str(i): int(v) for i, v in enumerate(counts.detach().cpu().tolist())},
             label_coverage,
@@ -1511,6 +1642,10 @@ class Agent:
             metrics["digos_energy_known_conf_mean"],
             metrics["digos_energy_boundary_conf_mean"],
             metrics["digos_energy_margin_satisfied_rate"],
+            bool(metrics["digos_proser_enabled"]),
+            metrics["digos_proser_loss"],
+            metrics["digos_proser_unknown_prob_known"],
+            metrics["digos_proser_unknown_prob_boundary"],
             metrics["digos_osr_delta_norm"],
         )
         return metrics

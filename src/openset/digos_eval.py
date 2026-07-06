@@ -7,9 +7,10 @@ and reporting, but uses continuous empirical-rank calibration for AUROC
 and the default binary decision.  The default scope is global because the smoke
 test showed class-wise Normal-tail calibration was still too broad for FoT:
 
-  1. student OSR reconstruction/generative score, high tail,
-  2. two-sided student energy deviation, both low and high energy are abnormal,
-  3. prototype/OpenMax-style activation distance, high tail.
+  1. FedPD++/PROSER-style K+1 placeholder score,
+  2. student OSR reconstruction/generative score, high tail,
+  3. two-sided student energy deviation, both low and high energy are abnormal,
+  4. prototype/OpenMax-style activation distance, high tail.
 
 Final unknown score is the mean of the calibrated ranks.  This preserves useful
 middle-range separation instead of zeroing everything below an EVT threshold.
@@ -152,19 +153,22 @@ def _rank_threshold(values: list[float], target_fpr: float) -> float:
 def _score_weights(cfg: Any) -> list[float]:
     weights = _nested(cfg, "score_fusion.weights", None)
     if weights is None:
-        return [1.0, 1.0, 1.0]
+        return [1.0, 1.0, 1.0, 1.0]
     try:
         return [
+            float(getattr(weights, "proser", 1.0)),
             float(getattr(weights, "generator", 1.0)),
             float(getattr(weights, "energy", 1.0)),
             float(getattr(weights, "prototype", 1.0)),
         ]
     except Exception:
-        return [1.0, 1.0, 1.0]
+        return [1.0, 1.0, 1.0, 1.0]
 
 
-def _fuse_rank_scores(gen_rank: float, energy_rank: float, proto_rank: float, cfg: Any) -> float:
-    method = str(_nested(cfg, "score_fusion.method", "generator_rank")).lower()
+def _fuse_rank_scores(proser_rank: float, gen_rank: float, energy_rank: float, proto_rank: float, cfg: Any) -> float:
+    method = str(_nested(cfg, "score_fusion.method", "proser_rank")).lower()
+    if method in {"proser_rank", "placeholder_rank", "proser", "placeholder", "proser_only"}:
+        return float(proser_rank) if np.isfinite(proser_rank) else 0.0
     if method in {"generator_rank", "gen_rank", "generator", "gen_only", "generator_only"}:
         return float(gen_rank) if np.isfinite(gen_rank) else 0.0
     if method in {"energy_rank", "energy", "energy_only"}:
@@ -172,14 +176,16 @@ def _fuse_rank_scores(gen_rank: float, energy_rank: float, proto_rank: float, cf
     if method in {"prototype_rank", "proto_rank", "prototype", "proto_only", "prototype_only"}:
         return float(proto_rank) if np.isfinite(proto_rank) else 0.0
     if method in {"max_rank", "max"}:
-        return float(np.nanmax([gen_rank, energy_rank, proto_rank]))
+        return float(np.nanmax([proser_rank, gen_rank, energy_rank, proto_rank]))
     if method in {"weighted_rank", "weighted_mean_rank"}:
-        return _mean_finite([gen_rank, energy_rank, proto_rank], weights=_score_weights(cfg))
-    return _mean_finite([gen_rank, energy_rank, proto_rank])
+        return _mean_finite([proser_rank, gen_rank, energy_rank, proto_rank], weights=_score_weights(cfg))
+    return _mean_finite([proser_rank, gen_rank, energy_rank, proto_rank])
 
 
 def _component_threshold_key(cfg: Any) -> str:
-    method = str(_nested(cfg, "score_fusion.method", "generator_rank")).lower()
+    method = str(_nested(cfg, "score_fusion.method", "proser_rank")).lower()
+    if method in {"proser_rank", "placeholder_rank", "proser", "placeholder", "proser_only"}:
+        return "proser_threshold"
     if method in {"generator_rank", "gen_rank", "generator", "gen_only", "generator_only"}:
         return "gen_threshold"
     if method in {"energy_rank", "energy", "energy_only"}:
@@ -298,6 +304,19 @@ def _collect_student_scores(
                 cond = y.clamp(0, int(student_model.num_classes) - 1)
             osr = student_model.osr_score(x, cond, nll_weight=nll_weight, detach_features=True)
             energy = student_model.energy_score(logits, temperature=temperature)
+            if bool(getattr(student_model, "open_set_enabled", False)) and getattr(student_model, "open_set_head", None) is not None:
+                proser = student_model.open_set_score(
+                    x,
+                    detach_features=True,
+                    score_type=str(_nested(cfg, "proser.score_type", "margin")),
+                )
+                proser_score = proser["score"]
+                proser_prob = proser["unknown_prob"]
+                proser_margin = proser["unknown_margin"]
+            else:
+                proser_score = torch.zeros_like(energy)
+                proser_prob = torch.zeros_like(energy)
+                proser_margin = torch.zeros_like(energy)
             h_np = h.detach().cpu().numpy()
             mu_np = osr["mu"].detach().cpu().numpy()
             proto_source = str(_nested(cfg, "prototype.feature_source", "osr_mu")).lower()
@@ -317,6 +336,9 @@ def _collect_student_scores(
                     "recon_error": float(osr["recon_error"][i].detach().cpu().item()),
                     "latent_nll": float(osr["latent_nll"][i].detach().cpu().item()),
                     "energy_score": float(energy[i].detach().cpu().item()),
+                    "proser_score": float(proser_score[i].detach().cpu().item()),
+                    "proser_unknown_prob": float(proser_prob[i].detach().cpu().item()),
+                    "proser_unknown_margin": float(proser_margin[i].detach().cpu().item()),
                     "correct_known": int((y[i].item() >= 0) and (y[i].item() == pred[i].item())),
                     "prototype_feature_source": proto_source,
                     "feature": proto_np[i],
@@ -515,6 +537,7 @@ def _build_rank_calibrators(
         else:
             gen_col = generator_col
         gen_values = np.sort(_finite_array(cls_fit[gen_col].to_numpy()))
+        proser_values = np.sort(_finite_array(cls_fit["proser_score"].to_numpy())) if "proser_score" in cls_fit.columns else np.asarray([], dtype=np.float64)
         proto_values = np.sort(_finite_array(cls_fit["prototype_score"].to_numpy()))
         energy_values = _finite_array(cls_fit["energy_score"].to_numpy())
         energy_median = float(np.median(energy_values)) if energy_values.size else 0.0
@@ -525,6 +548,10 @@ def _build_rank_calibrators(
         sorted_energy_values = np.sort(energy_values) if energy_values.size else np.asarray([], dtype=np.float64)
 
         fused_known: list[float] = []
+        mean_rank_known: list[float] = []
+        weighted_rank_known: list[float] = []
+        max_rank_known: list[float] = []
+        proser_rank_known: list[float] = []
         gen_rank_known: list[float] = []
         energy_rank_known: list[float] = []
         proto_rank_known: list[float] = []
@@ -538,20 +565,31 @@ def _build_rank_calibrators(
                 sorted_deviations=energy_devs,
                 direction=energy_direction,
             )
+            proser_rank = _rank_high(float(row.get("proser_score", 0.0)), proser_values)
             gen_rank = _rank_high(float(row[gen_col]), gen_values)
             proto_rank = _rank_high(float(row["prototype_score"]), proto_values)
+            proser_rank_known.append(proser_rank)
             gen_rank_known.append(gen_rank)
             energy_rank_known.append(energy_rank)
             proto_rank_known.append(proto_rank)
-            fused_known.append(_fuse_rank_scores(gen_rank, energy_rank, proto_rank, cfg))
+            ranks4 = [proser_rank, gen_rank, energy_rank, proto_rank]
+            fused_known.append(_fuse_rank_scores(proser_rank, gen_rank, energy_rank, proto_rank, cfg))
+            mean_rank_known.append(_mean_finite(ranks4))
+            weighted_rank_known.append(_mean_finite(ranks4, weights=_score_weights(cfg)))
+            max_rank_known.append(float(np.nanmax(ranks4)))
         fused_values = _finite_array(fused_known)
         fusion_threshold = _rank_threshold(fused_known, target_fpr)
+        mean_threshold = _rank_threshold(mean_rank_known, target_fpr)
+        weighted_threshold = _rank_threshold(weighted_rank_known, target_fpr)
+        max_threshold = _rank_threshold(max_rank_known, target_fpr)
+        proser_threshold = _rank_threshold(proser_rank_known, target_fpr)
         gen_threshold = _rank_threshold(gen_rank_known, target_fpr)
         energy_threshold = _rank_threshold(energy_rank_known, target_fpr)
         proto_threshold = _rank_threshold(proto_rank_known, target_fpr)
         calibrators[int(class_key)] = {
             "generator_score_column": gen_col,
             "gen_values": gen_values,
+            "proser_values": proser_values,
             "prototype_values": proto_values,
             "energy_values": sorted_energy_values,
             "neg_energy_values": neg_energy_values,
@@ -560,26 +598,32 @@ def _build_rank_calibrators(
             "energy_deviation_values": energy_devs,
             "energy_direction": energy_direction,
             "fusion_known_values": np.sort(fused_values),
+            "proser_threshold": proser_threshold,
             "gen_threshold": gen_threshold,
             "energy_threshold": energy_threshold,
             "prototype_threshold": proto_threshold,
             "fusion_threshold": fusion_threshold,
+            "mean_threshold": mean_threshold,
+            "weighted_threshold": weighted_threshold,
+            "max_threshold": max_threshold,
             "n": int(len(cls_fit)),
         }
         log.info(
             "Fed-DiGOS rank calibration | scope=%s class=%s n=%d method=%s gen_col=%s "
-            "gen_q50=%.6g proto_q50=%.6g energy_dir=%s energy_median=%.6g energy_iqr=%.6g "
-            "T_gen_rank=%.6g T_energy_rank=%.6g T_proto_rank=%.6g T_fusion=%.6g target_fpr=%.3f",
+            "proser_q50=%.6g gen_q50=%.6g proto_q50=%.6g energy_dir=%s energy_median=%.6g energy_iqr=%.6g "
+            "T_proser_rank=%.6g T_gen_rank=%.6g T_energy_rank=%.6g T_proto_rank=%.6g T_fusion=%.6g target_fpr=%.3f",
             calibration_scope,
             class_key,
             len(cls_fit),
-            str(_nested(cfg, "score_fusion.method", "generator_rank")),
+            str(_nested(cfg, "score_fusion.method", "proser_rank")),
             gen_col,
+            _safe_quantile(cls_fit["proser_score"], 0.50) if "proser_score" in cls_fit.columns else float("nan"),
             _safe_quantile(cls_fit[gen_col], 0.50),
             _safe_quantile(cls_fit["prototype_score"], 0.50),
             energy_direction,
             energy_median,
             energy_iqr,
+            proser_threshold,
             gen_threshold,
             energy_threshold,
             proto_threshold,
@@ -607,6 +651,7 @@ def _score_with_rank_calibrator(row: pd.Series, calibrator: dict[str, Any]) -> d
     gen_col = str(calibrator.get("generator_score_column", "recon_error"))
     if gen_col not in row.index:
         gen_col = "gen_score"
+    proser_rank = _rank_high(float(row.get("proser_score", 0.0)), calibrator.get("proser_values", np.asarray([], dtype=np.float64)))
     gen_rank = _rank_high(float(row[gen_col]), calibrator["gen_values"])
     proto_rank = _rank_high(float(row["prototype_score"]), calibrator["prototype_values"])
     energy_dev, energy_rank = _energy_rank(
@@ -621,14 +666,19 @@ def _score_with_rank_calibrator(row: pd.Series, calibrator: dict[str, Any]) -> d
     # ``unknown_score`` is set later by _fuse_rank_scores because the configured
     # method lives in cfg.  Keep this helper focused on component scores.
     return {
+        "proser_rank_score": proser_rank,
         "gen_rank_score": gen_rank,
         "prototype_rank_score": proto_rank,
         "energy_deviation_score": energy_dev,
         "energy_rank_score": energy_rank,
+        "proser_threshold": float(calibrator.get("proser_threshold", 1.0)),
         "gen_threshold": float(calibrator.get("gen_threshold", 1.0)),
         "energy_threshold": float(calibrator.get("energy_threshold", 1.0)),
         "prototype_threshold": float(calibrator.get("prototype_threshold", 1.0)),
         "fusion_threshold": float(calibrator.get("fusion_threshold", 1.0)),
+        "mean_threshold": float(calibrator.get("mean_threshold", calibrator.get("fusion_threshold", 1.0))),
+        "weighted_threshold": float(calibrator.get("weighted_threshold", calibrator.get("fusion_threshold", 1.0))),
+        "max_threshold": float(calibrator.get("max_threshold", calibrator.get("fusion_threshold", 1.0))),
     }
 
 
@@ -674,7 +724,7 @@ def calibrate_fed_digos(
         proto_scores.append(float(prototype_bank.score(np.asarray(row["feature"]).reshape(1, -1), int(row["y_raw"]))[0]))
     df["prototype_score"] = proto_scores
 
-    models: dict[str, dict[int, EVTModel]] = {"gen": {}, "energy": {}, "prototype": {}, "energy_deviation": {}}
+    models: dict[str, dict[int, EVTModel]] = {"proser": {}, "gen": {}, "energy": {}, "prototype": {}, "energy_deviation": {}}
     for c in range(num_classes):
         cls_fit = _class_calibration_slice(df, c, cfg, log)
         if len(cls_fit) < min_errors:
@@ -686,6 +736,7 @@ def calibrate_fed_digos(
         energy_iqr = float(max(q75 - q25, EPS))
         energy_deviation = np.abs(energy_values - energy_median) / energy_iqr if energy_values.size else np.asarray([], dtype=np.float64)
         score_specs = [
+            ("proser", "proser_score"),
             ("gen", "gen_score"),
             ("energy", "energy_score"),
             ("prototype", "prototype_score"),
@@ -724,8 +775,8 @@ def calibrate_fed_digos(
 
     meta = {
         "backend": "fed_digos",
-        "decision_rule": str(_nested(cfg, "score_fusion.method", "generator_rank")),
-        "scores": ["gen_rank", "energy_rank", "prototype_rank", "fused_rank"],
+        "decision_rule": str(_nested(cfg, "score_fusion.method", "proser_rank")),
+        "scores": ["proser_rank", "gen_rank", "energy_rank", "prototype_rank", "fused_rank"],
         "num_classes": num_classes,
         "unknown_label_id": int(unknown_label_id),
         "open_set_label_id": int(_nested(cfg, "open_set_label_id", OPEN_SET_LABEL_ID)),
@@ -734,6 +785,7 @@ def calibrate_fed_digos(
                 "n": int(v.get("n", 0)),
                 "energy_median": float(v.get("energy_median", np.nan)),
                 "energy_iqr": float(v.get("energy_iqr", np.nan)),
+                "proser_threshold": float(v.get("proser_threshold", np.nan)),
                 "gen_threshold": float(v.get("gen_threshold", np.nan)),
                 "energy_threshold": float(v.get("energy_threshold", np.nan)),
                 "prototype_threshold": float(v.get("prototype_threshold", np.nan)),
@@ -805,31 +857,42 @@ def evaluate_fed_digos(
 
     final_preds = []
     unknown_probs = []
+    proser_rejects: list[int] = []
     gen_rejects: list[int] = []
     energy_rejects: list[int] = []
     energy_dev_rejects: list[int] = []
     proto_rejects: list[int] = []
     fusion_rejects: list[int] = []
+    weighted_fusion_rejects: list[int] = []
+    max_fusion_rejects: list[int] = []
+    proser_probs: list[float] = []
     gen_probs: list[float] = []
     energy_probs: list[float] = []
     energy_dev_probs: list[float] = []
     proto_probs: list[float] = []
+    T_proser_used: list[float] = []
     T_gen_used: list[float] = []
     T_energy_used: list[float] = []
     T_energy_dev_used: list[float] = []
     T_proto_used: list[float] = []
     T_fusion_used: list[float] = []
+    T_proser_rank_used: list[float] = []
     T_gen_rank_used: list[float] = []
     T_energy_rank_used: list[float] = []
     T_prototype_rank_used: list[float] = []
+    proser_rank_scores: list[float] = []
     gen_rank_scores: list[float] = []
     energy_rank_scores: list[float] = []
     energy_dev_scores: list[float] = []
     prototype_rank_scores: list[float] = []
+    mean_rank_scores: list[float] = []
+    weighted_rank_scores: list[float] = []
+    max_rank_scores: list[float] = []
+    proser_rank_rejects: list[int] = []
     gen_rank_rejects: list[int] = []
     energy_rank_rejects: list[int] = []
     prototype_rank_rejects: list[int] = []
-    selected_score_name = str(_nested(cfg, "score_fusion.method", "generator_rank"))
+    selected_score_name = str(_nested(cfg, "score_fusion.method", "proser_rank"))
 
     for _, row in df.iterrows():
         c = int(row["pred_before_osr"])
@@ -837,7 +900,7 @@ def evaluate_fed_digos(
         evt_probs: dict[str, float] = {}
         thresholds: dict[str, float] = {}
         # EVT diagnostics.  Energy high-tail is kept, but final scoring uses two-sided energy rank.
-        for name, col in [("gen", "gen_score"), ("energy", "energy_score"), ("prototype", "prototype_score")]:
+        for name, col in [("proser", "proser_score"), ("gen", "gen_score"), ("energy", "energy_score"), ("prototype", "prototype_score")]:
             model = evt_models.get(name, {}).get(c)
             value = float(row[col])
             if model is None or not np.isfinite(value):
@@ -855,28 +918,44 @@ def evaluate_fed_digos(
             cal = rank_calibrators.get(c)
         if cal is not None:
             rank_scores = _score_with_rank_calibrator(row, cal)
+            proser_rank = float(rank_scores["proser_rank_score"])
             gen_rank = float(rank_scores["gen_rank_score"])
             proto_rank = float(rank_scores["prototype_rank_score"])
             energy_dev = float(rank_scores["energy_deviation_score"])
             energy_rank = float(rank_scores["energy_rank_score"])
+            proser_rank_threshold = float(rank_scores["proser_threshold"])
             gen_rank_threshold = float(rank_scores["gen_threshold"])
             energy_rank_threshold = float(rank_scores["energy_threshold"])
             proto_rank_threshold = float(rank_scores["prototype_threshold"])
             fusion_threshold = float(rank_scores["fusion_threshold"])
-            unknown_score = _fuse_rank_scores(gen_rank, energy_rank, proto_rank, cfg)
+            mean_threshold = float(rank_scores.get("mean_threshold", fusion_threshold))
+            weighted_threshold = float(rank_scores.get("weighted_threshold", fusion_threshold))
+            max_threshold = float(rank_scores.get("max_threshold", fusion_threshold))
+            mean_rank_score = _mean_finite([proser_rank, gen_rank, energy_rank, proto_rank])
+            weighted_rank_score = _mean_finite([proser_rank, gen_rank, energy_rank, proto_rank], weights=_score_weights(cfg))
+            max_rank_score = float(np.nanmax([proser_rank, gen_rank, energy_rank, proto_rank]))
+            unknown_score = _fuse_rank_scores(proser_rank, gen_rank, energy_rank, proto_rank, cfg)
             selected_threshold = float(rank_scores[_component_threshold_key(cfg)])
         else:
             # Last-resort fallback; keep the run alive but make the log loud.
             unknown_score = float(max(evt_probs.values())) if evt_probs else 0.0
             selected_threshold = 1.0 - float(_nested(cfg, "evt.target_known_fpr", 0.05))
             fusion_threshold = selected_threshold
+            mean_threshold = selected_threshold
+            weighted_threshold = selected_threshold
+            max_threshold = selected_threshold
+            proser_rank_threshold = selected_threshold
             gen_rank_threshold = selected_threshold
             energy_rank_threshold = selected_threshold
             proto_rank_threshold = selected_threshold
+            proser_rank = evt_probs.get("proser", 0.0)
             gen_rank = evt_probs.get("gen", 0.0)
             proto_rank = evt_probs.get("prototype", 0.0)
             energy_dev = np.nan
             energy_rank = evt_probs.get("energy", 0.0)
+            mean_rank_score = _mean_finite([proser_rank, gen_rank, energy_rank, proto_rank])
+            weighted_rank_score = _mean_finite([proser_rank, gen_rank, energy_rank, proto_rank], weights=_score_weights(cfg))
+            max_rank_score = float(np.nanmax([proser_rank, gen_rank, energy_rank, proto_rank]))
 
         energy_dev_model = evt_models.get("energy_deviation", {}).get(c)
         if energy_dev_model is not None and np.isfinite(energy_dev):
@@ -888,34 +967,48 @@ def evaluate_fed_digos(
             energy_dev_prob = float(energy_rank) if np.isfinite(energy_rank) else 0.0
             T_energy_dev = np.nan
 
+        proser_rank_reject = bool(proser_rank > proser_rank_threshold)
         gen_rank_reject = bool(gen_rank > gen_rank_threshold)
         energy_rank_reject = bool(energy_rank > energy_rank_threshold)
         proto_rank_reject = bool(proto_rank > proto_rank_threshold)
-        fusion_reject = bool(_fuse_rank_scores(gen_rank, energy_rank, proto_rank, cfg) > fusion_threshold)
+        fusion_reject = bool(mean_rank_score > mean_threshold)
+        weighted_fusion_reject = bool(weighted_rank_score > weighted_threshold)
+        max_fusion_reject = bool(max_rank_score > max_threshold)
         final_reject = bool(unknown_score > selected_threshold)
         final_preds.append(open_set_label_id if final_reject else c)
         unknown_probs.append(float(unknown_score))
+        proser_rejects.append(int(evt_rejects.get("proser", False)))
         gen_rejects.append(int(evt_rejects.get("gen", False)))
         energy_rejects.append(int(evt_rejects.get("energy", False)))
         energy_dev_rejects.append(int(energy_dev_reject))
         proto_rejects.append(int(evt_rejects.get("prototype", False)))
         fusion_rejects.append(int(fusion_reject))
+        weighted_fusion_rejects.append(int(weighted_fusion_reject))
+        max_fusion_rejects.append(int(max_fusion_reject))
+        proser_probs.append(float(evt_probs.get("proser", 0.0)))
         gen_probs.append(float(evt_probs.get("gen", 0.0)))
         energy_probs.append(float(evt_probs.get("energy", 0.0)))
         energy_dev_probs.append(float(energy_dev_prob))
         proto_probs.append(float(evt_probs.get("prototype", 0.0)))
+        T_proser_used.append(thresholds.get("proser", np.nan))
         T_gen_used.append(thresholds.get("gen", np.nan))
         T_energy_used.append(thresholds.get("energy", np.nan))
         T_energy_dev_used.append(T_energy_dev)
         T_proto_used.append(thresholds.get("prototype", np.nan))
-        T_fusion_used.append(fusion_threshold)
+        T_fusion_used.append(mean_threshold)
+        T_proser_rank_used.append(proser_rank_threshold)
         T_gen_rank_used.append(gen_rank_threshold)
         T_energy_rank_used.append(energy_rank_threshold)
         T_prototype_rank_used.append(proto_rank_threshold)
+        proser_rank_scores.append(proser_rank)
         gen_rank_scores.append(gen_rank)
         energy_rank_scores.append(energy_rank)
         energy_dev_scores.append(energy_dev)
         prototype_rank_scores.append(proto_rank)
+        mean_rank_scores.append(mean_rank_score)
+        weighted_rank_scores.append(weighted_rank_score)
+        max_rank_scores.append(max_rank_score)
+        proser_rank_rejects.append(int(proser_rank_reject))
         gen_rank_rejects.append(int(gen_rank_reject))
         energy_rank_rejects.append(int(energy_rank_reject))
         prototype_rank_rejects.append(int(proto_rank_reject))
@@ -958,34 +1051,46 @@ def evaluate_fed_digos(
 
     df["y_true"] = y_true
     df["pred_after_osr"] = y_pred
+    df["proser_evt_prob"] = proser_probs
     df["gen_evt_prob"] = gen_probs
     df["energy_evt_prob"] = energy_probs
     df["energy_deviation_evt_prob"] = energy_dev_probs
     df["prototype_evt_prob"] = proto_probs
+    df["proser_rank_score"] = proser_rank_scores
     df["gen_rank_score"] = gen_rank_scores
     df["energy_deviation_score"] = energy_dev_scores
     df["energy_rank_score"] = energy_rank_scores
     df["prototype_rank_score"] = prototype_rank_scores
+    df["mean_rank_score"] = mean_rank_scores
+    df["weighted_rank_score"] = weighted_rank_scores
+    df["max_rank_score"] = max_rank_scores
     df["unknown_score"] = score_arr
+    df["T_proser_used"] = T_proser_used
     df["T_gen_used"] = T_gen_used
     df["T_energy_used"] = T_energy_used
     df["T_energy_deviation_used"] = T_energy_dev_used
     df["T_proto_used"] = T_proto_used
     df["T_fusion_used"] = T_fusion_used
+    df["T_proser_rank_used"] = T_proser_rank_used
     df["T_gen_rank_used"] = T_gen_rank_used
     df["T_energy_rank_used"] = T_energy_rank_used
     df["T_prototype_rank_used"] = T_prototype_rank_used
+    df["proser_reject"] = proser_rejects
     df["gen_reject"] = gen_rejects
     df["energy_reject"] = energy_rejects
     df["energy_deviation_reject"] = energy_dev_rejects
     df["prototype_reject"] = proto_rejects
+    df["proser_rank_reject"] = proser_rank_rejects
     df["gen_rank_reject"] = gen_rank_rejects
     df["energy_rank_reject"] = energy_rank_rejects
     df["prototype_rank_reject"] = prototype_rank_rejects
     df["fusion_reject"] = fusion_rejects
+    df["weighted_fusion_reject"] = weighted_fusion_rejects
+    df["max_fusion_reject"] = max_fusion_rejects
     df["selected_score_name"] = selected_score_name
     df["selected_threshold_used"] = [
-        row["T_gen_rank_used"] if str(selected_score_name).lower() in {"generator_rank", "gen_rank", "generator", "gen_only", "generator_only"}
+        row["T_proser_rank_used"] if str(selected_score_name).lower() in {"proser_rank", "placeholder_rank", "proser", "placeholder", "proser_only"}
+        else row["T_gen_rank_used"] if str(selected_score_name).lower() in {"generator_rank", "gen_rank", "generator", "gen_only", "generator_only"}
         else row["T_energy_rank_used"] if str(selected_score_name).lower() in {"energy_rank", "energy", "energy_only"}
         else row["T_prototype_rank_used"] if str(selected_score_name).lower() in {"prototype_rank", "proto_rank", "prototype", "proto_only", "prototype_only"}
         else row["T_fusion_used"]
@@ -1004,10 +1109,14 @@ def evaluate_fed_digos(
     }
     rank_thresholds_payload = {
         str(k): {
+            "proser_threshold": float(v.get("proser_threshold", np.nan)),
             "gen_threshold": float(v.get("gen_threshold", np.nan)),
             "energy_threshold": float(v.get("energy_threshold", np.nan)),
             "prototype_threshold": float(v.get("prototype_threshold", np.nan)),
             "fusion_threshold": float(v.get("fusion_threshold", np.nan)),
+            "mean_threshold": float(v.get("mean_threshold", np.nan)),
+            "weighted_threshold": float(v.get("weighted_threshold", np.nan)),
+            "max_threshold": float(v.get("max_threshold", np.nan)),
             "energy_median": float(v.get("energy_median", np.nan)),
             "energy_iqr": float(v.get("energy_iqr", np.nan)),
             "n": int(v.get("n", 0)),
@@ -1021,8 +1130,8 @@ def evaluate_fed_digos(
     quantiles: dict[str, dict[str, float]] = {}
     overlap: dict[str, Any] = {}
     quantile_cols = [
-        "gen_score", "recon_error", "latent_nll", "energy_score", "energy_deviation_score",
-        "prototype_score", "gen_rank_score", "energy_rank_score", "prototype_rank_score", "unknown_score",
+        "proser_score", "proser_unknown_prob", "proser_unknown_margin", "gen_score", "recon_error", "latent_nll", "energy_score", "energy_deviation_score",
+        "prototype_score", "proser_rank_score", "gen_rank_score", "energy_rank_score", "prototype_rank_score", "mean_rank_score", "weighted_rank_score", "max_rank_score", "unknown_score",
     ]
     for col in quantile_cols:
         if col not in export_df.columns:
@@ -1045,30 +1154,24 @@ def evaluate_fed_digos(
     (output_dir / "known_unknown_score_quantiles.json").write_text(json.dumps(quantiles, indent=2, sort_keys=True), encoding="utf-8")
     (output_dir / "score_overlap_report.json").write_text(json.dumps(overlap, indent=2, sort_keys=True), encoding="utf-8")
 
-    fused_rank_values = np.asarray([
-        _fuse_rank_scores(float(g), float(e), float(p_), SimpleNamespace(score_fusion=SimpleNamespace(method="mean_rank")))
-        for g, e, p_ in zip(export_df["gen_rank_score"], export_df["energy_rank_score"], export_df["prototype_rank_score"])
-    ], dtype=float)
-    weighted_rank_values = np.asarray([
-        _mean_finite([float(g), float(e), float(p_)], weights=_score_weights(cfg))
-        for g, e, p_ in zip(export_df["gen_rank_score"], export_df["energy_rank_score"], export_df["prototype_rank_score"])
-    ], dtype=float)
-    max_rank_values = np.nanmax(np.vstack([
-        export_df["gen_rank_score"].to_numpy(dtype=float),
-        export_df["energy_rank_score"].to_numpy(dtype=float),
-        export_df["prototype_rank_score"].to_numpy(dtype=float),
-    ]), axis=0)
+    fused_rank_values = export_df["mean_rank_score"].to_numpy(dtype=float)
+    weighted_rank_values = export_df["weighted_rank_score"].to_numpy(dtype=float)
+    max_rank_values = export_df["max_rank_score"].to_numpy(dtype=float)
     raw_aurocs = {
         "auroc_selected_unknown_score": auroc,
         "auroc_mean_rank_fusion": _safe_auc(y_binary, fused_rank_values),
         "auroc_weighted_rank_fusion": _safe_auc(y_binary, weighted_rank_values),
         "auroc_max_rank_fusion": _safe_auc(y_binary, max_rank_values),
+        "auroc_proser_score": _safe_auc(y_binary, export_df["proser_score"].to_numpy(dtype=float)),
+        "auroc_proser_unknown_prob": _safe_auc(y_binary, export_df["proser_unknown_prob"].to_numpy(dtype=float)),
+        "auroc_proser_unknown_margin": _safe_auc(y_binary, export_df["proser_unknown_margin"].to_numpy(dtype=float)),
         "auroc_gen_score": _safe_auc(y_binary, export_df["gen_score"].to_numpy(dtype=float)),
         "auroc_recon_error": _safe_auc(y_binary, export_df["recon_error"].to_numpy(dtype=float)),
         "auroc_prototype_score": _safe_auc(y_binary, export_df["prototype_score"].to_numpy(dtype=float)),
         "auroc_energy_score_high": _safe_auc(y_binary, export_df["energy_score"].to_numpy(dtype=float)),
         "auroc_energy_score_reversed": _safe_auc(y_binary, -export_df["energy_score"].to_numpy(dtype=float)),
         "auroc_energy_deviation": _safe_auc(y_binary, export_df["energy_deviation_score"].to_numpy(dtype=float)),
+        "auroc_proser_rank": _safe_auc(y_binary, export_df["proser_rank_score"].to_numpy(dtype=float)),
         "auroc_gen_rank": _safe_auc(y_binary, export_df["gen_rank_score"].to_numpy(dtype=float)),
         "auroc_energy_rank": _safe_auc(y_binary, export_df["energy_rank_score"].to_numpy(dtype=float)),
         "auroc_prototype_rank": _safe_auc(y_binary, export_df["prototype_rank_score"].to_numpy(dtype=float)),
@@ -1087,10 +1190,13 @@ def evaluate_fed_digos(
         }
 
     component_decisions = {}
+    component_decisions.update(_component_decision_stats("proser_rank", "proser_rank_reject"))
     component_decisions.update(_component_decision_stats("gen_rank", "gen_rank_reject"))
     component_decisions.update(_component_decision_stats("energy_rank", "energy_rank_reject"))
     component_decisions.update(_component_decision_stats("prototype_rank", "prototype_rank_reject"))
     component_decisions.update(_component_decision_stats("mean_rank_fusion", "fusion_reject"))
+    component_decisions.update(_component_decision_stats("weighted_rank_fusion", "weighted_fusion_reject"))
+    component_decisions.update(_component_decision_stats("max_rank_fusion", "max_fusion_reject"))
     # Backward-compatible aliases for older dashboards.
     raw_aurocs["auroc_unknown_score_rank_fusion"] = raw_aurocs["auroc_selected_unknown_score"]
     component_report = {**raw_aurocs, **component_decisions, "selected_score_name": str(selected_score_name)}
@@ -1112,15 +1218,19 @@ def evaluate_fed_digos(
         "openset_known_false_unknown_rate": known_false_unknown_rate,
         "openset_overall_acc": overall_acc,
         "openset_unknown_as_normal_before_rate": unknown_as_normal_before,
+        "openset_rejected_by_proser_evt": float(np.sum(proser_rejects)),
         "openset_rejected_by_gen_evt": float(np.sum(gen_rejects)),
         "openset_rejected_by_energy_evt": float(np.sum(energy_rejects)),
         "openset_rejected_by_energy_deviation_evt": float(np.sum(energy_dev_rejects)),
         "openset_rejected_by_prototype_evt": float(np.sum(proto_rejects)),
         "openset_rejected_by_fusion": float(np.sum(fusion_rejects)),
+        "openset_rejected_by_proser_rank": float(np.sum(proser_rank_rejects)),
         "openset_rejected_by_gen_rank": float(np.sum(gen_rank_rejects)),
         "openset_rejected_by_energy_rank": float(np.sum(energy_rank_rejects)),
         "openset_rejected_by_prototype_rank": float(np.sum(prototype_rank_rejects)),
         "openset_rejected_unknown_by_fusion": float(np.sum(np.asarray(fusion_rejects)[unknown_mask])) if unknown_mask.any() else 0.0,
+        "openset_rejected_by_weighted_fusion": float(np.sum(weighted_fusion_rejects)),
+        "openset_rejected_by_max_fusion": float(np.sum(max_fusion_rejects)),
         **component_decisions,
         "open_set/auroc": auroc,
         "open_set/auprc": auprc,
@@ -1131,6 +1241,7 @@ def evaluate_fed_digos(
         **raw_aurocs,
     }
     # Backward-compatible aliases for old dashboards.
+    metrics["openset_rejected_by_proser"] = metrics["openset_rejected_by_proser_evt"]
     metrics["openset_rejected_by_gen"] = metrics["openset_rejected_by_gen_evt"]
     metrics["openset_rejected_by_energy"] = metrics["openset_rejected_by_energy_evt"]
     metrics["openset_rejected_by_prototype"] = metrics["openset_rejected_by_prototype_evt"]
@@ -1138,23 +1249,26 @@ def evaluate_fed_digos(
     log.info(
         "Fed-DiGOS final open-set | selected=%s AUROC=%.4f AUPRC=%.4f FPR95=%.4f KnownAcc %.4f->%.4f "
         "UnknownRecall=%.4f KnownFU=%.4f unknown_as_Normal_before=%.4f "
-        "rankAUROC(gen=%.4f energy=%.4f proto=%.4f mean=%.4f weighted=%.4f max=%.4f) "
-        "rawAUROC(gen=%.4f recon=%.4f energy_high=%.4f energy_rev=%.4f energy_dev=%.4f proto=%.4f) "
-        "rankDecision(gen_UR=%.4f gen_KFU=%.4f energy_UR=%.4f energy_KFU=%.4f proto_UR=%.4f proto_KFU=%.4f fusion_UR=%.4f fusion_KFU=%.4f) "
-        "rejects(selected=%d fusion=%d gen_rank=%d energy_rank=%d proto_rank=%d gen_evt=%d energy_evt=%d energy_dev_evt=%d proto_evt=%d)",
+        "rankAUROC(proser=%.4f gen=%.4f energy=%.4f proto=%.4f mean=%.4f weighted=%.4f max=%.4f) "
+        "rawAUROC(proser=%.4f gen=%.4f recon=%.4f energy_high=%.4f energy_rev=%.4f energy_dev=%.4f proto=%.4f) "
+        "rankDecision(proser_UR=%.4f proser_KFU=%.4f gen_UR=%.4f gen_KFU=%.4f energy_UR=%.4f energy_KFU=%.4f proto_UR=%.4f proto_KFU=%.4f mean_UR=%.4f mean_KFU=%.4f weighted_UR=%.4f weighted_KFU=%.4f) "
+        "rejects(selected=%d mean=%d weighted=%d max=%d proser_rank=%d gen_rank=%d energy_rank=%d proto_rank=%d proser_evt=%d gen_evt=%d energy_evt=%d energy_dev_evt=%d proto_evt=%d)",
         str(selected_score_name), auroc, auprc, fpr95, known_acc_before, known_acc_after, unknown_recall,
         known_false_unknown_rate, unknown_as_normal_before,
-        raw_aurocs["auroc_gen_rank"], raw_aurocs["auroc_energy_rank"], raw_aurocs["auroc_prototype_rank"],
+        raw_aurocs["auroc_proser_rank"], raw_aurocs["auroc_gen_rank"], raw_aurocs["auroc_energy_rank"], raw_aurocs["auroc_prototype_rank"],
         raw_aurocs["auroc_mean_rank_fusion"], raw_aurocs["auroc_weighted_rank_fusion"], raw_aurocs["auroc_max_rank_fusion"],
-        raw_aurocs["auroc_gen_score"], raw_aurocs["auroc_recon_error"],
+        raw_aurocs["auroc_proser_score"], raw_aurocs["auroc_gen_score"], raw_aurocs["auroc_recon_error"],
         raw_aurocs["auroc_energy_score_high"], raw_aurocs["auroc_energy_score_reversed"],
         raw_aurocs["auroc_energy_deviation"], raw_aurocs["auroc_prototype_score"],
+        component_decisions["proser_rank_unknown_recall"], component_decisions["proser_rank_known_false_unknown_rate"],
         component_decisions["gen_rank_unknown_recall"], component_decisions["gen_rank_known_false_unknown_rate"],
         component_decisions["energy_rank_unknown_recall"], component_decisions["energy_rank_known_false_unknown_rate"],
         component_decisions["prototype_rank_unknown_recall"], component_decisions["prototype_rank_known_false_unknown_rate"],
         component_decisions["mean_rank_fusion_unknown_recall"], component_decisions["mean_rank_fusion_known_false_unknown_rate"],
-        int(np.sum(y_pred == open_set_label_id)), int(np.sum(fusion_rejects)), int(np.sum(gen_rank_rejects)),
-        int(np.sum(energy_rank_rejects)), int(np.sum(prototype_rank_rejects)), int(np.sum(gen_rejects)),
+        component_decisions["weighted_rank_fusion_unknown_recall"], component_decisions["weighted_rank_fusion_known_false_unknown_rate"],
+        int(np.sum(y_pred == open_set_label_id)), int(np.sum(fusion_rejects)), int(np.sum(weighted_fusion_rejects)), int(np.sum(max_fusion_rejects)),
+        int(np.sum(proser_rank_rejects)), int(np.sum(gen_rank_rejects)),
+        int(np.sum(energy_rank_rejects)), int(np.sum(prototype_rank_rejects)), int(np.sum(proser_rejects)), int(np.sum(gen_rejects)),
         int(np.sum(energy_rejects)), int(np.sum(energy_dev_rejects)), int(np.sum(proto_rejects)),
     )
     return metrics
