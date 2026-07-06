@@ -267,3 +267,7 @@ The default open-set detector for E2/E4 is **global student feature-distance EVT
 ### DKD-FedOS v7 per-round open-set evaluation
 
 Open-set E2/E4 experiments now enable server-side global open-set evaluation after each aggregation round. The hook evaluates the aggregated global student with class-wise Feature-EVT and writes a round curve to `open_set_round_metrics.csv` plus per-round artifacts under `open_set_rounds/`. For `dual_boundary_evt`, this server-side round evaluation uses the global Feature-EVT boundary; the local generator boundary remains a client-side ablation because local teacher/generator modules are not uploaded.
+
+### Fed-DiGOS open-set backend
+
+E2/E4 now use **Fed-DiGOS**, a federated student-attached open-set generator branch with EVT-calibrated generator, energy, and prototype scores. The private RL teacher generator remains local and its standalone generator training is disabled for the main method. See `docs/fed-digos-implementation-plan.md`.

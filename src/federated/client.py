@@ -49,11 +49,9 @@ def _resolve_project_path(path_like: str | Path) -> Path:
 def _dkd_fedos_final_eval_backend(evt_cfg: Any) -> bool:
     backend = str(getattr(evt_cfg, "backend", "teacher_generator")).lower()
     return bool(getattr(evt_cfg, "enabled", False)) and backend in {
-        "student_feature_evt",
-        "student_feature",
-        "feature_evt",
-        "dual_boundary_evt",
-        "dual_evt",
+        "fed_digos",
+        "digos",
+        "student_digos",
     }
 
 
@@ -654,7 +652,11 @@ class FlowerClient(fl.client.NumPyClient):
             logger=self.logger,
         )
 
-        # Optional Generator Training
+        # Local RL teacher generator training is disabled for Fed-DiGOS.  The
+        # teacher remains local/private, while the student-owned OSR generator
+        # branch is the federated open-set component.  Two generators with two
+        # jobs; shocking that this needed spelling out, but logs are cheaper
+        # than another ruined AUROC.
         generator_cfg = self.cfg.generator_training
         if bool(generator_cfg.enabled):
             try:
@@ -670,6 +672,25 @@ class FlowerClient(fl.client.NumPyClient):
                 metrics.update(gen_metrics)
             except Exception as exc:
                 self.logger.warning(f"Generator training failed: {exc}")
+        else:
+            metrics["local_teacher_generator_training_enabled"] = 0.0
+
+        fed_digos_cfg = getattr(getattr(self.cfg, "open_set", None), "fed_digos", None)
+        fed_digos_enabled = bool(getattr(fed_digos_cfg, "enabled", False)) if fed_digos_cfg is not None else False
+        if fed_digos_enabled:
+            try:
+                features = self.env.all_features_s.clone()
+                labels = self.env.all_labels_a_t.clone()
+                digos_metrics = self.agent.train_student_osr_on_dataset(
+                    features,
+                    labels,
+                    fed_digos_cfg,
+                    logger=self.logger,
+                )
+                metrics.update(digos_metrics)
+            except Exception:
+                self.logger.exception("Client %s: Fed-DiGOS OSR branch training failed.", self.cid)
+                metrics["digos_osr_training_failed"] = 1.0
 
         # Local evaluation is pure bookkeeping; run it on the rest device when
         # simulation batching is sharing a GPU across several clients.
@@ -899,7 +920,7 @@ class FlowerClient(fl.client.NumPyClient):
                             "Client %s: skipping per-client EVT during DKD-FedOS evaluate(); "
                             "final global open-set EVT runs after FL. backend=%s",
                             self.cid,
-                            str(getattr(evt_cfg, "backend", "student_feature_evt")),
+                            str(getattr(evt_cfg, "backend", "fed_digos")),
                         )
                 elif client_evt_enabled or phase_name != "dkd_fedos":
                     try:

@@ -32,21 +32,22 @@ dataset:
     alpha: 1.0
     iid: true
 training:
-  # v7 open-set uses global-student feature-distance EVT. The local teacher
-  # generator remains available only for the gated dual-boundary backend.
+  # Fed-DiGOS uses a student-owned disentangled OSR generator.
+  # Local RL teacher generator training is disabled for the main paper method.
   generator:
-    enabled: true
+    enabled: false
+  dkd_student_osr_enabled: true
 open_set:
+  method: fed_digos
   evt:
     enabled: true
-    backend: student_feature_evt
+    backend: fed_digos
     evaluate_each_round: true
     evaluate_every_n_rounds: 1
     round_eval_dir: open_set_rounds
-    save_round_scores: false
-    score: mahalanobis_feature_distance
-    classwise: true
-    threshold_method: mef
+    save_round_scores: true
+  fed_digos:
+    enabled: true
 evaluation:
   mode: open_set
   export_latent_embeddings: true

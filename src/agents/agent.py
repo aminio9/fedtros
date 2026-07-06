@@ -163,6 +163,9 @@ class Agent:
         # require a different Agent class, but it is trained/federated only by
         # the dkd_fedos strategy.
         student_hidden = list(getattr(train_cfg, "dkd_student_hidden_dims", [64, 32, 16]))
+        student_osr_enabled = bool(getattr(train_cfg, "dkd_student_osr_enabled", False))
+        student_osr_hidden = list(getattr(train_cfg, "dkd_student_osr_hidden_dims", [128, 64]))
+        student_osr_decoder_hidden = list(getattr(train_cfg, "dkd_student_osr_decoder_hidden_dims", [64, 128]))
         self.student_model = StudentIDSModel(
             input_dim=model_factory.state_dim,
             num_classes=model_factory.num_actions,
@@ -170,6 +173,14 @@ class Agent:
             activation=str(getattr(train_cfg, "dkd_student_activation", "relu")),
             dropout=float(getattr(train_cfg, "dkd_student_dropout", 0.0)),
             norm=str(getattr(train_cfg, "dkd_student_norm", "none")),
+            osr_enabled=student_osr_enabled,
+            osr_latent_dim=int(getattr(train_cfg, "dkd_student_osr_latent_dim", 8)),
+            osr_hidden_dims=student_osr_hidden,
+            osr_decoder_hidden_dims=student_osr_decoder_hidden,
+            osr_dropout=float(getattr(train_cfg, "dkd_student_osr_dropout", 0.05)),
+            osr_norm=str(getattr(train_cfg, "dkd_student_osr_norm", "layernorm")),
+            osr_activation=str(getattr(train_cfg, "dkd_student_osr_activation", "gelu")),
+            osr_detach_features=bool(getattr(train_cfg, "dkd_student_osr_detach_features", True)),
         ).to(device)
         self.student_anchor_model = StudentIDSModel(
             input_dim=model_factory.state_dim,
@@ -178,6 +189,14 @@ class Agent:
             activation=str(getattr(train_cfg, "dkd_student_activation", "relu")),
             dropout=float(getattr(train_cfg, "dkd_student_dropout", 0.0)),
             norm=str(getattr(train_cfg, "dkd_student_norm", "none")),
+            osr_enabled=student_osr_enabled,
+            osr_latent_dim=int(getattr(train_cfg, "dkd_student_osr_latent_dim", 8)),
+            osr_hidden_dims=student_osr_hidden,
+            osr_decoder_hidden_dims=student_osr_decoder_hidden,
+            osr_dropout=float(getattr(train_cfg, "dkd_student_osr_dropout", 0.05)),
+            osr_norm=str(getattr(train_cfg, "dkd_student_osr_norm", "layernorm")),
+            osr_activation=str(getattr(train_cfg, "dkd_student_osr_activation", "gelu")),
+            osr_detach_features=bool(getattr(train_cfg, "dkd_student_osr_detach_features", True)),
         ).to(device)
         self.student_anchor_model.load_state_dict(self.student_model.state_dict())
         self.student_anchor_model.eval()
@@ -187,12 +206,22 @@ class Agent:
         self.teacher_to_student_aligner = nn.Linear(
             teacher_feature_dim, int(self.student_model.feature_dim)
         ).to(device)
-        dkd_params = list(self.student_model.parameters()) + list(self.teacher_to_student_aligner.parameters())
+        dkd_params = list(self.student_model.classifier_parameters()) + list(self.teacher_to_student_aligner.parameters())
         dkd_lr = float(getattr(train_cfg, "dkd_student_lr", train_cfg.lr_q_rl))
         if adam_cls is optim.Adam:
             self.optimizer_dkd = adam_cls(dkd_params, lr=dkd_lr, foreach=False)
         else:
             self.optimizer_dkd = adam_cls(dkd_params, lr=dkd_lr)
+        osr_params = list(self.student_model.osr_parameters())
+        if osr_params:
+            osr_lr = float(getattr(train_cfg, "dkd_student_osr_lr", getattr(train_cfg, "dkd_student_lr", train_cfg.lr_q_rl)))
+            osr_wd = float(getattr(train_cfg, "dkd_student_osr_weight_decay", 1.0e-4))
+            if adam_cls is optim.Adam:
+                self.optimizer_student_osr = optim.AdamW(osr_params, lr=osr_lr, weight_decay=osr_wd, foreach=False)
+            else:
+                self.optimizer_student_osr = adam_cls(osr_params, lr=osr_lr)
+        else:
+            self.optimizer_student_osr = None
 
         self.dkd_lambda_kd = float(getattr(train_cfg, "dkd_lambda_kd_init", 0.20))
         self.dkd_lambda_align = float(getattr(train_cfg, "dkd_lambda_align_init", 0.08))
@@ -220,10 +249,15 @@ class Agent:
         self.last_dkd_s2t_enabled = 0.0
         self._capture_proximal_reference()
         self.logger.info(
-            "Global student classifier initialized | hidden_dims=%s | feature_dim=%d | parameter_tensors=%d",
+            "Fed-DiGOS student initialized | hidden_dims=%s | feature_dim=%d | osr_enabled=%s | "
+            "osr_latent_dim=%d | osr_detach_features=%s | parameter_tensors=%d | osr_tensors=%d",
             student_hidden,
             int(self.student_model.feature_dim),
+            bool(getattr(self.student_model, "osr_enabled", False)),
+            int(getattr(self.student_model, "osr_latent_dim", 0)),
+            bool(getattr(self.student_model, "osr_detach_features", True)),
             len(self.student_model.state_dict()),
+            len([k for k in self.student_model.state_dict() if k.startswith("osr_")]),
         )
         self.logger.debug("Agent initialized with Double-DQN: %s", self.use_double_dqn)
 
@@ -246,6 +280,8 @@ class Agent:
         self._move_optimizer_state(self.optimizer_q_rl, target_device)
         if hasattr(self, "optimizer_dkd"):
             self._move_optimizer_state(self.optimizer_dkd, target_device)
+        if getattr(self, "optimizer_student_osr", None) is not None:
+            self._move_optimizer_state(self.optimizer_student_osr, target_device)
         self.device = target_device
         return self
 
@@ -1181,6 +1217,208 @@ class Agent:
         for current_param, reference_param in zip(module.parameters(), reference_params, strict=True):
             penalty = penalty + (current_param - reference_param.to(current_param.device)).pow(2).sum()
         return penalty
+
+
+    def _make_pseudo_unknown_batch(
+        self,
+        x: torch.Tensor,
+        y: torch.Tensor,
+        *,
+        ratio: float,
+        mixup_alpha: float,
+        mask_probability: float,
+        noise_std: float,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Create boundary/pseudo-unknown samples from known local data."""
+        if x.shape[0] < 2 or float(ratio) <= 0.0:
+            return x.new_zeros((0, x.shape[1])), y.new_zeros((0,), dtype=torch.long)
+        n_pseudo = max(1, int(round(float(ratio) * x.shape[0])))
+        idx1 = torch.randint(0, x.shape[0], (n_pseudo,), device=x.device)
+        idx2 = torch.randint(0, x.shape[0], (n_pseudo,), device=x.device)
+        # Try to mix across classes when possible.  A few retries are cheaper than
+        # another sad one-class pseudo-unknown set.
+        for _ in range(3):
+            same = y[idx1] == y[idx2]
+            if not bool(same.any().item()):
+                break
+            idx2[same] = torch.randint(0, x.shape[0], (int(same.sum().item()),), device=x.device)
+        alpha = max(float(mixup_alpha), 1.0e-3)
+        beta = torch.distributions.Beta(alpha, alpha)
+        lam = beta.sample((n_pseudo,)).to(x.device).view(-1, 1)
+        pseudo = lam * x[idx1] + (1.0 - lam) * x[idx2]
+        if float(mask_probability) > 0.0:
+            mask = torch.rand_like(pseudo) < float(mask_probability)
+            pseudo = pseudo.masked_fill(mask, 0.0)
+        if float(noise_std) > 0.0:
+            pseudo = pseudo + (torch.randn_like(pseudo) * float(noise_std))
+        # Condition pseudo-unknowns on the first mixed class; the margin trains the
+        # branch not to reconstruct boundary samples under a plausible known label.
+        pseudo_labels = y[idx1].long().clamp(0, self.action_dim - 1)
+        return pseudo, pseudo_labels
+
+    def train_student_osr_on_dataset(
+        self,
+        features: torch.Tensor,
+        labels: torch.Tensor,
+        osr_cfg: DictConfig,
+        *,
+        logger: logging.Logger | None = None,
+    ) -> dict[str, float]:
+        """Train the disentangled student OSR generator branch locally.
+
+        Only the student OSR branch is updated.  The classifier path is read with
+        detached features by default, so this branch is federated without breaking
+        the closed-set student behavior.
+        """
+        active_logger = logger or self.logger
+        if not bool(getattr(self.student_model, "osr_enabled", False)):
+            active_logger.info("Fed-DiGOS OSR local training skipped: student OSR branch disabled.")
+            return {"digos_osr_enabled": 0.0}
+        if self.optimizer_student_osr is None:
+            active_logger.warning("Fed-DiGOS OSR local training skipped: optimizer missing.")
+            return {"digos_osr_enabled": 0.0, "digos_osr_optimizer_missing": 1.0}
+
+        features = features.detach().float().to(self.device)
+        labels = labels.detach().long().view(-1).to(self.device)
+        known_mask = (labels >= 0) & (labels < self.action_dim)
+        features = features[known_mask]
+        labels = labels[known_mask].clamp(0, self.action_dim - 1)
+        known_samples = int(labels.numel())
+        if known_samples == 0:
+            return {"digos_osr_enabled": 1.0, "digos_known_samples": 0.0, "digos_osr_steps": 0.0}
+
+        counts = torch.bincount(labels, minlength=self.action_dim).float()
+        present = counts > 0
+        label_coverage = float(present.float().mean().detach().item())
+        probs = counts / counts.sum().clamp_min(1.0)
+        entropy = -(probs[present] * torch.log(probs[present].clamp_min(1e-12))).sum()
+        class_entropy = float((entropy / np.log(max(self.action_dim, 2))).detach().item())
+
+        batch_size = int(getattr(osr_cfg, "batch_size", getattr(self.train_cfg, "batch_size", 256)))
+        local_epochs = int(getattr(osr_cfg, "local_epochs", 1))
+        beta_kl = float(getattr(osr_cfg, "beta_kl", 0.02))
+        nll_weight = float(getattr(osr_cfg, "latent_nll_weight", 0.10))
+        recon_weight = float(getattr(osr_cfg, "recon_weight", 1.0))
+        grad_clip = float(getattr(osr_cfg, "grad_clip_norm", 5.0))
+        pseudo_cfg = getattr(osr_cfg, "pseudo_unknown", None)
+        pseudo_enabled = bool(getattr(pseudo_cfg, "enabled", True)) if pseudo_cfg is not None else True
+        pseudo_ratio = float(getattr(pseudo_cfg, "ratio", 0.5)) if pseudo_cfg is not None else 0.5
+        pseudo_margin = float(getattr(pseudo_cfg, "margin", 1.5)) if pseudo_cfg is not None else 1.5
+        pseudo_weight = float(getattr(pseudo_cfg, "margin_weight", 0.25)) if pseudo_cfg is not None else 0.25
+        mixup_alpha = float(getattr(pseudo_cfg, "mixup_alpha", 0.4)) if pseudo_cfg is not None else 0.4
+        mask_probability = float(getattr(pseudo_cfg, "mask_probability", 0.15)) if pseudo_cfg is not None else 0.15
+        noise_std = float(getattr(pseudo_cfg, "noise_std", 0.05)) if pseudo_cfg is not None else 0.05
+
+        before = [p.detach().clone() for p in self.student_model.osr_parameters()]
+        dataset = TensorDataset(features, labels)
+        loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=False)
+        totals = {
+            "loss": 0.0, "recon": 0.0, "kl": 0.0, "pseudo_loss": 0.0,
+            "known_score": 0.0, "pseudo_score": 0.0, "margin_ok": 0.0,
+            "pseudo_count": 0.0,
+        }
+        steps = 0
+        self.student_model.train()
+        for _epoch in range(max(local_epochs, 1)):
+            for x_b, y_b in loader:
+                x_b = x_b.to(self.device).float()
+                y_b = y_b.to(self.device).long().view(-1).clamp(0, self.action_dim - 1)
+                out = self.student_model.osr_score(
+                    x_b,
+                    y_b,
+                    nll_weight=nll_weight,
+                    detach_features=bool(getattr(osr_cfg, "detach_features", True)),
+                )
+                recon = out["recon_error"].mean()
+                kl = out["latent_nll"].mean()
+                loss = (recon_weight * recon) + (beta_kl * kl)
+                pseudo_loss = torch.zeros((), device=self.device)
+                pseudo_score_mean = torch.zeros((), device=self.device)
+                margin_ok = torch.zeros((), device=self.device)
+                pseudo_count = 0
+                if pseudo_enabled and x_b.shape[0] >= 2:
+                    x_p, y_p = self._make_pseudo_unknown_batch(
+                        x_b,
+                        y_b,
+                        ratio=pseudo_ratio,
+                        mixup_alpha=mixup_alpha,
+                        mask_probability=mask_probability,
+                        noise_std=noise_std,
+                    )
+                    pseudo_count = int(y_p.numel())
+                    if pseudo_count > 0:
+                        p_out = self.student_model.osr_score(
+                            x_p,
+                            y_p,
+                            nll_weight=nll_weight,
+                            detach_features=bool(getattr(osr_cfg, "detach_features", True)),
+                        )
+                        pseudo_score = p_out["recon_error"]
+                        pseudo_score_mean = pseudo_score.mean()
+                        pseudo_loss = F.relu(float(pseudo_margin) - pseudo_score).mean()
+                        margin_ok = (pseudo_score > float(pseudo_margin)).float().mean()
+                        loss = loss + (pseudo_weight * pseudo_loss)
+                self.optimizer_student_osr.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.student_model.osr_parameters(), max_norm=grad_clip)
+                self.optimizer_student_osr.step()
+
+                totals["loss"] += float(loss.detach().item())
+                totals["recon"] += float(recon.detach().item())
+                totals["kl"] += float(kl.detach().item())
+                totals["pseudo_loss"] += float(pseudo_loss.detach().item())
+                totals["known_score"] += float(out["score"].mean().detach().item())
+                totals["pseudo_score"] += float(pseudo_score_mean.detach().item())
+                totals["margin_ok"] += float(margin_ok.detach().item())
+                totals["pseudo_count"] += float(pseudo_count)
+                steps += 1
+
+        after = [p.detach() for p in self.student_model.osr_parameters()]
+        delta_sq = torch.zeros((), device=self.device)
+        norm_sq = torch.zeros((), device=self.device)
+        for b, a in zip(before, after, strict=True):
+            delta_sq = delta_sq + (a - b).pow(2).sum()
+            norm_sq = norm_sq + a.pow(2).sum()
+        denom = max(steps, 1)
+        known_score_mean = totals["known_score"] / denom
+        pseudo_score_mean = totals["pseudo_score"] / denom
+        score_gap = pseudo_score_mean - known_score_mean
+        metrics = {
+            "digos_osr_enabled": 1.0,
+            "digos_known_samples": float(known_samples),
+            "digos_label_coverage": float(label_coverage),
+            "digos_class_entropy": float(class_entropy),
+            "digos_osr_steps": float(steps),
+            "digos_osr_loss": totals["loss"] / denom,
+            "digos_known_recon_mean": totals["recon"] / denom,
+            "digos_known_kl_mean": totals["kl"] / denom,
+            "digos_pseudo_loss": totals["pseudo_loss"] / denom,
+            "digos_known_score_mean": float(known_score_mean),
+            "digos_pseudo_score_mean": float(pseudo_score_mean),
+            "digos_score_gap": float(score_gap),
+            "digos_margin_satisfied_rate": totals["margin_ok"] / denom,
+            "digos_pseudo_samples": totals["pseudo_count"],
+            "digos_osr_delta_norm": float(torch.sqrt(delta_sq.clamp_min(0.0)).detach().item()),
+            "digos_osr_param_norm": float(torch.sqrt(norm_sq.clamp_min(0.0)).detach().item()),
+        }
+        active_logger.info(
+            "Fed-DiGOS local OSR | known=%d class_counts=%s coverage=%.3f entropy=%.3f "
+            "steps=%d recon=%.6f kl=%.6f pseudo_score=%.6f known_score=%.6f gap=%.6f "
+            "margin_ok=%.3f delta_norm=%.6f",
+            known_samples,
+            {str(i): int(v) for i, v in enumerate(counts.detach().cpu().tolist())},
+            label_coverage,
+            class_entropy,
+            steps,
+            metrics["digos_known_recon_mean"],
+            metrics["digos_known_kl_mean"],
+            metrics["digos_pseudo_score_mean"],
+            metrics["digos_known_score_mean"],
+            metrics["digos_score_gap"],
+            metrics["digos_margin_satisfied_rate"],
+            metrics["digos_osr_delta_norm"],
+        )
+        return metrics
 
     # --- METHODS FOR FEDERATED LEARNING ---
 

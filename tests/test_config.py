@@ -66,15 +66,16 @@ def test_closed_set_federated_experiment_disables_generator_training():
     assert cfg.training.generator.enabled is False
 
 
-def test_open_set_noniid_experiment_uses_feature_evt():
+def test_open_set_noniid_experiment_uses_fed_digos():
     with initialize_config_dir(version_base=None, config_dir=_config_dir()):
         cfg = compose(config_name="config_fl", overrides=["experiment=exp4"])
 
     assert cfg.evaluation.mode == "open_set"
     assert cfg.open_set.evt.enabled is True
-    assert cfg.open_set.evt.backend == "student_feature_evt"
-    assert cfg.open_set.evt.score == "mahalanobis_feature_distance"
-    assert cfg.training.generator.enabled is True
+    assert cfg.open_set.evt.backend == "fed_digos"
+    assert cfg.open_set.method == "fed_digos"
+    assert cfg.training.generator.enabled is False
+    assert cfg.training.dkd_student_osr_enabled is True
 
 
 def test_efficiency_experiment_disables_generator_training():
@@ -95,27 +96,28 @@ def test_open_set_experiment_uses_iid_run_local_processed_dir():
     assert cfg.dataset.preprocessing.iid is True
     assert cfg.open_set.evt.enabled is True
     assert cfg.evaluation.mode == "open_set"
-    assert cfg.training.generator.enabled is True
+    assert cfg.training.generator.enabled is False
+    assert cfg.training.dkd_student_osr_enabled is True
 
 
-def test_open_set_dkd_method_overlay_keeps_feature_evt_backend():
+def test_open_set_dkd_method_overlay_keeps_fed_digos_backend():
     with initialize_config_dir(version_base=None, config_dir=_config_dir()):
         cfg = compose(config_name="config_fl", overrides=["experiment=exp2", "+method=dkd_fedos"])
 
     validate_config(cfg)
     assert cfg.federated.strategy.name == "dkd_fedos"
-    assert cfg.open_set.evt.backend == "student_feature_evt"
-    assert cfg.open_set.evt.score == "mahalanobis_feature_distance"
+    assert cfg.open_set.evt.backend == "fed_digos"
+    assert cfg.open_set.method == "fed_digos"
 
 
-def test_open_set_noniid_dkd_method_overlay_keeps_feature_evt_backend():
+def test_open_set_noniid_dkd_method_overlay_keeps_fed_digos_backend():
     with initialize_config_dir(version_base=None, config_dir=_config_dir()):
         cfg = compose(config_name="config_fl", overrides=["experiment=exp4", "+method=dkd_fedos"])
 
     validate_config(cfg)
     assert cfg.federated.strategy.name == "dkd_fedos"
-    assert cfg.open_set.evt.backend == "student_feature_evt"
-    assert cfg.open_set.evt.score == "mahalanobis_feature_distance"
+    assert cfg.open_set.evt.backend == "fed_digos"
+    assert cfg.open_set.method == "fed_digos"
 
 def test_method_overlay_updates_strategy_and_method():
     with initialize_config_dir(version_base=None, config_dir=_config_dir()):

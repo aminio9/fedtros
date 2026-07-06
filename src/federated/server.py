@@ -499,10 +499,11 @@ class DKDFedOSStrategy(FedAvg):
         )
 
         logger.info(
-            "DKD-FedOS V7 FEATURE-EVT READY | "
+            "DKD-FedOS + Fed-DiGOS READY | "
             "student_aggregation_mode=%s | global_anchor_enabled=%s | "
             "global_anchor_weight=%.3f | student_hidden_dims=%s | student_layers=%d | "
-            "min_reliable_samples=%.1f | warmup=%d | round_open_set_eval=%s every=%d",
+            "min_reliable_samples=%.1f | warmup=%d | round_open_set_eval=%s every=%d | "
+            "student_osr_enabled=%s",
             self.student_aggregation_mode,
             bool(anchor_weight > 0.0),
             anchor_weight,
@@ -512,6 +513,7 @@ class DKDFedOSStrategy(FedAvg):
             self.student_avg_warmup_rounds,
             self.round_open_set_eval_enabled,
             self.round_open_set_eval_every_n,
+            bool(getattr(GLOBAL_AGENT_REF.student_model, "osr_enabled", False)),
         )
 
     def configure_fit(self, server_round: int, parameters: Parameters, client_manager):
@@ -588,11 +590,38 @@ class DKDFedOSStrategy(FedAvg):
         avg_weights = []
         reliability_weights = [float(record.get("reliability_weight", 1.0)) for record in reliable_records]
         weight_sum = max(float(np.sum(reliability_weights)), EPS)
+        student_keys = list(GLOBAL_AGENT_REF.student_model.state_dict().keys()) if GLOBAL_AGENT_REF is not None else []
+        osr_layer_mask = [str(k).startswith("osr_") for k in student_keys]
+        osr_enabled = bool(OmegaConf.select(self.cfg, "open_set.fed_digos.enabled", default=False))
+        osr_records: list[dict[str, Any]] = []
+        osr_excluded: list[tuple[str, str]] = []
+        if osr_enabled and any(osr_layer_mask):
+            max_examples = max(float(record.get("num_examples", 0.0)) for record in reliable_records)
+            for record in reliable_records:
+                weight, reason = self._client_digos_osr_weight(record, max_examples=max_examples)
+                record["digos_osr_weight"] = weight
+                if weight > 0.0:
+                    osr_records.append(record)
+                else:
+                    osr_excluded.append((str(record.get("cid", "?")), reason))
+            if not osr_records:
+                logger.warning("Fed-DiGOS OSR aggregation has no reliable OSR updates; falling back to classifier records.")
+                osr_records = reliable_records
+                for record in osr_records:
+                    record["digos_osr_weight"] = float(record.get("reliability_weight", 1.0))
         for layer_idx in range(len(base)):
             layer_sum = np.zeros_like(base[layer_idx])
-            for record, reliability_weight in zip(reliable_records, reliability_weights, strict=True):
-                layer_sum += float(reliability_weight) * record["weights"][layer_idx]
-            avg_weights.append(layer_sum / weight_sum)
+            if osr_enabled and layer_idx < len(osr_layer_mask) and osr_layer_mask[layer_idx]:
+                active_records = osr_records or reliable_records
+                active_weights = [float(r.get("digos_osr_weight", r.get("reliability_weight", 1.0))) for r in active_records]
+                active_sum = max(float(np.sum(active_weights)), EPS)
+                for record, reliability_weight in zip(active_records, active_weights, strict=True):
+                    layer_sum += float(reliability_weight) * record["weights"][layer_idx]
+                avg_weights.append(layer_sum / active_sum)
+            else:
+                for record, reliability_weight in zip(reliable_records, reliability_weights, strict=True):
+                    layer_sum += float(reliability_weight) * record["weights"][layer_idx]
+                avg_weights.append(layer_sum / weight_sum)
 
         distance_to_avg_before = self._weight_list_norm(
             [base_layer - avg_layer for base_layer, avg_layer in zip(base, avg_weights, strict=True)]
@@ -678,6 +707,10 @@ class DKDFedOSStrategy(FedAvg):
                 "dkd_fedos_global_norm_before": float(global_norm_before),
                 "dkd_fedos_global_norm_after": float(global_norm_after),
                 "dkd_fedos_avg_local_norm": float(avg_local_norm),
+                "fed_digos_osr_layers": float(sum(osr_layer_mask) if 'osr_layer_mask' in locals() else 0.0),
+                "fed_digos_osr_included_clients": float(len(osr_records) if 'osr_records' in locals() else 0.0),
+                "fed_digos_osr_excluded_clients": float(len(osr_excluded) if 'osr_excluded' in locals() else 0.0),
+                "fed_digos_osr_mean_weight": float(np.mean([float(r.get("digos_osr_weight", 0.0)) for r in osr_records]) if 'osr_records' in locals() and osr_records else 0.0),
             }
         )
         self._save_student_checkpoint(new_weights, server_round, metrics)
@@ -695,6 +728,8 @@ class DKDFedOSStrategy(FedAvg):
                 "normalized_grad_norms": normalized_grad_norms,
                 "aggregation_mode": aggregation_mode_used,
                 "reliability_weights": {str(record["cid"]): float(record.get("reliability_weight", 1.0)) for record in reliable_records},
+                "fed_digos_osr_weights": {str(record["cid"]): float(record.get("digos_osr_weight", 0.0)) for record in (osr_records if 'osr_records' in locals() else [])},
+                "fed_digos_osr_excluded": osr_excluded if 'osr_excluded' in locals() else [],
                 "distance_to_avg_before": distance_to_avg_before,
                 "distance_to_avg_after": distance_to_avg_after,
                 "global_norm_before": global_norm_before,
@@ -704,12 +739,15 @@ class DKDFedOSStrategy(FedAvg):
             }
         )
         logger.info(
-            "DKD-FedOS aggregation | round=%d mode=%s clients=%d included=%d excluded=%d dist_to_avg %.4f->%.4f",
+            "DKD-FedOS/Fed-DiGOS aggregation | round=%d mode=%s clients=%d cls_included=%d cls_excluded=%d "
+            "osr_included=%d osr_excluded=%d dist_to_avg %.4f->%.4f",
             server_round,
             aggregation_mode_used,
             len(records),
             len(reliable_records),
             len(excluded_records),
+            len(osr_records) if 'osr_records' in locals() else 0,
+            len(osr_excluded) if 'osr_excluded' in locals() else 0,
             distance_to_avg_before,
             distance_to_avg_after,
         )
@@ -732,10 +770,10 @@ class DKDFedOSStrategy(FedAvg):
         if not bool(OmegaConf.select(self.cfg, "open_set.evt.enabled", default=False)):
             return {}
 
-        backend = str(OmegaConf.select(self.cfg, "open_set.evt.backend", default="student_feature_evt")).lower()
-        if backend not in {"student_feature_evt", "student_feature", "feature_evt", "feature", "dual_boundary_evt", "dual_evt", "dual"}:
+        backend = str(OmegaConf.select(self.cfg, "open_set.evt.backend", default="fed_digos")).lower()
+        if backend not in {"fed_digos", "digos", "student_digos"}:
             logger.info(
-                "DKD-FedOS round=%d open-set evaluation skipped: backend=%s is not a global student Feature-EVT backend.",
+                "DKD-FedOS round=%d open-set evaluation skipped: backend=%s is not Fed-DiGOS.",
                 server_round,
                 backend,
             )
@@ -802,6 +840,35 @@ class DKDFedOSStrategy(FedAvg):
         entropy_factor = max(0.0, min(1.0, entropy)) ** max(self.reliability_entropy_power, 0.0)
         weight = sample_factor * coverage_factor * entropy_factor
         return float(np.clip(weight, self.reliability_min_weight, 1.0))
+
+
+    def _client_digos_osr_weight(self, record: dict[str, Any], *, max_examples: float) -> tuple[float, str]:
+        """Support-quality weight for the Fed-DiGOS student OSR branch."""
+        metrics = record.get("metrics", {}) or {}
+        n = float(metrics.get("digos_known_samples", record.get("num_examples", 0.0)) or 0.0)
+        min_samples = float(OmegaConf.select(self.cfg, "open_set.fed_digos.aggregation.min_samples", default=500.0))
+        min_coverage = float(OmegaConf.select(self.cfg, "open_set.fed_digos.aggregation.min_label_coverage", default=0.5))
+        min_entropy = float(OmegaConf.select(self.cfg, "open_set.fed_digos.aggregation.min_class_entropy", default=0.3))
+        min_gap = float(OmegaConf.select(self.cfg, "open_set.fed_digos.aggregation.min_score_gap", default=0.0))
+        target_gap = float(OmegaConf.select(self.cfg, "open_set.fed_digos.aggregation.quality_target_gap", default=0.5))
+        coverage = float(metrics.get("digos_label_coverage", metrics.get("label_coverage", 0.0)) or 0.0)
+        entropy = float(metrics.get("digos_class_entropy", metrics.get("class_entropy", 0.0)) or 0.0)
+        gap = float(metrics.get("digos_score_gap", float("nan")))
+        delta = float(metrics.get("digos_osr_delta_norm", 0.0) or 0.0)
+        if n < min_samples:
+            return 0.0, f"low_samples:{n:.0f}<{min_samples:.0f}"
+        if coverage < min_coverage:
+            return 0.0, f"low_coverage:{coverage:.3f}<{min_coverage:.3f}"
+        if entropy < min_entropy:
+            return 0.0, f"low_entropy:{entropy:.3f}<{min_entropy:.3f}"
+        if not np.isfinite(gap) or gap <= min_gap:
+            return 0.0, f"bad_score_gap:{gap}"
+        if not np.isfinite(delta):
+            return 0.0, "bad_delta_norm"
+        sample_factor = float(np.sqrt(max(n, 0.0) / max(float(max_examples), 1.0)))
+        quality = float(np.clip(gap / max(target_gap, EPS), 0.1, 1.0))
+        weight = sample_factor * float(np.clip(coverage, 0.0, 1.0)) * float(np.clip(entropy, 0.0, 1.0)) * quality
+        return float(np.clip(weight, 0.0, 1.0)), "ok"
 
     def _save_student_checkpoint(
         self,

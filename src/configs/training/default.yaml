@@ -98,3 +98,16 @@ dkd_class_balance_beta: 0.999
 dkd_class_weight_min: 0.2
 dkd_class_weight_max: 5.0
 dkd_protect_absent_classes: true
+
+# Fed-DiGOS student-owned open-set generator branch. Disabled for closed-set experiments,
+# enabled by E2/E4. Reconstruction gradients are detached from classifier features by default.
+dkd_student_osr_enabled: false
+dkd_student_osr_latent_dim: 8
+dkd_student_osr_hidden_dims: [128, 64]
+dkd_student_osr_decoder_hidden_dims: [64, 128]
+dkd_student_osr_dropout: 0.05
+dkd_student_osr_norm: layernorm
+dkd_student_osr_activation: gelu
+dkd_student_osr_detach_features: true
+dkd_student_osr_lr: 0.001
+dkd_student_osr_weight_decay: 0.0001

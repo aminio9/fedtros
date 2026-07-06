@@ -10,7 +10,7 @@ federated:
     # equal client weighting, and momentum. Only the compact student is shared.
     server_lr: 1.0
     server_momentum: 0.9
-    min_reliable_samples: 0
+    min_reliable_samples: 500
     # v5: default to reliability-weighted student averaging until the global
     # student is stable; normalized-gradient aggregation can be enabled later.
     student_aggregation_mode: reliability_weighted_average
@@ -59,7 +59,16 @@ training:
   dkd_student_activation: gelu
   dkd_student_norm: layernorm
   dkd_student_dropout: 0.05
-  # Open-set v7 uses feature-distance EVT over this classifier feature space.
+  # Fed-DiGOS attaches a disentangled OSR generator branch to this student.
+  dkd_student_osr_latent_dim: 8
+  dkd_student_osr_hidden_dims: [128, 64]
+  dkd_student_osr_decoder_hidden_dims: [64, 128]
+  dkd_student_osr_dropout: 0.05
+  dkd_student_osr_norm: layernorm
+  dkd_student_osr_activation: gelu
+  dkd_student_osr_detach_features: true
+  dkd_student_osr_lr: 0.001
+  dkd_student_osr_weight_decay: 0.0001
   dkd_student_lr: 0.001
   # Local CE adapts even one-class clients, while the frozen global-student
   # anchor preserves logits for absent classes.

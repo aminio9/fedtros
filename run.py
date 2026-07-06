@@ -80,11 +80,17 @@ def _enforce_dkd_fedos_v5_contract(cfg: DictConfig) -> None:
 
     evt_enabled = bool(OmegaConf.select(cfg, "open_set.evt.enabled", default=False))
     evt_backend = str(OmegaConf.select(cfg, "open_set.evt.backend", default="teacher_generator")).lower()
-    if evt_enabled and evt_backend not in {"student_feature_evt", "student_feature", "feature_evt", "dual_boundary_evt", "dual", "dual_evt"}:
+    if evt_enabled and evt_backend not in {"fed_digos", "digos", "student_digos"}:
         raise ValueError(
-            "DKD-FedOS v7 supports only open_set.evt.backend=student_feature_evt "
-            "or dual_boundary_evt for DKD-FedOS open-set runs."
+            "DKD-FedOS open-set runs now use Fed-DiGOS only. Set "
+            "open_set.evt.backend=fed_digos and training.dkd_student_osr_enabled=true."
         )
+    if evt_enabled and evt_backend in {"fed_digos", "digos", "student_digos"}:
+        osr_enabled = bool(OmegaConf.select(cfg, "training.dkd_student_osr_enabled", default=False))
+        if not osr_enabled:
+            raise ValueError(
+                "Fed-DiGOS requires training.dkd_student_osr_enabled=true."
+            )
     logger.info(
         "DKD-FedOS V5 STUDENT-ANCHOR ACTIVE | "
         "student_aggregation_mode=%s | global_anchor_enabled=%s | "

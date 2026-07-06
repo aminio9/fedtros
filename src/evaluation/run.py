@@ -26,6 +26,7 @@ from src.openset.feature_evt import (
     fit_student_feature_evt_models,
     save_feature_evt_collection,
 )
+from src.openset.digos_eval import calibrate_fed_digos, evaluate_fed_digos
 from src.tracking.local import LocalRunTracker
 from src.utils.config import resolve_path
 
@@ -203,37 +204,25 @@ def run_dkd_fedos_student_open_set_evaluation(
     save_scores: bool | None = None,
     append_round_metrics: bool = False,
 ) -> dict[str, Any]:
-    """Evaluate the DKD-FedOS global student with the configured open-set backend.
+    """Evaluate DKD-FedOS with the Fed-DiGOS open-set backend.
 
-    DKD-FedOS uploads/aggregates only the compact student.  The default open-set
-    backend is ``student_feature_evt``: class-wise EVT over Mahalanobis
-    distances in the global-student feature space.
-
-    ``dual_boundary_evt`` is supported when local generator boundaries are fitted
-    in client-side evaluation.  In this server-side global-student evaluator, the
-    local generator branch is unavailable by design, so ``dual_boundary_evt``
-    runs the primary global feature EVT boundary and records that the local
-    branch was skipped.
+    Fed-DiGOS uses the federated student classifier plus its disentangled OSR
+    generator branch.  The local RL teacher generator is intentionally not used
+    here.  If the branch is missing, fail loudly rather than quietly pretending
+    another doomed feature-distance threshold is science.
     """
     evt_cfg = cfg.open_set.evt
+    fed_digos_cfg = getattr(cfg.open_set, "fed_digos", None)
     if not bool(getattr(evt_cfg, "enabled", False)):
         logger.info("DKD-FedOS open-set evaluation skipped: EVT disabled.")
         return {}
-
-    backend = str(getattr(evt_cfg, "backend", "student_feature_evt")).lower()
-    backend_aliases = {
-        "feature": "student_feature_evt",
-        "student_feature": "student_feature_evt",
-        "student_feature_evt": "student_feature_evt",
-        "feature_evt": "student_feature_evt",
-        "dual": "dual_boundary_evt",
-        "dual_evt": "dual_boundary_evt",
-        "dual_boundary_evt": "dual_boundary_evt",
-    }
-    backend = backend_aliases.get(backend, backend)
-    if backend not in {"student_feature_evt", "dual_boundary_evt"}:
-        logger.info("DKD-FedOS open-set evaluation skipped: unsupported evt.backend=%s", backend)
-        return {}
+    backend = str(getattr(evt_cfg, "backend", "fed_digos")).lower()
+    backend = {"digos": "fed_digos", "student_digos": "fed_digos", "fed_digos": "fed_digos"}.get(backend, backend)
+    if backend != "fed_digos" or not bool(getattr(fed_digos_cfg, "enabled", False)):
+        raise ValueError(
+            "Fed-DiGOS is now the only DKD-FedOS open-set backend. Set "
+            "open_set.evt.backend=fed_digos and open_set.fed_digos.enabled=true."
+        )
 
     base_output_dir = resolve_path(project_root, cfg.evaluation.output_dir)
     output_dir = Path(output_dir) if output_dir is not None else base_output_dir
@@ -242,12 +231,9 @@ def run_dkd_fedos_student_open_set_evaluation(
     output_dir.mkdir(parents=True, exist_ok=True)
     if save_scores is None:
         save_scores = True
-    agent = build_agent(cfg, device)
 
-    student_ckpt = resolve_path(
-        project_root,
-        Path(str(cfg.checkpointing.dir)) / "dkd_fedos_student_latest.pt",
-    )
+    agent = build_agent(cfg, device)
+    student_ckpt = resolve_path(project_root, Path(str(cfg.checkpointing.dir)) / "dkd_fedos_student_latest.pt")
     if not student_ckpt.exists():
         raise FileNotFoundError(f"DKD-FedOS student checkpoint not found: {student_ckpt}")
     payload = torch.load(student_ckpt, map_location=device, weights_only=False)
@@ -256,100 +242,69 @@ def run_dkd_fedos_student_open_set_evaluation(
         raise KeyError(f"Missing 'student_model' in DKD-FedOS checkpoint: {student_ckpt}")
     agent.student_model.load_state_dict(state, strict=True)
     agent.student_model.to(device).eval()
+    if not bool(getattr(agent.student_model, "osr_enabled", False)):
+        raise RuntimeError(
+            "Fed-DiGOS checkpoint has no student OSR branch. Run with "
+            "training.dkd_student_osr_enabled=true."
+        )
 
-    class_names = load_class_names(
-        resolve_path(project_root, cfg.evaluation.class_names),
-        int(cfg.model.num_actions),
-    )
+    class_names = load_class_names(resolve_path(project_root, cfg.evaluation.class_names), int(cfg.model.num_actions))
     calibration_features, calibration_labels = load_tensor_dataset(
-        resolve_path(project_root, cfg.evaluation.validation_data),
-        map_location="cpu",
+        resolve_path(project_root, cfg.evaluation.validation_data), map_location="cpu"
     )
     open_features, open_labels = load_tensor_dataset(
-        resolve_path(project_root, cfg.evaluation.open_set_data),
-        map_location="cpu",
+        resolve_path(project_root, cfg.evaluation.open_set_data), map_location="cpu"
     )
-
-    num_unknown_train = int((calibration_labels < 0).sum().item())
     unknown_label_id = int(getattr(evt_cfg, "unknown_label_id", -1))
+    num_unknown_train = int((calibration_labels == unknown_label_id).sum().item())
     num_unknown_test = int((open_labels == unknown_label_id).sum().item())
     logger.info(
-        "OPEN-SET PROTOCOL ACTIVE | known_classes=%s | heldout_unknown=%s | "
-        "unknown_label_id=%s | num_actions=%d | calibration_samples=%d | "
-        "calibration_unknown_samples=%d | open_test_samples=%d | open_test_unknown_samples=%d | "
-        "backend=%s | server_round=%s",
+        "FED-DIGOS OPEN-SET ACTIVE | known_classes=%s | unknown_class=FoT | unknown_label_id=%s | "
+        "num_actions=%d | calibration_samples=%d | calibration_unknown=%d | open_test_samples=%d | "
+        "open_test_unknown=%d | osr_latent_dim=%d | pseudo_unknown=%s | energy=%s | prototype=%s | server_round=%s",
         [class_names[k] for k in sorted(class_names)],
-        "FoT",
         unknown_label_id,
         int(cfg.model.num_actions),
         int(calibration_labels.numel()),
         num_unknown_train,
         int(open_labels.numel()),
         num_unknown_test,
-        backend,
+        int(getattr(agent.student_model, "osr_latent_dim", 0)),
+        bool(getattr(getattr(fed_digos_cfg, "pseudo_unknown", None), "enabled", True)),
+        bool(getattr(getattr(fed_digos_cfg, "energy", None), "enabled", True)),
+        bool(getattr(getattr(fed_digos_cfg, "prototype", None), "enabled", True)),
         "final" if server_round is None else int(server_round),
     )
     if num_unknown_train != 0:
-        raise ValueError("EVT calibration data must contain known classes only; found unknown labels.")
+        raise ValueError("Fed-DiGOS EVT calibration data must contain known classes only; found unknown labels.")
 
+    evt_models, prototype_bank, calibration_df, meta = calibrate_fed_digos(
+        calibration_features,
+        calibration_labels,
+        student_model=agent.student_model,
+        batch_size=int(cfg.evaluation.batch_size),
+        device=device,
+        cfg=fed_digos_cfg,
+        logger_=logger,
+    )
     evt_output_dir = output_dir / "evt"
     evt_output_dir.mkdir(parents=True, exist_ok=True)
-
-    if backend in {"student_feature_evt", "dual_boundary_evt"}:
-        if backend == "dual_boundary_evt":
-            logger.warning(
-                "DUAL-BOUNDARY EVT requested in server-side DKD-FedOS evaluation. "
-                "Local teacher/generator checkpoints are not uploaded, so the final server metric uses "
-                "the primary global student Feature-EVT boundary only. Enable client_eval_enabled=true "
-                "for client-side local-generator ablation."
-            )
-        logger.info(
-            "GLOBAL STUDENT FEATURE-EVT ACTIVE | score=mahalanobis_feature_distance | "
-            "threshold_method=%s | target_known_fpr=%.4f",
-            str(getattr(evt_cfg, "threshold_method", "mef")),
-            float(getattr(evt_cfg, "target_known_fpr", 0.05)),
-        )
-        feature_boundaries, evt_meta, calibration_df = fit_student_feature_evt_models(
-            features=calibration_features,
-            labels=calibration_labels,
-            batch_size=int(cfg.evaluation.batch_size),
-            student_model=agent.student_model,
-            evt_cfg=evt_cfg,
-            device=device,
-            logger_=logger,
-        )
-        # If the user selected dual_boundary_evt, record the requested backend but
-        # keep the same global boundaries.  The evaluator will not try to use local
-        # generator boundaries unless they are explicitly provided.
-        if backend == "dual_boundary_evt":
-            evt_meta["backend"] = "dual_boundary_evt"
-            evt_meta["local_generator_available"] = False
-        save_feature_evt_collection(feature_boundaries, evt_output_dir / "feature_evt_models.pkl", logger_=logger)
-        (evt_output_dir / "feature_evt_meta.json").write_text(
-            json.dumps(evt_meta, indent=2, sort_keys=True), encoding="utf-8"
-        )
-        calibration_df.to_csv(output_dir / "student_feature_distances_calibration.csv", index=False)
-        logger.info(
-            "Feature-EVT fitted | classes=%s | thresholds=%s",
-            sorted(feature_boundaries.keys()),
-            {int(k): float(v.threshold) for k, v in feature_boundaries.items()},
-        )
-        metrics = evaluate_feature_evt_open_set(
-            features=open_features,
-            labels=open_labels,
-            batch_size=int(cfg.evaluation.batch_size),
-            student_model=agent.student_model,
-            feature_boundaries=feature_boundaries,
-            evt_meta=evt_meta,
-            class_names=class_names,
-            output_dir=output_dir,
-            device=device,
-            evt_cfg=evt_cfg,
-            report_to_stdout=bool(cfg.evaluation.report_to_stdout),
-            logger_=logger,
-            save_scores=bool(save_scores),
-        )
-
+    (evt_output_dir / "fed_digos_meta.json").write_text(json.dumps(meta, indent=2, sort_keys=True), encoding="utf-8")
+    metrics = evaluate_fed_digos(
+        open_features,
+        open_labels,
+        student_model=agent.student_model,
+        batch_size=int(cfg.evaluation.batch_size),
+        device=device,
+        cfg=fed_digos_cfg,
+        class_names=class_names,
+        output_dir=output_dir,
+        evt_models=evt_models,
+        prototype_bank=prototype_bank,
+        calibration_df=calibration_df,
+        logger_=logger,
+        report_to_stdout=bool(cfg.evaluation.report_to_stdout),
+    )
 
     if server_round is not None:
         metrics["server_round"] = int(server_round)
@@ -360,7 +315,7 @@ def run_dkd_fedos_student_open_set_evaluation(
         curve_path.parent.mkdir(parents=True, exist_ok=True)
         round_row = {
             "round": int(server_round),
-            "backend": backend,
+            "backend": "fed_digos",
             "openset_known_acc": float(metrics.get("openset_known_acc", 0.0)),
             "openset_unknown_recall": float(metrics.get("openset_unknown_recall", 0.0)),
             "openset_unknown_f1": float(metrics.get("openset_unknown_f1", 0.0)),
@@ -370,8 +325,9 @@ def run_dkd_fedos_student_open_set_evaluation(
             "openset_auprc": float(metrics.get("openset_auprc", 0.0)),
             "openset_fpr95": float(metrics.get("openset_fpr95", 1.0)),
             "openset_known_false_unknown_rate": float(metrics.get("openset_known_false_unknown_rate", 0.0)),
-            "openset_global_reject_count": float(metrics.get("openset_global_reject_count", 0.0)),
-            "openset_local_reject_count": float(metrics.get("openset_local_reject_count", 0.0)),
+            "openset_rejected_by_gen": float(metrics.get("openset_rejected_by_gen", 0.0)),
+            "openset_rejected_by_energy": float(metrics.get("openset_rejected_by_energy", 0.0)),
+            "openset_rejected_by_prototype": float(metrics.get("openset_rejected_by_prototype", 0.0)),
         }
         write_header = not curve_path.exists()
         with curve_path.open("a", newline="", encoding="utf-8") as handle:
@@ -380,9 +336,8 @@ def run_dkd_fedos_student_open_set_evaluation(
                 writer.writeheader()
             writer.writerow(round_row)
         logger.info(
-            "Open-set round metrics appended | round=%s | path=%s | AUROC=%.4f | Unknown_Recall=%.4f | Known_FU=%.4f",
+            "Fed-DiGOS round metrics appended | round=%s | AUROC=%.4f | UnknownRecall=%.4f | KnownFU=%.4f",
             int(server_round),
-            curve_path,
             float(metrics.get("openset_auroc", 0.0)),
             float(metrics.get("openset_unknown_recall", 0.0)),
             float(metrics.get("openset_known_false_unknown_rate", 0.0)),
@@ -390,9 +345,6 @@ def run_dkd_fedos_student_open_set_evaluation(
 
     if tracker:
         tracker.log_metrics(metrics)
-    (output_dir / "evaluation_metrics.json").write_text(
-        json.dumps(metrics, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    logger.info("DKD-FedOS open-set evaluation complete: %s", output_dir)
+    (output_dir / "evaluation_metrics.json").write_text(json.dumps(metrics, indent=2, sort_keys=True), encoding="utf-8")
+    logger.info("Fed-DiGOS open-set evaluation complete: %s", output_dir)
     return metrics

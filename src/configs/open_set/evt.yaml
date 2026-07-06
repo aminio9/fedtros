@@ -1,48 +1,68 @@
 name: evt
 enabled: true
+method: fed_digos
+
 evt:
   enabled: true
-  # Main v7 default: global student feature-distance EVT.
-  # Options:
-  #   student_feature_evt  -> main method, class-wise Mahalanobis feature boundary
-  #   dual_boundary_evt    -> feature EVT + support-gated local generator EVT
-  #   teacher_generator    -> legacy local generator reconstruction EVT
-  backend: student_feature_evt
-  score: mahalanobis_feature_distance
-  classwise: true
-  threshold_method: mef       # mef | quantile | fixed
-  tail_size_percent: 0.10
-  mef_min_quantile: 0.70
-  mef_max_quantile: 0.98
-  mef_num_candidates: 40
-  min_errors_per_class: 50
-  min_tail_size: 20
-  target_known_fpr: 0.05
-  fit_correct_only: true
+  backend: fed_digos
   unknown_label_id: -1
   open_set_label_id: 99
-  covariance: diagonal_shrinkage
-  covariance_eps: 0.0001
-  # Used by the optional local generator reconstruction boundary.
-  error_scale_factor: 100000.0
-  # DKD-FedOS performs one clean final global open-set evaluation after FL.
-  # Enable only for client-side ablation/debug of local generator dual-boundary.
-  client_eval_enabled: false
-
-  # Optional server-side round evaluation for DKD-FedOS open-set experiments.
-  # This evaluates the aggregated global student once after each server aggregation round.
   evaluate_each_round: false
   evaluate_every_n_rounds: 1
   round_eval_dir: open_set_rounds
-  save_round_scores: false
-  dual_boundary:
-    enabled: false
-    rule: or
-    local_generator_enabled: true
-    local_min_clean_count: 100
-    local_max_known_reject_rate: 0.10
-    local_evt_threshold_method: mef
-    local_tail_size_percent: 0.10
-    save_client_artifacts: true
-  # Kept only for old artifacts/tests. v7 uses class-wise thresholds.
-  decision_threshold: 0.5
+  save_round_scores: true
+
+fed_digos:
+  enabled: true
+  # Fed-DiGOS = federated student classifier + disentangled student OSR generator.
+  # The private RL teacher generator is not trained/aggregated for the main OSR path.
+  detach_features: true
+  batch_size: 256
+  local_epochs: 2
+  beta_kl: 0.02
+  recon_weight: 1.0
+  latent_nll_weight: 0.10
+  grad_clip_norm: 5.0
+
+  pseudo_unknown:
+    enabled: true
+    ratio: 0.50
+    margin: 1.5
+    margin_weight: 0.25
+    mixup_alpha: 0.4
+    mask_probability: 0.15
+    noise_std: 0.05
+
+  energy:
+    enabled: true
+    temperature: 1.0
+
+  prototype:
+    enabled: true
+    num_prototypes_per_class: 4
+    min_samples_per_prototype: 25
+
+  aggregation:
+    enabled: true
+    min_samples: 500
+    min_label_coverage: 0.5
+    min_class_entropy: 0.3
+    min_score_gap: 0.0
+    quality_target_gap: 0.5
+
+  evt:
+    classwise: true
+    threshold_method: mef
+    tail_size_percent: 0.10
+    mef_min_quantile: 0.70
+    mef_max_quantile: 0.98
+    mef_num_candidates: 40
+    min_errors_per_class: 50
+    min_tail_size: 20
+    target_known_fpr: 0.05
+    fit_correct_only: true
+
+  logging:
+    save_scores: true
+    save_quantiles: true
+    save_overlap_report: true
