@@ -223,6 +223,18 @@ class Agent:
         else:
             self.optimizer_student_osr = None
 
+        # Optional energy-margin training for the global student head.  This is
+        # deliberately head-only and low-LR: it shapes the logit energy surface
+        # for known-only synthetic boundary samples without letting the OSR task
+        # drag the closed-set backbone around like a shopping cart with one bad wheel.
+        energy_head_params = list(self.student_model.head.parameters())
+        energy_lr = float(getattr(train_cfg, "dkd_student_energy_lr", max(dkd_lr * 0.2, 1.0e-5)))
+        energy_wd = float(getattr(train_cfg, "dkd_student_energy_weight_decay", 1.0e-4))
+        if adam_cls is optim.Adam:
+            self.optimizer_student_energy = optim.AdamW(energy_head_params, lr=energy_lr, weight_decay=energy_wd, foreach=False)
+        else:
+            self.optimizer_student_energy = adam_cls(energy_head_params, lr=energy_lr)
+
         self.dkd_lambda_kd = float(getattr(train_cfg, "dkd_lambda_kd_init", 0.20))
         self.dkd_lambda_align = float(getattr(train_cfg, "dkd_lambda_align_init", 0.08))
 
@@ -282,6 +294,8 @@ class Agent:
             self._move_optimizer_state(self.optimizer_dkd, target_device)
         if getattr(self, "optimizer_student_osr", None) is not None:
             self._move_optimizer_state(self.optimizer_student_osr, target_device)
+        if getattr(self, "optimizer_student_energy", None) is not None:
+            self._move_optimizer_state(self.optimizer_student_energy, target_device)
         self.device = target_device
         return self
 
@@ -1281,6 +1295,21 @@ class Agent:
         features = features.detach().float().to(self.device)
         labels = labels.detach().long().view(-1).to(self.device)
         known_mask = (labels >= 0) & (labels < self.action_dim)
+        unknown_or_invalid_mask = ~known_mask
+        unknown_or_invalid_count = int(unknown_or_invalid_mask.sum().detach().item())
+        strict_no_unknown = bool(getattr(osr_cfg, "strict_no_unknown_train", True))
+        if unknown_or_invalid_count > 0 and strict_no_unknown:
+            bad_values = torch.unique(labels[unknown_or_invalid_mask].detach().cpu()).tolist()
+            raise ValueError(
+                "Fed-DiGOS OSR training received unknown/invalid labels. "
+                f"count={unknown_or_invalid_count} values={bad_values}. "
+                "This is not a valid open-set protocol; unknown classes must not be used for training."
+            )
+        if unknown_or_invalid_count > 0:
+            active_logger.warning(
+                "Fed-DiGOS OSR training filtered unknown/invalid labels | count=%d | strict_no_unknown_train=false",
+                unknown_or_invalid_count,
+            )
         features = features[known_mask]
         labels = labels[known_mask].clamp(0, self.action_dim - 1)
         known_samples = int(labels.numel())
@@ -1308,6 +1337,13 @@ class Agent:
         mixup_alpha = float(getattr(pseudo_cfg, "mixup_alpha", 0.4)) if pseudo_cfg is not None else 0.4
         mask_probability = float(getattr(pseudo_cfg, "mask_probability", 0.15)) if pseudo_cfg is not None else 0.15
         noise_std = float(getattr(pseudo_cfg, "noise_std", 0.05)) if pseudo_cfg is not None else 0.05
+        energy_cfg = getattr(osr_cfg, "energy", None)
+        energy_train_enabled = bool(getattr(energy_cfg, "train_margin_enabled", False)) if energy_cfg is not None else False
+        energy_weight = float(getattr(energy_cfg, "train_margin_weight", 0.05)) if energy_cfg is not None else 0.05
+        energy_ce_weight = float(getattr(energy_cfg, "known_ce_weight", 0.10)) if energy_cfg is not None else 0.10
+        energy_temperature = max(float(getattr(energy_cfg, "temperature", 1.0)) if energy_cfg is not None else 1.0, 1.0e-6)
+        energy_known_margin = float(getattr(energy_cfg, "known_margin", 2.0)) if energy_cfg is not None else 2.0
+        energy_boundary_margin = float(getattr(energy_cfg, "boundary_margin", 1.0)) if energy_cfg is not None else 1.0
 
         before = [p.detach().clone() for p in self.student_model.osr_parameters()]
         dataset = TensorDataset(features, labels)
@@ -1316,6 +1352,8 @@ class Agent:
             "loss": 0.0, "recon": 0.0, "kl": 0.0, "pseudo_loss": 0.0,
             "known_score": 0.0, "pseudo_score": 0.0, "margin_ok": 0.0,
             "pseudo_count": 0.0,
+            "energy_loss": 0.0, "energy_known_conf": 0.0, "energy_boundary_conf": 0.0,
+            "energy_margin_ok": 0.0, "energy_steps": 0.0,
         }
         steps = 0
         self.student_model.train()
@@ -1336,6 +1374,8 @@ class Agent:
                 pseudo_score_mean = torch.zeros((), device=self.device)
                 margin_ok = torch.zeros((), device=self.device)
                 pseudo_count = 0
+                x_p = None
+                y_p = None
                 if pseudo_enabled and x_b.shape[0] >= 2:
                     x_p, y_p = self._make_pseudo_unknown_batch(
                         x_b,
@@ -1363,6 +1403,43 @@ class Agent:
                 torch.nn.utils.clip_grad_norm_(self.student_model.osr_parameters(), max_norm=grad_clip)
                 self.optimizer_student_osr.step()
 
+                energy_loss = torch.zeros((), device=self.device)
+                energy_known_conf = torch.zeros((), device=self.device)
+                energy_boundary_conf = torch.zeros((), device=self.device)
+                energy_margin_ok = torch.zeros((), device=self.device)
+                if (
+                    energy_train_enabled
+                    and getattr(self, "optimizer_student_energy", None) is not None
+                    and x_p is not None
+                    and y_p is not None
+                    and int(y_p.numel()) > 0
+                ):
+                    # Head-only energy shaping: compute features with no gradient,
+                    # then update only the global student head.  Known samples keep
+                    # high logsumexp confidence; synthetic boundary samples are
+                    # pushed to lower confidence.  This uses known-derived boundary
+                    # samples only, not real unknown/FoT.
+                    with torch.no_grad():
+                        h_known, _ = self.student_model(x_b)
+                        h_boundary, _ = self.student_model(x_p)
+                    logits_known = self.student_model.head(h_known.detach())
+                    logits_boundary = self.student_model.head(h_boundary.detach())
+                    s_known = torch.logsumexp(logits_known / energy_temperature, dim=1)
+                    s_boundary = torch.logsumexp(logits_boundary / energy_temperature, dim=1)
+                    energy_known_conf = s_known.mean()
+                    energy_boundary_conf = s_boundary.mean()
+                    known_margin_loss = F.relu(float(energy_known_margin) - s_known).pow(2).mean()
+                    boundary_margin_loss = F.relu(s_boundary - float(energy_boundary_margin)).pow(2).mean()
+                    known_ce = F.cross_entropy(logits_known, y_b, reduction="mean")
+                    energy_loss = (energy_weight * (known_margin_loss + boundary_margin_loss)) + (energy_ce_weight * known_ce)
+                    self.optimizer_student_energy.zero_grad()
+                    energy_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.student_model.head.parameters(), max_norm=grad_clip)
+                    self.optimizer_student_energy.step()
+                    energy_margin_ok = ((s_known > float(energy_known_margin)).float().mean() * 0.5) + (
+                        (s_boundary < float(energy_boundary_margin)).float().mean() * 0.5
+                    )
+
                 totals["loss"] += float(loss.detach().item())
                 totals["recon"] += float(recon.detach().item())
                 totals["kl"] += float(kl.detach().item())
@@ -1371,6 +1448,11 @@ class Agent:
                 totals["pseudo_score"] += float(pseudo_score_mean.detach().item())
                 totals["margin_ok"] += float(margin_ok.detach().item())
                 totals["pseudo_count"] += float(pseudo_count)
+                totals["energy_loss"] += float(energy_loss.detach().item())
+                totals["energy_known_conf"] += float(energy_known_conf.detach().item())
+                totals["energy_boundary_conf"] += float(energy_boundary_conf.detach().item())
+                totals["energy_margin_ok"] += float(energy_margin_ok.detach().item())
+                totals["energy_steps"] += float(bool(energy_train_enabled and int(pseudo_count) > 0))
                 steps += 1
 
         after = [p.detach() for p in self.student_model.osr_parameters()]
@@ -1386,6 +1468,7 @@ class Agent:
         metrics = {
             "digos_osr_enabled": 1.0,
             "digos_known_samples": float(known_samples),
+            "digos_filtered_unknown_or_invalid_samples": float(unknown_or_invalid_count),
             "digos_label_coverage": float(label_coverage),
             "digos_class_entropy": float(class_entropy),
             "digos_osr_steps": float(steps),
@@ -1398,13 +1481,20 @@ class Agent:
             "digos_score_gap": float(score_gap),
             "digos_margin_satisfied_rate": totals["margin_ok"] / denom,
             "digos_pseudo_samples": totals["pseudo_count"],
+            "digos_energy_margin_enabled": float(bool(energy_train_enabled)),
+            "digos_energy_steps": totals["energy_steps"],
+            "digos_energy_loss": totals["energy_loss"] / denom,
+            "digos_energy_known_conf_mean": totals["energy_known_conf"] / denom,
+            "digos_energy_boundary_conf_mean": totals["energy_boundary_conf"] / denom,
+            "digos_energy_margin_satisfied_rate": totals["energy_margin_ok"] / denom,
             "digos_osr_delta_norm": float(torch.sqrt(delta_sq.clamp_min(0.0)).detach().item()),
             "digos_osr_param_norm": float(torch.sqrt(norm_sq.clamp_min(0.0)).detach().item()),
         }
         active_logger.info(
             "Fed-DiGOS local OSR | known=%d class_counts=%s coverage=%.3f entropy=%.3f "
             "steps=%d recon=%.6f kl=%.6f pseudo_score=%.6f known_score=%.6f gap=%.6f "
-            "margin_ok=%.3f delta_norm=%.6f",
+            "margin_ok=%.3f energy_train=%s energy_loss=%.6f energy_S_known=%.6f energy_S_boundary=%.6f "
+            "energy_margin_ok=%.3f delta_norm=%.6f",
             known_samples,
             {str(i): int(v) for i, v in enumerate(counts.detach().cpu().tolist())},
             label_coverage,
@@ -1416,6 +1506,11 @@ class Agent:
             metrics["digos_known_score_mean"],
             metrics["digos_score_gap"],
             metrics["digos_margin_satisfied_rate"],
+            bool(energy_train_enabled),
+            metrics["digos_energy_loss"],
+            metrics["digos_energy_known_conf_mean"],
+            metrics["digos_energy_boundary_conf_mean"],
+            metrics["digos_energy_margin_satisfied_rate"],
             metrics["digos_osr_delta_norm"],
         )
         return metrics

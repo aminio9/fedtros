@@ -111,3 +111,5 @@ dkd_student_osr_activation: gelu
 dkd_student_osr_detach_features: true
 dkd_student_osr_lr: 0.001
 dkd_student_osr_weight_decay: 0.0001
+dkd_student_energy_lr: 0.0002
+dkd_student_energy_weight_decay: 0.0001
