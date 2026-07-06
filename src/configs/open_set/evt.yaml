@@ -21,25 +21,42 @@ fed_digos:
   local_epochs: 2
   beta_kl: 0.02
   recon_weight: 1.0
-  latent_nll_weight: 0.10
+  # Smoke-test diagnostics showed raw reconstruction beats recon+NLL; keep NLL small.
+  latent_nll_weight: 0.02
   grad_clip_norm: 5.0
 
   pseudo_unknown:
     enabled: true
-    ratio: 0.50
-    margin: 1.5
-    margin_weight: 0.25
-    mixup_alpha: 0.4
-    mask_probability: 0.15
-    noise_std: 0.05
+    # Use harder, near-boundary pseudo-unknowns. Earlier defaults made fake
+    # unknowns too easy and did not teach FoT-like Normal-adjacent rejection.
+    ratio: 1.00
+    margin: 0.40
+    margin_weight: 0.15
+    mixup_alpha: 1.0
+    mask_probability: 0.05
+    noise_std: 0.01
 
   energy:
     enabled: true
     temperature: 1.0
+    # Smoke test showed FoT has lower raw energy than known samples.
+    # Options: low, high, two_sided.
+    rank_direction: low
+
+  score_fusion:
+    # Continuous rank fusion is the AUROC score and default reject rule.
+    # Global rank calibration performed much better than class-wise Normal-tail
+    # calibration for FoT->Normal failures. EVT thresholds are still saved for diagnostics.
+    method: mean_rank
+    calibration_scope: global
+    generator_score_column: recon_error
+    decision_rule: fused_rank_threshold
 
   prototype:
     enabled: true
-    num_prototypes_per_class: 4
+    # Normal traffic is broad/multi-modal; using more prototypes avoids one huge
+    # Normal ball swallowing FoT.
+    num_prototypes_per_class: 16
     min_samples_per_prototype: 25
 
   aggregation:

@@ -196,7 +196,7 @@ class StudentIDSModel(nn.Module):
     @staticmethod
     def energy_score(logits: torch.Tensor, temperature: float = 1.0) -> torch.Tensor:
         t = max(float(temperature), 1.0e-6)
-        # Higher returned value should mean "more unknown" for tail fitting.
-        # Standard energy is -T*logsumexp(logits/T); low-confidence samples are
-        # less negative, hence larger, so high-tail EVT is appropriate.
+        # Raw energy.  Some tabular IDS splits show unknowns on the low-energy
+        # side, so Fed-DiGOS evaluation calibrates energy direction instead of
+        # assuming that only high energy means unknown.
         return -t * torch.logsumexp(logits / t, dim=1)

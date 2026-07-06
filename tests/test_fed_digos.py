@@ -11,7 +11,8 @@ def _cfg():
         unknown_label_id=-1,
         open_set_label_id=99,
         latent_nll_weight=0.05,
-        energy=SimpleNamespace(enabled=True, temperature=1.0),
+        energy=SimpleNamespace(enabled=True, temperature=1.0, rank_direction="low"),
+        score_fusion=SimpleNamespace(method="mean_rank", calibration_scope="global", generator_score_column="recon_error", decision_rule="fused_rank_threshold"),
         prototype=SimpleNamespace(enabled=True, num_prototypes_per_class=2, min_samples_per_prototype=5),
         evt=SimpleNamespace(
             threshold_method="quantile",
@@ -96,4 +97,6 @@ def test_fed_digos_eval_writes_artifacts(tmp_path):
     assert "openset_auroc" in metrics
     assert (tmp_path / "open_set_scores.csv").exists()
     assert (tmp_path / "fed_digos_evt_thresholds.json").exists()
+    assert (tmp_path / "fed_digos_rank_calibration.json").exists()
+    assert (tmp_path / "fed_digos_component_aurocs.json").exists()
     assert (tmp_path / "score_overlap_report.json").exists()
