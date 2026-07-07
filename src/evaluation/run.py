@@ -37,6 +37,21 @@ def build_agent(cfg: DictConfig, device: torch.device) -> Agent:
     return Agent(OpenSetQChainModelFactory(cfg.model), cfg.training, device=device)
 
 
+def _open_set_unknown_names(cfg: DictConfig, *, project_root: Path) -> list[str]:
+    """Load held-out unknown label names from preprocessing metadata when available."""
+    try:
+        metadata_path = resolve_path(project_root, cfg.dataset.preprocessing.output_dir) / "preprocess_metadata.json"
+        if not metadata_path.exists():
+            return []
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        values = metadata.get("unknown_labels", [])
+        if isinstance(values, list):
+            return [str(value) for value in values]
+    except Exception:
+        logger.debug("Could not read unknown label names from preprocessing metadata.", exc_info=True)
+    return []
+
+
 def _latent_export_tensor(
     cfg: DictConfig,
     *,
@@ -258,11 +273,13 @@ def run_dkd_fedos_student_open_set_evaluation(
     unknown_label_id = int(getattr(evt_cfg, "unknown_label_id", -1))
     num_unknown_train = int((calibration_labels == unknown_label_id).sum().item())
     num_unknown_test = int((open_labels == unknown_label_id).sum().item())
+    unknown_label_names = _open_set_unknown_names(cfg, project_root=project_root)
     logger.info(
-        "FED-DIGOS OPEN-SET ACTIVE | known_classes=%s | unknown_class=FoT | unknown_label_id=%s | "
+        "FED-DIGOS OPEN-SET ACTIVE | known_classes=%s | unknown_labels=%s | unknown_label_id=%s | "
         "num_actions=%d | calibration_samples=%d | calibration_unknown=%d | open_test_samples=%d | "
         "open_test_unknown=%d | osr_latent_dim=%d | pseudo_unknown=%s | energy=%s | prototype=%s | server_round=%s",
         [class_names[k] for k in sorted(class_names)],
+        unknown_label_names or ["held_out_unknown"],
         unknown_label_id,
         int(cfg.model.num_actions),
         int(calibration_labels.numel()),

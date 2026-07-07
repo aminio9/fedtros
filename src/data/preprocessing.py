@@ -447,6 +447,7 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
         "seed": seed,
         "label_column": label_col,
         "known_labels": known_labels,
+        "unknown_labels": sorted(str(value) for value in df_unknown[label_col].dropna().unique().tolist()),
         "unknown_label_id": int(p_cfg.unknown_label_id),
         "num_actions": num_actions,
         "state_dim": state_dim,

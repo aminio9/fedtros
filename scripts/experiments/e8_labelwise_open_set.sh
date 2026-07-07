@@ -5,24 +5,33 @@ invoke_hydra_run() {
   poetry run python run.py "$@"
 }
 
-label_names=("MitM" "FoT")
-label_knowns=("Normal,BP,DoS,FoT" "Normal,BP,DoS,MitM")
+# Exp8 label-wise open-set runs. Normal is always kept as known.
+# Each command trains on the known labels and evaluates the held-out label only in open_set_test.
 
-for idx in "${!label_names[@]}"; do
-  unknown_label="${label_names[$idx]}"
-  known_labels="${label_knowns[$idx]}"
+invoke_hydra_run \
+  "experiment=exp8" \
+  "+method=dkd_fedos" \
+  "seed=42" \
+  "dataset.known_labels=[Normal,DoS,MitM,FoT]" \
+  "tracking.run_id=e8_bp_dkd_fedos_seed42"
 
-  invoke_hydra_run \
-    "experiment=exp8" \
-    "+method=fmrl_ava" \
-    "seed=42" \
-    "dataset.known_labels=[$known_labels]" \
-    "tracking.run_id=e8_${unknown_label,,}_fmrl_ava_seed42"
+invoke_hydra_run \
+  "experiment=exp8" \
+  "+method=dkd_fedos" \
+  "seed=42" \
+  "dataset.known_labels=[Normal,BP,MitM,FoT]" \
+  "tracking.run_id=e8_dos_dkd_fedos_seed42"
 
-  invoke_hydra_run \
-    "experiment=exp8" \
-    "+method=fedavg" \
-    "seed=42" \
-    "dataset.known_labels=[$known_labels]" \
-    "tracking.run_id=e8_${unknown_label,,}_fedavg_seed42"
-done
+invoke_hydra_run \
+  "experiment=exp8" \
+  "+method=dkd_fedos" \
+  "seed=42" \
+  "dataset.known_labels=[Normal,BP,DoS,FoT]" \
+  "tracking.run_id=e8_mitm_dkd_fedos_seed42"
+
+invoke_hydra_run \
+  "experiment=exp8" \
+  "+method=dkd_fedos" \
+  "seed=42" \
+  "dataset.known_labels=[Normal,BP,DoS,MitM]" \
+  "tracking.run_id=e8_fot_dkd_fedos_seed42"

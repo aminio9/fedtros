@@ -113,6 +113,58 @@ def _pipeline(cfg: DictConfig) -> str:
     return str(value or "full").lower()
 
 
+def _open_set_evaluation_requested(cfg: DictConfig) -> bool:
+    """Return True when the experiment contract requires open-set evaluation."""
+    evaluation_mode = str(OmegaConf.select(cfg, "evaluation.mode", default="closed_set") or "").lower()
+    family = str(OmegaConf.select(cfg, "experiment.family", default="") or "").lower()
+    dependencies = OmegaConf.select(cfg, "experiment.dependencies", default=[]) or []
+    if evaluation_mode == "open_set":
+        return True
+    if "open_set" in family or "openset" in family:
+        return True
+    return any("open_set" in str(dep).lower() for dep in dependencies)
+
+
+def _require_dkd_fedos_open_set_config(cfg: DictConfig) -> None:
+    """Fail loudly when an open-set DKD-FedOS experiment is not wired to Fed-DiGOS."""
+    if not _open_set_evaluation_requested(cfg):
+        return
+    if str(OmegaConf.select(cfg, "strategy.name", default="")).lower() != "dkd_fedos":
+        return
+
+    evt_enabled = bool(OmegaConf.select(cfg, "open_set.evt.enabled", default=False))
+    evt_backend = str(OmegaConf.select(cfg, "open_set.evt.backend", default="") or "").lower()
+    fed_digos_enabled = bool(OmegaConf.select(cfg, "open_set.fed_digos.enabled", default=False))
+    osr_enabled = bool(OmegaConf.select(cfg, "training.dkd_student_osr_enabled", default=False))
+    open_set_head_enabled = bool(OmegaConf.select(cfg, "training.dkd_student_open_set_enabled", default=False))
+
+    if not evt_enabled:
+        raise ValueError(
+            "Open-set DKD-FedOS run is misconfigured: evaluation.mode=open_set but "
+            "open_set.evt.enabled=false. Set open_set.evt.enabled=true."
+        )
+    if evt_backend not in {"fed_digos", "digos", "student_digos"}:
+        raise ValueError(
+            "Open-set DKD-FedOS run is misconfigured: backend must be fed_digos, "
+            f"got {evt_backend!r}. Set open_set.evt.backend=fed_digos."
+        )
+    if not fed_digos_enabled:
+        raise ValueError(
+            "Open-set DKD-FedOS run is misconfigured: open_set.fed_digos.enabled=false. "
+            "Set open_set.fed_digos.enabled=true."
+        )
+    if not osr_enabled:
+        raise ValueError(
+            "Open-set DKD-FedOS run is misconfigured: training.dkd_student_osr_enabled=false. "
+            "Set training.dkd_student_osr_enabled=true."
+        )
+    if not open_set_head_enabled:
+        raise ValueError(
+            "Open-set DKD-FedOS run is misconfigured: training.dkd_student_open_set_enabled=false. "
+            "Set training.dkd_student_open_set_enabled=true."
+        )
+
+
 def _suite_commands(cfg: DictConfig) -> Iterable[list[str]]:
     commands = OmegaConf.select(cfg, "experiment.suite_commands", default=[])
     for command in commands or []:
@@ -207,12 +259,25 @@ def main(cfg: DictConfig) -> None:
             tracker=context.tracker,
         )
         if str(OmegaConf.select(cfg, "strategy.name", default="")).lower() == "dkd_fedos":
-            # DKD-FedOS globally aggregates only the compact student.  For
-            # closed-set experiments the client-side Flower reports are enough.
-            # For open-set E2/E4, evaluate the aggregated global student with
-            # class-wise Feature-EVT. The optional local generator branch is
-            # client-side only and is not uploaded to the server.
-            if bool(OmegaConf.select(cfg, "open_set.evt.enabled", default=False)):
+            # DKD-FedOS globally aggregates only the compact student. Closed-set
+            # experiments use the Flower shared-test reports. Open-set experiments
+            # such as E2/E4/E8 must run one final server-side Fed-DiGOS evaluation
+            # on the aggregated global student after FL.
+            if _open_set_evaluation_requested(cfg):
+                _require_dkd_fedos_open_set_config(cfg)
+                logging.getLogger("run").info(
+                    "DKD-FedOS open-set final evaluation requested | experiment=%s | mode=%s | backend=%s",
+                    OmegaConf.select(cfg, "experiment.id", default="?"),
+                    OmegaConf.select(cfg, "evaluation.mode", default="?"),
+                    OmegaConf.select(cfg, "open_set.evt.backend", default="?"),
+                )
+                run_dkd_fedos_student_open_set_evaluation(
+                    cfg,
+                    project_root=context.project_root,
+                    device=context.device,
+                    tracker=context.tracker,
+                )
+            elif bool(OmegaConf.select(cfg, "open_set.evt.enabled", default=False)):
                 run_dkd_fedos_student_open_set_evaluation(
                     cfg,
                     project_root=context.project_root,
@@ -277,12 +342,24 @@ def main(cfg: DictConfig) -> None:
         assert context.device is not None
         assert context.tracker is not None
         sync_model_dimensions_from_preprocessing(cfg, project_root=context.project_root)
-        run_evaluation(
-            cfg,
-            project_root=context.project_root,
-            device=context.device,
-            tracker=context.tracker,
-        )
+        if (
+            str(OmegaConf.select(cfg, "strategy.name", default="")).lower() == "dkd_fedos"
+            and _open_set_evaluation_requested(cfg)
+        ):
+            _require_dkd_fedos_open_set_config(cfg)
+            run_dkd_fedos_student_open_set_evaluation(
+                cfg,
+                project_root=context.project_root,
+                device=context.device,
+                tracker=context.tracker,
+            )
+        else:
+            run_evaluation(
+                cfg,
+                project_root=context.project_root,
+                device=context.device,
+                tracker=context.tracker,
+            )
         return
 
     raise ValueError(

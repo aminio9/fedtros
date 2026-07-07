@@ -2,41 +2,87 @@
 
 ## Objective
 
-Measure open-set separation with one held-out attack label per run, then save the latent tensor for plotting.
+Run a label-wise open-set stress test where one non-Normal traffic label is held out as unknown. Normal is always kept as known.
 
-## Hydra Config Used
+## Correct DKD-FedOS/Fed-DiGOS Contract
 
-`experiment=exp8` with `open_set.evt.enabled=true`, latent export enabled, and the known-label list overridden per held-out attack.
+Exp8 is an open-set experiment, not a closed-set Exp3-style report. The run must:
 
-## Override Examples
+- train only on known labels,
+- put the held-out label only in `shared_open_set_test.pt`,
+- enable Fed-DiGOS open-set evaluation,
+- evaluate the aggregated global student after federated training,
+- save `open_set_metrics.json` and `open_set_scores.csv`.
 
-```bash
-python run.py experiment=exp8 +method=fmrl_ava seed=42 dataset.known_labels='[Normal,BP,DoS,FoT]' tracking.run_id=e8_mitm_fmrl_ava_seed42
-python run.py experiment=exp8 +method=fmrl_ava seed=42 dataset.known_labels='[Normal,BP,DoS,MitM]' tracking.run_id=e8_fot_fmrl_ava_seed42
+The Exp8 config now explicitly enables:
+
+```yaml
+training.dkd_student_osr_enabled: true
+training.dkd_student_open_set_enabled: true
+training.generator.enabled: false
+open_set.evt.enabled: true
+open_set.evt.backend: fed_digos
+open_set.fed_digos.enabled: true
+open_set.fed_digos.score_fusion.method: prototype_rank
+open_set.fed_digos.proser.enabled: false
+evaluation.mode: open_set
 ```
 
 ## Execution Commands
 
 ```bash
-python run.py experiment=exp8 +method=fmrl_ava seed=42 dataset.known_labels='[Normal,BP,DoS,FoT]'
-python run.py experiment=exp8 +method=fmrl_ava seed=42 dataset.known_labels='[Normal,BP,DoS,MitM]'
-python run.py experiment=exp8 +method=fedavg seed=42 dataset.known_labels='[Normal,BP,DoS,FoT]'
-python run.py experiment=exp8 +method=fedavg seed=42 dataset.known_labels='[Normal,BP,DoS,MitM]'
+poetry run python run.py experiment=exp8 +method=dkd_fedos seed=42 \
+  dataset.known_labels=[Normal,DoS,MitM,FoT] \
+  tracking.run_id=e8_bp_dkd_fedos_seed42
+```
+
+```bash
+poetry run python run.py experiment=exp8 +method=dkd_fedos seed=42 \
+  dataset.known_labels=[Normal,BP,MitM,FoT] \
+  tracking.run_id=e8_dos_dkd_fedos_seed42
+```
+
+```bash
+poetry run python run.py experiment=exp8 +method=dkd_fedos seed=42 \
+  dataset.known_labels=[Normal,BP,DoS,FoT] \
+  tracking.run_id=e8_mitm_dkd_fedos_seed42
+```
+
+```bash
+poetry run python run.py experiment=exp8 +method=dkd_fedos seed=42 \
+  dataset.known_labels=[Normal,BP,DoS,MitM] \
+  tracking.run_id=e8_fot_dkd_fedos_seed42
+```
+
+Or run all:
+
+```bash
 bash scripts/experiments/e8_labelwise_open_set.sh
+```
+
+## Expected Log Lines
+
+You should see:
+
+```text
+DKD-FedOS open-set final evaluation requested
+FED-DIGOS OPEN-SET ACTIVE
+calibration_unknown=0
+open_test_unknown>0
+Fed-DiGOS evaluation | selected=prototype_rank
 ```
 
 ## Expected Outputs
 
 - `open_set_metrics.json`
 - `open_set_scores.csv`
+- `fed_digos_component_aurocs.json`
+- `fed_digos_prototypes.json`
+- `fed_digos_rank_calibration.json`
+- `known_unknown_score_quantiles.json`
+- `score_overlap_report.json`
 - `latent_embeddings.csv`
-- `latent_embeddings.json`
-- `open_set_roc_curve.csv`
-- `open_set_pr_curve.csv`
 
-## Validation
+## Common Failure
 
-- Confirm each run writes its own `latent_embeddings.csv` and `latent_embeddings.json`.
-- Confirm the latent export includes `source=open_set` in the metadata.
-- Confirm the exported rows come from the open-set evaluation tensor only.
-- Confirm unknown labels are encoded as `Unknown` in the latent plot.
+If Exp8 only prints closed-set shared-test reports and never prints `FED-DIGOS OPEN-SET ACTIVE`, then the run did not execute final Fed-DiGOS evaluation. Check that `evaluation.mode=open_set`, `open_set.evt.enabled=true`, `open_set.evt.backend=fed_digos`, and `open_set.fed_digos.enabled=true` are active in `resolved_config.yaml`.
