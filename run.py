@@ -18,7 +18,7 @@ from src.federated import run_federated_simulation
 from src.plotting import generate_plots
 from src.tracking import attach_to_existing_run, initialize_run
 from src.training import run_training
-from src.utils.config import resolve_path, validate_config
+from src.utils.config import resolve_path, sync_model_dimensions_from_preprocessing, validate_config
 from src.utils.entrypoints import prepare_run_context
 
 
@@ -197,7 +197,10 @@ def main(cfg: DictConfig) -> None:
     if pipeline in {"full", "reproduce"}:
         assert context.device is not None
         assert context.tracker is not None
-        run_preprocessing(cfg, project_root=context.project_root)
+        metadata = run_preprocessing(cfg, project_root=context.project_root)
+        sync_model_dimensions_from_preprocessing(
+            cfg, project_root=context.project_root, metadata=metadata
+        )
         run_federated_simulation(
             cfg,
             project_root=context.project_root,
@@ -230,7 +233,10 @@ def main(cfg: DictConfig) -> None:
     if pipeline == "centralized":
         assert context.device is not None
         assert context.tracker is not None
-        run_preprocessing(cfg, project_root=context.project_root)
+        metadata = run_preprocessing(cfg, project_root=context.project_root)
+        sync_model_dimensions_from_preprocessing(
+            cfg, project_root=context.project_root, metadata=metadata
+        )
         run_training(
             cfg,
             project_root=context.project_root,
@@ -248,6 +254,7 @@ def main(cfg: DictConfig) -> None:
     if pipeline == "train":
         assert context.device is not None
         assert context.tracker is not None
+        sync_model_dimensions_from_preprocessing(cfg, project_root=context.project_root)
         run_training(
             cfg,
             project_root=context.project_root,
@@ -258,6 +265,7 @@ def main(cfg: DictConfig) -> None:
 
     if pipeline == "federated":
         assert context.tracker is not None
+        sync_model_dimensions_from_preprocessing(cfg, project_root=context.project_root)
         run_federated_simulation(
             cfg,
             project_root=context.project_root,
@@ -268,6 +276,7 @@ def main(cfg: DictConfig) -> None:
     if pipeline == "evaluate":
         assert context.device is not None
         assert context.tracker is not None
+        sync_model_dimensions_from_preprocessing(cfg, project_root=context.project_root)
         run_evaluation(
             cfg,
             project_root=context.project_root,

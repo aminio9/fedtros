@@ -154,11 +154,9 @@ class FlowerClient(fl.client.NumPyClient):
         if str(cfg.federated.strategy.name).lower() == "dkd_fedos":
             self.logger.info(
                 "Client %s DKD-FedOS setup | teacher=CVAE-DQN(local) student=StudentIDSModel(shared) "
-                "teacher_uploaded=false student_uploaded=true samples=%s histogram=%s missing=%s",
+                "teacher_uploaded=false student_uploaded=true student_uploaded_metrics=privacy_sanitized samples=%s",
                 self.cid,
                 self.local_data_profile["local_num_examples"],
-                self.local_data_profile["label_histogram"],
-                self.local_data_profile.get("missing_classes", "[]"),
             )
 
         # Directories
@@ -306,17 +304,12 @@ class FlowerClient(fl.client.NumPyClient):
                         "dkd_student_load_delta_norm": float(loaded_delta),
                         "dkd_student_train_delta_norm": float(train_delta),
                         "local_num_examples": self.local_data_profile["local_num_examples"],
-                        "class_entropy": self.local_data_profile["class_entropy"],
-                        "label_coverage": self.local_data_profile["label_coverage"],
-                        "label_histogram": self.local_data_profile["label_histogram"],
-                        "missing_classes": self.local_data_profile.get("missing_classes", "[]"),
-                        "present_classes": self.local_data_profile.get("present_classes", "[]"),
-                        "imbalance_ratio": self.local_data_profile.get("imbalance_ratio", 0.0),
+                        "privacy_strict_metrics": 1.0,
                     }
                 )
                 updated_student = self.agent.get_student_parameters()
                 num_examples = int(self.local_data_profile["local_num_examples"])
-                return updated_student, num_examples, metrics
+                return updated_student, num_examples, self._sanitize_server_metrics(metrics)
 
             # =========================================================
             # FedGPA: personalized model + prototype alignment
@@ -402,9 +395,7 @@ class FlowerClient(fl.client.NumPyClient):
                         "cid": self.cid,
                         "total_steps": float(num_steps_trained),
                         "local_num_examples": self.local_data_profile["local_num_examples"],
-                        "class_entropy": self.local_data_profile["class_entropy"],
-                        "label_coverage": self.local_data_profile["label_coverage"],
-                        "label_histogram": self.local_data_profile["label_histogram"],
+                        "privacy_strict_metrics": 1.0,
                         "hidden_info": json.dumps(audit_signals["mu_vector"]),
                         "recent_reward": metrics.get("avg_reward_per_episode", 0.0),
                         "history_reward": self.lifetime_reward,
@@ -439,7 +430,7 @@ class FlowerClient(fl.client.NumPyClient):
 
                 # Return the weights we cached in Phase A
                 num_examples = int(self.local_data_profile["local_num_examples"])
-                return self.cached_weights, num_examples, self.cached_metrics
+                return self.cached_weights, num_examples, self._sanitize_server_metrics(self.cached_metrics)
 
             self.logger.warning(f"Unknown Phase: {phase}")
             return [], 0, {}
@@ -447,6 +438,40 @@ class FlowerClient(fl.client.NumPyClient):
             self._exit_execution_device(execution_device, switched)
 
     # --- INTERNAL TRAINING HELPER ---
+    _SERVER_PRIVATE_METRIC_KEYS = {
+        "label_histogram",
+        "true_label_histogram",
+        "action_histogram",
+        "per_class_policy_accuracy",
+        "class_entropy",
+        "label_coverage",
+        "digos_class_entropy",
+        "digos_label_coverage",
+        "missing_classes",
+        "present_classes",
+        "imbalance_ratio",
+        "min_class_count",
+        "max_class_count",
+        "coverage_quality",
+    }
+
+    def _sanitize_server_metrics(self, metrics: dict[str, Any]) -> dict[str, Any]:
+        """Remove class-distribution metadata before sending metrics to the server.
+
+        The client may compute label histograms, class coverage, entropy, and
+        present/missing-class masks locally for class-balanced training and
+        global-anchor protection.  Those values are client-private and must not
+        be uploaded in strict-FL runs.  The server still receives the model
+        update, num_examples, and label-free training/quality losses.
+        """
+        sanitized = {
+            key: value
+            for key, value in (metrics or {}).items()
+            if key not in self._SERVER_PRIVATE_METRIC_KEYS
+        }
+        sanitized["privacy_strict_metrics"] = 1.0
+        return sanitized
+
     def _build_local_data_profile(self) -> dict[str, Any]:
         labels = self.env.all_labels_a_t.detach().cpu().long()
         num_actions = int(self.cfg.model.num_actions)
@@ -1171,8 +1196,7 @@ class FlowerClient(fl.client.NumPyClient):
                 "f1_macro": f1,
                 "num_examples": num_examples,
                 "prediction_max_ratio": max_prediction_ratio,
-                "prediction_histogram": json.dumps(pred_counts, sort_keys=True),
-                "true_label_histogram": json.dumps(true_counts, sort_keys=True),
+                "privacy_strict_metrics": 1.0,
                 "eval_scope_is_client_local": float(
                     str(getattr(self, "closed_set_eval_scope", "")).startswith("client")
                 ),

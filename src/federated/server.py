@@ -47,8 +47,6 @@ AUDIT_SCALAR_KEYS = (
     "accuracy",
     "td_stability",
     "novelty",
-    "class_entropy",
-    "label_coverage",
     "generator_correct_frac",
     "steps_norm",
 )
@@ -818,56 +816,46 @@ class DKDFedOSStrategy(FedAvg):
             return {"open_set_round_eval_failed": 1.0}
 
     def _client_reliability_weight(self, record: dict[str, Any], *, max_examples: float) -> float:
-        """Reliability score for student aggregation under quantity+label skew.
+        """Privacy-preserving reliability score for student aggregation.
 
-        v6 formula requested for DKD-FedOS stability:
+        Strict-FL mode must not let the server see label histograms, label
+        coverage, class entropy, present classes, or missing classes.  The
+        aggregation weight therefore uses only the Flower-provided number of
+        local examples.  This is weaker than label-aware reliability weighting,
+        but it keeps non-IID label-distribution information private.
 
             reliability_i = sqrt(num_samples_i / max_samples_in_round)
-                            * label_coverage_i
-                            * class_entropy_i
 
-        Then clamp into [reliability_min_weight, 1.0].  This makes clients with
-        many samples but one dominant class contribute only a small, explicit
-        anchor-preserved update instead of dominating the global student.
+        Then clamp into [reliability_min_weight, 1.0].
         """
-        metrics = record.get("metrics", {}) or {}
         num_examples = max(float(record.get("num_examples", 0.0)), 0.0)
         sample_factor = float(np.sqrt(num_examples / max(float(max_examples), 1.0)))
-        sample_factor = float(np.clip(sample_factor, 0.0, 1.0))
-        coverage = float(metrics.get("label_coverage", 0.0) or 0.0)
-        entropy = float(metrics.get("class_entropy", 0.0) or 0.0)
-        coverage_factor = max(0.0, min(1.0, coverage)) ** max(self.reliability_coverage_power, 0.0)
-        entropy_factor = max(0.0, min(1.0, entropy)) ** max(self.reliability_entropy_power, 0.0)
-        weight = sample_factor * coverage_factor * entropy_factor
-        return float(np.clip(weight, self.reliability_min_weight, 1.0))
+        return float(np.clip(sample_factor, self.reliability_min_weight, 1.0))
 
 
     def _client_digos_osr_weight(self, record: dict[str, Any], *, max_examples: float) -> tuple[float, str]:
-        """Support-quality weight for the Fed-DiGOS student OSR branch."""
+        """Privacy-preserving support-quality weight for the OSR branch.
+
+        The server no longer uses label coverage or class entropy.  OSR updates
+        are filtered only by sample support and label-free OSR quality metrics
+        such as the known-only boundary score gap and finite update norm.
+        """
         metrics = record.get("metrics", {}) or {}
         n = float(metrics.get("digos_known_samples", record.get("num_examples", 0.0)) or 0.0)
         min_samples = float(OmegaConf.select(self.cfg, "open_set.fed_digos.aggregation.min_samples", default=500.0))
-        min_coverage = float(OmegaConf.select(self.cfg, "open_set.fed_digos.aggregation.min_label_coverage", default=0.5))
-        min_entropy = float(OmegaConf.select(self.cfg, "open_set.fed_digos.aggregation.min_class_entropy", default=0.3))
         min_gap = float(OmegaConf.select(self.cfg, "open_set.fed_digos.aggregation.min_score_gap", default=0.0))
         target_gap = float(OmegaConf.select(self.cfg, "open_set.fed_digos.aggregation.quality_target_gap", default=0.5))
-        coverage = float(metrics.get("digos_label_coverage", metrics.get("label_coverage", 0.0)) or 0.0)
-        entropy = float(metrics.get("digos_class_entropy", metrics.get("class_entropy", 0.0)) or 0.0)
         gap = float(metrics.get("digos_score_gap", float("nan")))
         delta = float(metrics.get("digos_osr_delta_norm", 0.0) or 0.0)
         if n < min_samples:
             return 0.0, f"low_samples:{n:.0f}<{min_samples:.0f}"
-        if coverage < min_coverage:
-            return 0.0, f"low_coverage:{coverage:.3f}<{min_coverage:.3f}"
-        if entropy < min_entropy:
-            return 0.0, f"low_entropy:{entropy:.3f}<{min_entropy:.3f}"
         if not np.isfinite(gap) or gap <= min_gap:
             return 0.0, f"bad_score_gap:{gap}"
         if not np.isfinite(delta):
             return 0.0, "bad_delta_norm"
         sample_factor = float(np.sqrt(max(n, 0.0) / max(float(max_examples), 1.0)))
         quality = float(np.clip(gap / max(target_gap, EPS), 0.1, 1.0))
-        weight = sample_factor * float(np.clip(coverage, 0.0, 1.0)) * float(np.clip(entropy, 0.0, 1.0)) * quality
+        weight = sample_factor * quality
         return float(np.clip(weight, 0.0, 1.0)), "ok"
 
     def _save_student_checkpoint(
@@ -1718,14 +1706,7 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
                             1.0 / (1.0 + max(float(fit_res.metrics.get("td_error", 0.0)), 0.0)),
                         )
                     ),
-                    "coverage_quality": float(
-                        fit_res.metrics.get(
-                            "coverage_quality",
-                            0.5
-                            * float(fit_res.metrics.get("class_entropy", 0.0))
-                            + 0.5 * float(fit_res.metrics.get("label_coverage", 0.0)),
-                        )
-                    ),
+                    "coverage_quality": float(fit_res.metrics.get("coverage_quality", 1.0)),
                     "generator_correct_frac": float(
                         fit_res.metrics.get("generator_correct_frac", 0.0)
                     ),
@@ -1832,9 +1813,7 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
         total_steps = self._float_metric(metrics, "total_steps")
         generator_frac = self._float_metric(metrics, "generator_correct_frac", 0.5)
 
-        coverage_quality = 0.5 * float(
-            np.clip(self._float_metric(metrics, "class_entropy"), 0.0, 1.0)
-        ) + 0.5 * float(np.clip(self._float_metric(metrics, "label_coverage"), 0.0, 1.0))
+        coverage_quality = float(np.clip(self._float_metric(metrics, "coverage_quality", 1.0), 0.0, 1.0))
         scalar_values = {
             "reward_norm": reward_norm,
             "history_reward_norm": history_norm,
@@ -1842,10 +1821,7 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
             "accuracy": float(np.clip(local_acc, 0.0, 1.0)),
             "td_stability": float(1.0 / (1.0 + max(td_error, 0.0))),
             "novelty": float(np.tanh(max(kl_div, 0.0))),
-            "class_entropy": float(np.clip(self._float_metric(metrics, "class_entropy"), 0.0, 1.0)),
-            "label_coverage": float(
-                np.clip(self._float_metric(metrics, "label_coverage"), 0.0, 1.0)
-            ),
+            # No label-distribution scalars are uploaded in strict-FL mode.
             "generator_correct_frac": float(np.clip(generator_frac, 0.0, 1.0)),
             "steps_norm": float(np.clip(total_steps / max_round_reward, 0.0, 1.0)),
         }
@@ -1877,13 +1853,11 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
                 "kl_div": kl_div,
                 "local_f1_macro": local_f1,
                 "local_accuracy": local_acc,
-                "class_entropy": scalar_values["class_entropy"],
-                "label_coverage": scalar_values["label_coverage"],
+                "coverage_quality": coverage_quality,
                 "local_num_examples": self._float_metric(metrics, "local_num_examples"),
                 "total_steps": total_steps,
                 "audit_score": audit_score,
                 "td_stability": scalar_values["td_stability"],
-                "coverage_quality": coverage_quality,
             },
         }
 
@@ -2029,7 +2003,7 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
             "Acc",
             "TD",
             "KL",
-            "Entropy",
+            "Quality",
         )
         logger.info("-" * 112)
         for record in self.selection_records:
@@ -2043,7 +2017,7 @@ class FMRLAdaptiveVectorAlignedAggregationStrategy(FedAvg):
                 record["local_accuracy"],
                 record["td_error"],
                 record["kl_div"],
-                record["class_entropy"],
+                record.get("coverage_quality", 1.0),
             )
         logger.info("FMRL-AVA selection round=%d", server_round)
         logger.info("-" * 112)

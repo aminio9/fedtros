@@ -271,3 +271,12 @@ Open-set E2/E4 experiments now enable server-side global open-set evaluation aft
 ### Fed-DiGOS open-set backend
 
 E2/E4 now use **Fed-DiGOS**, a federated student-attached open-set generator branch with EVT-calibrated generator, energy, and prototype scores. The private RL teacher generator remains local and its standalone generator training is disabled for the main method. See `docs/fed-digos-implementation-plan.md`.
+
+## Strict FL privacy mode
+
+DKD-FedOS/Fed-DiGOS now uses strict server-bound metric sanitization. Clients may compute label histograms, class coverage, entropy, and missing-class masks locally for class-balanced training and global-anchor protection, but those values are not uploaded to the server. Server aggregation uses sample-support weighting from `num_examples` and label-free OSR quality metrics instead of label coverage or class entropy. See `docs/strict_federated_privacy_fix.md`.
+
+
+### Exp8 label-wise open-set dimension note
+
+Label-wise open-set runs now use a stable BNaT categorical feature schema. Numeric scaling is still fitted on known training data only, but the one-hot categorical vocabulary is fixed with `dataset.preprocessing.categorical_schema_scope=source` and checked with `expected_state_dim=31`. This prevents Exp8 from dropping a real one-hot column when the held-out unknown label removes one categorical value from `known_train`. See `docs/exp8-stable-feature-schema-fix.md`.

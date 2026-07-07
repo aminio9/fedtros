@@ -33,6 +33,11 @@ preprocessing:
   numerical_cols: null
   categorical_cols: null
   numeric_threshold: 0.9
+  # Use a stable label-free categorical vocabulary from the source CSV.
+  # This prevents Exp8 label-wise open-set runs from dropping one-hot columns
+  # when the held-out unknown label removes a categorical value from known_train.
+  categorical_schema_scope: source
+  expected_state_dim: 31
   train_split: 0.8
   validation_split: 0.1
   test_split: 0.1

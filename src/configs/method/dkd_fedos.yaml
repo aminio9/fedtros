@@ -11,15 +11,16 @@ federated:
     server_lr: 1.0
     server_momentum: 0.9
     min_reliable_samples: 500
-    # v5: default to reliability-weighted student averaging until the global
-    # student is stable; normalized-gradient aggregation can be enabled later.
+    # Strict-FL reliability weighting: the server uses only num_examples, not
+    # label histograms, label coverage, class entropy, or missing-class lists.
+    # This preserves the non-IID method while avoiding server-side label statistics.
     student_aggregation_mode: reliability_weighted_average
     student_avg_warmup_rounds: 100
     normalized_server_momentum: 0.9
     reliability_reference_samples: 0  # legacy; v6 uses per-round max client samples
     reliability_min_weight: 0.01
-    reliability_coverage_power: 1.0
-    reliability_entropy_power: 1.0
+    reliability_coverage_power: 0.0  # legacy/ignored in strict-FL aggregation
+    reliability_entropy_power: 0.0   # legacy/ignored in strict-FL aggregation
     monitor_path: ${tracking.run_dir}/dkd_fedos_monitoring.jsonl
   server:
     proximal_mu: 0.0

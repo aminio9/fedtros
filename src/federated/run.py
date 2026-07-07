@@ -37,7 +37,7 @@ from src.federated.server import (
     run_server,
 )
 from src.tracking.local import LocalRunTracker
-from src.utils.config import resolve_path
+from src.utils.config import resolve_path, sync_model_dimensions_from_preprocessing
 from src.utils.utils import resolve_device_from_config, set_device, set_seed
 
 logger = logging.getLogger(__name__)
@@ -210,6 +210,7 @@ def run_federated_simulation(
     project_root: Path,
     tracker: LocalRunTracker | None = None,
 ) -> dict[str, Any]:
+    sync_model_dimensions_from_preprocessing(cfg, project_root=project_root)
     cfg = _resolve_runtime_config(cfg)
     gpu_batching_enabled = _simulation_gpu_batches_enabled(cfg)
     gpu_batch_size = _simulation_gpu_batch_size(cfg) if gpu_batching_enabled else 1
@@ -307,6 +308,7 @@ def run_federated_server(
     *,
     device: torch.device | None = None,
 ) -> None:
+    sync_model_dimensions_from_preprocessing(cfg, project_root=Path.cwd())
     resolved_device = device if device is not None else resolve_device_from_config(cfg)
     logger.info("Launching standalone Flower server | requested_device=%s", resolved_device)
     run_server(cfg, device=resolved_device)
@@ -318,6 +320,7 @@ def run_federated_client(
     project_root: Path,
     device: torch.device | None = None,
 ) -> None:
+    sync_model_dimensions_from_preprocessing(cfg, project_root=project_root)
     client_id = int(cfg.federated.client_id)
     data_path = resolve_path(project_root, cfg.federated.client_data_path)
     if not data_path.exists():

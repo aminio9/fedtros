@@ -110,8 +110,8 @@ fed_digos:
   aggregation:
     enabled: true
     min_samples: 500
-    min_label_coverage: 0.5
-    min_class_entropy: 0.3
+    min_label_coverage: 0.0  # legacy/ignored: server does not receive label coverage
+    min_class_entropy: 0.0   # legacy/ignored: server does not receive class entropy
     min_score_gap: 0.0
     quality_target_gap: 0.5
 

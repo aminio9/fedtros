@@ -154,3 +154,53 @@ def test_validation_rejects_cpu_fallback():
 
     with pytest.raises(ValueError, match=r"Automatic CPU fallback is disabled"):
         validate_config(cfg)
+
+
+
+def test_sync_model_dimensions_from_preprocessing_metadata(tmp_path):
+    from omegaconf import OmegaConf
+    from src.utils.config import sync_model_dimensions_from_preprocessing
+
+    processed = tmp_path / "processed"
+    processed.mkdir()
+    (processed / "preprocess_metadata.json").write_text(
+        '{"state_dim": 30, "num_actions": 4, "known_labels": ["Normal", "BP", "DoS", "FoT"]}',
+        encoding="utf-8",
+    )
+    cfg = OmegaConf.create(
+        {
+            "dataset": {"preprocessing": {"output_dir": str(processed)}},
+            "model": {"state_dim": 31, "num_actions": 4, "transformer": {"input_dim": 31}},
+            "env_metadata": {"state_dim": 31, "num_actions": 4},
+        }
+    )
+
+    metadata = sync_model_dimensions_from_preprocessing(cfg, project_root=Path("/unused"))
+
+    assert metadata["state_dim"] == 30
+    assert cfg.model.state_dim == 30
+    assert cfg.model.transformer.input_dim == 30
+    assert cfg.env_metadata.state_dim == 30
+    assert cfg.model.num_actions == 4
+
+
+def test_sync_model_dimensions_rejects_num_action_mismatch(tmp_path):
+    from omegaconf import OmegaConf
+    from src.utils.config import sync_model_dimensions_from_preprocessing
+
+    processed = tmp_path / "processed"
+    processed.mkdir()
+    (processed / "preprocess_metadata.json").write_text(
+        '{"state_dim": 30, "num_actions": 4, "known_labels": ["Normal", "BP", "DoS", "FoT"]}',
+        encoding="utf-8",
+    )
+    cfg = OmegaConf.create(
+        {
+            "dataset": {"preprocessing": {"output_dir": str(processed)}},
+            "model": {"state_dim": 30, "num_actions": 5},
+            "env_metadata": {"state_dim": 30, "num_actions": 5},
+        }
+    )
+
+    with pytest.raises(ValueError, match="model.num_actions does not match"):
+        sync_model_dimensions_from_preprocessing(cfg, project_root=Path("/unused"))

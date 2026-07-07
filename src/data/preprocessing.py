@@ -74,6 +74,48 @@ def _categorical_frame(frame: pd.DataFrame, categorical: list[str]) -> pd.DataFr
     return frame[categorical].fillna("UNK").astype(str)
 
 
+
+
+def _categorical_schema_frame(
+    *,
+    df: pd.DataFrame,
+    df_known: pd.DataFrame,
+    train_df: pd.DataFrame,
+    categorical: list[str],
+    cfg: DictConfig,
+) -> pd.DataFrame:
+    """Return the frame used only to define one-hot categorical schema.
+
+    Numeric scalers are still fitted on known training data only.  This helper
+    controls the vocabulary of categorical one-hot columns so label-wise
+    open-set runs do not silently drop columns when a held-out label removes
+    one categorical value from the known training split.
+    """
+    if not categorical:
+        return pd.DataFrame(index=train_df.index)
+
+    scope = str(getattr(cfg, "categorical_schema_scope", "known_train")).lower()
+    if scope in {"known_train", "train", "known-train"}:
+        schema_df = train_df
+    elif scope in {"known", "known_all", "known-all"}:
+        schema_df = df_known
+    elif scope in {"source", "all", "all_source", "all-source"}:
+        schema_df = df
+    else:
+        raise ValueError(
+            "dataset.preprocessing.categorical_schema_scope must be one of "
+            "'known_train', 'known', or 'source'."
+        )
+
+    logger.info(
+        "Categorical schema scope | scope=%s | rows=%d | categorical_cols=%d",
+        scope,
+        len(schema_df),
+        len(categorical),
+    )
+    return _categorical_frame(schema_df, categorical)
+
+
 def _transform_features(
     frame: pd.DataFrame,
     *,
@@ -274,7 +316,15 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
     if scaler:
         scaler.fit(_numeric_array(train_df, numerical))
     if encoder:
-        encoder.fit(_categorical_frame(train_df, categorical))
+        encoder.fit(
+            _categorical_schema_frame(
+                df=df,
+                df_known=df_known,
+                train_df=train_df,
+                categorical=categorical,
+                cfg=p_cfg,
+            )
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     X_train = _transform_features(
@@ -382,6 +432,15 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
         joblib.dump(encoder, output_dir / "encoder.joblib")
 
     state_dim = int(X_train.shape[1])
+    expected_state_dim = getattr(p_cfg, "expected_state_dim", None)
+    if expected_state_dim is not None and int(expected_state_dim) != state_dim:
+        raise RuntimeError(
+            f"Preprocessed state_dim={state_dim}, but "
+            f"dataset.preprocessing.expected_state_dim={int(expected_state_dim)}. "
+            "This usually means the categorical schema changed. Use "
+            "categorical_schema_scope=source for the fixed BNaT schema, or update "
+            "the expected_state_dim if the raw feature schema intentionally changed."
+        )
     metadata = {
         "dataset": str(cfg.dataset.name),
         "raw_file": str(raw_file),
@@ -393,6 +452,15 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
         "state_dim": state_dim,
         "numerical_columns": numerical,
         "categorical_columns": categorical,
+        "categorical_schema_scope": str(getattr(p_cfg, "categorical_schema_scope", "known_train")),
+        "categorical_category_counts": (
+            [int(len(categories)) for categories in encoder.categories_] if encoder else []
+        ),
+        "categorical_categories": (
+            [[str(value) for value in categories.tolist()] for categories in encoder.categories_]
+            if encoder
+            else []
+        ),
         "num_known_samples": len(df_known),
         "num_unknown_samples": len(df_unknown),
         "num_train_samples": len(train_y),
