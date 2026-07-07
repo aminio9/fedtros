@@ -1,10 +1,82 @@
 from __future__ import annotations
 
+import json
+import logging
+
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
+
+logger = logging.getLogger(__name__)
+
+
+
+def _set_cfg_value(cfg: DictConfig, key: str, value: Any) -> None:
+    """Set a nested OmegaConf value even when struct mode is enabled."""
+    previous_struct = OmegaConf.is_struct(cfg)
+    OmegaConf.set_struct(cfg, False)
+    try:
+        OmegaConf.update(cfg, key, value, merge=False)
+    finally:
+        OmegaConf.set_struct(cfg, previous_struct)
+
+
+def sync_model_dimensions_from_preprocessing(
+    cfg: DictConfig,
+    *,
+    project_root: Path,
+    metadata: dict[str, Any] | None = None,
+    metadata_path: str | Path | None = None,
+    strict_num_actions: bool = True,
+) -> dict[str, Any]:
+    """Synchronize runtime model dimensions with processed tensor metadata."""
+    if metadata is None:
+        if metadata_path is None:
+            output_dir = OmegaConf.select(cfg, "dataset.preprocessing.output_dir", default="data/processed")
+            metadata_path = Path(str(output_dir)) / "preprocess_metadata.json"
+        path = resolve_path(project_root, metadata_path)
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Preprocessing metadata not found: {path}. Run preprocessing before training."
+            )
+        metadata = json.loads(path.read_text(encoding="utf-8"))
+
+    if "state_dim" not in metadata or "num_actions" not in metadata:
+        raise KeyError("preprocess_metadata.json must contain state_dim and num_actions.")
+
+    actual_state_dim = int(metadata["state_dim"])
+    actual_num_actions = int(metadata["num_actions"])
+    configured_state_dim = int(OmegaConf.select(cfg, "model.state_dim"))
+    configured_num_actions = int(OmegaConf.select(cfg, "model.num_actions"))
+
+    if configured_state_dim != actual_state_dim:
+        logger.warning(
+            "Model state_dim synchronized from preprocessing metadata | config=%d processed=%d known_labels=%s",
+            configured_state_dim,
+            actual_state_dim,
+            metadata.get("known_labels"),
+        )
+        _set_cfg_value(cfg, "model.state_dim", actual_state_dim)
+        _set_cfg_value(cfg, "env_metadata.state_dim", actual_state_dim)
+        if OmegaConf.select(cfg, "model.transformer.input_dim", default=None) is not None:
+            _set_cfg_value(cfg, "model.transformer.input_dim", actual_state_dim)
+
+    if configured_num_actions != actual_num_actions:
+        message = (
+            "model.num_actions does not match preprocessing metadata: "
+            f"config={configured_num_actions}, processed={actual_num_actions}, "
+            f"known_labels={metadata.get('known_labels')}"
+        )
+        if strict_num_actions:
+            raise ValueError(message)
+        logger.warning("%s; synchronizing config to processed dataset.", message)
+        _set_cfg_value(cfg, "model.num_actions", actual_num_actions)
+        _set_cfg_value(cfg, "env_metadata.num_actions", actual_num_actions)
+
+    return metadata
+
 
 REQUIRED_CONFIG_KEYS = (
     "seed",
