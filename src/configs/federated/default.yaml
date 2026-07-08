@@ -1,6 +1,10 @@
 num_clients: 3
 num_rounds: 100
 resume_from: null
+# Add this when resuming a DKD-FedOS/Fed-DiGOS student checkpoint so
+# saved checkpoints continue from the previous round number. Example: 52
+# means the next saved checkpoint will be round_0053.
+resume_round_offset: 0
 local_client_epochs: ${training.local_episodes_per_round}
 evaluation_frequency: 1
 client_resources:

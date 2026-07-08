@@ -345,6 +345,16 @@ def fit_config_fn(server_round: int) -> dict[str, fl.common.Scalar]:
 def _initial_parameters_from_checkpoint(
     cfg: DictConfig, device: torch.device
 ) -> Parameters | None:
+    """Return initial Flower parameters for resumed federated training.
+
+    Standard FedAvg/FedProx checkpoints store the full CVAE-DQN agent and are
+    loaded through ``load_agent_checkpoint``.  DKD-FedOS/Fed-DiGOS, however,
+    intentionally saves a strict-FL student-only checkpoint named
+    ``dkd_fedos_student_latest.pt`` with the key ``student_model``.  That file
+    cannot be loaded with ``load_agent_checkpoint`` because it does not contain
+    teacher/prior/value-network weights.  Detect that schema here and initialize
+    only the global student parameters.
+    """
     resume_from = OmegaConf.select(cfg, "federated.resume_from", default=None)
     if not resume_from:
         return None
@@ -352,12 +362,34 @@ def _initial_parameters_from_checkpoint(
         init_global_agent_ref(cfg, device)
     if GLOBAL_AGENT_REF is None:
         raise RuntimeError("Global agent reference is not initialized; cannot resume FL.")
+
     checkpoint_path = _resolve_path(resume_from)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    strict = bool(cfg.checkpointing.strict_load)
+
+    if isinstance(checkpoint, dict) and "student_model" in checkpoint:
+        if not hasattr(GLOBAL_AGENT_REF, "student_model") or GLOBAL_AGENT_REF.student_model is None:
+            raise RuntimeError(
+                "Cannot resume from DKD-FedOS student checkpoint because the global agent "
+                "has no student_model."
+            )
+        GLOBAL_AGENT_REF.student_model.load_state_dict(checkpoint["student_model"], strict=strict)
+        if hasattr(GLOBAL_AGENT_REF, "student_anchor_model") and GLOBAL_AGENT_REF.student_anchor_model is not None:
+            GLOBAL_AGENT_REF.student_anchor_model.load_state_dict(
+                GLOBAL_AGENT_REF.student_model.state_dict(), strict=False
+            )
+        logger.info(
+            "Loaded DKD-FedOS/Fed-DiGOS student resume checkpoint | path=%s | saved_round=%s",
+            checkpoint_path,
+            checkpoint.get("round", checkpoint.get("epoch", "unknown")),
+        )
+        return ndarrays_to_parameters(GLOBAL_AGENT_REF.get_student_parameters())
+
     load_agent_checkpoint(
         GLOBAL_AGENT_REF,
         checkpoint_path,
         device,
-        strict=bool(cfg.checkpointing.strict_load),
+        strict=strict,
         load_optimizers=False,
     )
     logger.info("Loaded federated initial parameters from %s", checkpoint_path)
@@ -462,6 +494,9 @@ class DKDFedOSStrategy(FedAvg):
             OmegaConf.select(cfg, "strategy.reliability_entropy_power", default=1.0)
         )
         self.global_student_parameters = ndarrays_to_parameters(GLOBAL_AGENT_REF.get_student_parameters())
+        self.resume_round_offset = int(
+            OmegaConf.select(cfg, "federated.resume_round_offset", default=0) or 0
+        )
         self.momentum: list[np.ndarray] | None = None
 
         expected_hidden = [512, 256, 128]
@@ -501,7 +536,7 @@ class DKDFedOSStrategy(FedAvg):
             "student_aggregation_mode=%s | global_anchor_enabled=%s | "
             "global_anchor_weight=%.3f | student_hidden_dims=%s | student_layers=%d | "
             "min_reliable_samples=%.1f | warmup=%d | round_open_set_eval=%s every=%d | "
-            "student_osr_enabled=%s",
+            "student_osr_enabled=%s | resume_round_offset=%d",
             self.student_aggregation_mode,
             bool(anchor_weight > 0.0),
             anchor_weight,
@@ -512,7 +547,11 @@ class DKDFedOSStrategy(FedAvg):
             self.round_open_set_eval_enabled,
             self.round_open_set_eval_every_n,
             bool(getattr(GLOBAL_AGENT_REF.student_model, "osr_enabled", False)),
+            self.resume_round_offset,
         )
+
+    def _effective_round(self, server_round: int) -> int:
+        return int(self.resume_round_offset) + int(server_round)
 
     def configure_fit(self, server_round: int, parameters: Parameters, client_manager):
         _ = parameters
@@ -520,11 +559,21 @@ class DKDFedOSStrategy(FedAvg):
             num_clients=self.min_fit_clients,
             min_num_clients=self.min_fit_clients,
         )
+        effective_round = self._effective_round(server_round)
         fit_ins = FitIns(
             self.global_student_parameters,
-            {"server_round": server_round, "phase": "dkd_fedos"},
+            {
+                "server_round": effective_round,
+                "logical_round": server_round,
+                "phase": "dkd_fedos",
+            },
         )
-        logger.info("DKD-FedOS round=%d sampled=%d", server_round, len(clients))
+        logger.info(
+            "DKD-FedOS round=%d effective_round=%d sampled=%d",
+            server_round,
+            effective_round,
+            len(clients),
+        )
         return [(client, fit_ins) for client in clients]
 
     def configure_evaluate(self, server_round: int, parameters: Parameters, client_manager):
@@ -711,14 +760,17 @@ class DKDFedOSStrategy(FedAvg):
                 "fed_digos_osr_mean_weight": float(np.mean([float(r.get("digos_osr_weight", 0.0)) for r in osr_records]) if 'osr_records' in locals() and osr_records else 0.0),
             }
         )
-        self._save_student_checkpoint(new_weights, server_round, metrics)
-        round_open_set_metrics = self._run_round_open_set_evaluation(server_round)
+        effective_round = self._effective_round(server_round)
+        self._save_student_checkpoint(new_weights, effective_round, metrics)
+        round_open_set_metrics = self._run_round_open_set_evaluation(effective_round)
         if round_open_set_metrics:
             metrics.update({f"round_{k}": v for k, v in round_open_set_metrics.items() if isinstance(v, (int, float))})
         self._write_monitor_event(
             {
                 "event": "dkd_fedos_aggregation",
-                "server_round": server_round,
+                "server_round": effective_round,
+                "logical_round": server_round,
+                "resume_round_offset": self.resume_round_offset,
                 "clients": [record["cid"] for record in records],
                 "included_clients": [record["cid"] for record in reliable_records],
                 "excluded_clients": [record["cid"] for record in excluded_records],
@@ -739,7 +791,7 @@ class DKDFedOSStrategy(FedAvg):
         logger.info(
             "DKD-FedOS/Fed-DiGOS aggregation | round=%d mode=%s clients=%d cls_included=%d cls_excluded=%d "
             "osr_included=%d osr_excluded=%d dist_to_avg %.4f->%.4f",
-            server_round,
+            effective_round,
             aggregation_mode_used,
             len(records),
             len(reliable_records),
