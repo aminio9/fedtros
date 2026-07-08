@@ -7,7 +7,7 @@ readme = "README.md"
 packages = [{ include = "src", from = "." }]
 
 [tool.poetry.dependencies]
-python = ">=3.11,<3.12"
+python = ">=3.11,<3.13"
 
 flwr = { version = ">=1.29.0,<2.0.0", extras = ["simulation"] }
 
