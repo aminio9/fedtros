@@ -14,6 +14,7 @@ from src.utils.config import resolve_path
 logger = logging.getLogger(__name__)
 
 MODEL_KEY_ORDER = (
+    "student_model",
     "prior_net",
     "recognition_net",
     "value_net_main",
@@ -59,16 +60,16 @@ def _load_resolved_config(run_dir: Path) -> Any:
 
 
 def _load_monitoring_records(run_dir: Path) -> list[dict[str, Any]]:
-    path = run_dir / "fmrl_ava_monitoring.jsonl"
-    if not path.exists():
-        return []
     records: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            try:
-                records.append(json.loads(line))
-            except Exception as exc:
-                logger.warning("Skipping malformed monitor line in %s: %s", path, exc)
+    for path in (run_dir / "fmrl_ava_monitoring.jsonl", run_dir / "dkd_fedos_monitoring.jsonl"):
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                try:
+                    records.append(json.loads(line))
+                except Exception as exc:
+                    logger.warning("Skipping malformed monitor line in %s: %s", path, exc)
     return records
 
 
@@ -95,6 +96,12 @@ def _metric_candidates() -> tuple[str, ...]:
         "federated/global_accuracy",
         "federated/accuracy",
         "openset_overall_acc",
+        "macro_f1",
+        "f1_macro",
+        "local_student_f1_macro",
+        "mean_client_macro_f1",
+        "round_openset_f1_macro",
+        "round_openset_auroc",
     )
 
 
@@ -167,12 +174,14 @@ def build_communication_metrics(
         resolve_path(project_root, run_dir / "best_model.pt"),
         resolve_path(project_root, run_dir / "latest_checkpoint.pt"),
         resolve_path(project_root, run_dir / "global_model_latest.pt"),
+        resolve_path(project_root, run_dir / "dkd_fedos_student_latest.pt"),
+        resolve_path(project_root, run_dir / "checkpoints" / "dkd_fedos_student_latest.pt"),
     ]
     checkpoint_path = next((path for path in checkpoint_candidates if path.exists()), None)
     if checkpoint_path is None:
         checkpoint_dir = OmegaConf.select(cfg, "checkpointing.dir", default=None)
         if checkpoint_dir:
-            for candidate_name in ("best_model.pt", "latest_checkpoint.pt", "global_model_latest.pt"):
+            for candidate_name in ("best_model.pt", "latest_checkpoint.pt", "global_model_latest.pt", "dkd_fedos_student_latest.pt"):
                 candidate = resolve_path(project_root, Path(checkpoint_dir) / candidate_name)
                 if candidate.exists():
                     checkpoint_path = candidate
@@ -243,7 +252,11 @@ def build_communication_metrics(
             {
                 "method": method,
                 "round": round_id,
+                "communication_per_round_mb": int(bytes_per_round.get(round_id, model_parameter_bytes * (2 * num_clients))) / 1_000_000.0,
                 "cumulative_mb": cumulative / 1_000_000.0,
+                "total_communication_mb": cumulative / 1_000_000.0,
+                "model_parameter_mb": model_parameter_bytes / 1_000_000.0,
+                "num_clients": int(num_clients),
                 "accuracy": float(row["metric_value"]),
                 "source_run_dir": str(run_dir),
             }

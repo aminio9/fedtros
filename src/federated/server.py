@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
@@ -498,6 +499,7 @@ class DKDFedOSStrategy(FedAvg):
             OmegaConf.select(cfg, "federated.resume_round_offset", default=0) or 0
         )
         self.momentum: list[np.ndarray] | None = None
+        self._round_wall_start: dict[int, float] = {}
 
         expected_hidden = [512, 256, 128]
         actual_hidden = list(OmegaConf.select(cfg, "training.dkd_student_hidden_dims", default=[]))
@@ -560,6 +562,7 @@ class DKDFedOSStrategy(FedAvg):
             min_num_clients=self.min_fit_clients,
         )
         effective_round = self._effective_round(server_round)
+        self._round_wall_start[effective_round] = time.perf_counter()
         fit_ins = FitIns(
             self.global_student_parameters,
             {
@@ -592,6 +595,7 @@ class DKDFedOSStrategy(FedAvg):
         return [(client, evaluate_ins) for client in clients]
 
     def aggregate_fit(self, server_round: int, results, failures):
+        aggregation_start = time.perf_counter()
         if failures:
             self._log_failures("DKD-FedOS", failures)
         records = []
@@ -738,6 +742,44 @@ class DKDFedOSStrategy(FedAvg):
 
         fit_metrics = [(int(record["num_examples"]), record["metrics"]) for record in reliable_records]
         metrics = aggregate_fit_metrics(fit_metrics)
+
+        macro_f1_values = [
+            value
+            for record in reliable_records
+            for value in [
+                self._first_numeric_metric(
+                    dict(record.get("metrics", {})),
+                    ("local_student_f1_macro", "student_before_local_f1_macro", "f1_macro", "audit_f1"),
+                )
+            ]
+            if value is not None
+        ]
+        accuracy_values = [
+            value
+            for record in reliable_records
+            for value in [
+                self._first_numeric_metric(
+                    dict(record.get("metrics", {})),
+                    ("local_student_accuracy", "student_before_local_accuracy", "accuracy"),
+                )
+            ]
+            if value is not None
+        ]
+        fairness_metrics = self._distribution_metrics(macro_f1_values, prefix="client_macro_f1")
+        accuracy_distribution = self._distribution_metrics(accuracy_values, prefix="client_accuracy")
+        if fairness_metrics:
+            fairness_metrics.update(
+                {
+                    "mean_client_macro_f1": fairness_metrics["client_macro_f1_mean"],
+                    "std_client_macro_f1": fairness_metrics["client_macro_f1_std"],
+                    "worst_client_macro_f1": fairness_metrics["client_macro_f1_worst"],
+                    "bottom10_client_macro_f1": fairness_metrics["client_macro_f1_bottom10_mean"],
+                }
+            )
+        metrics.update(fairness_metrics)
+        metrics.update(accuracy_distribution)
+        self._append_fit_fairness_rows(round_num=self._effective_round(server_round), records=reliable_records)
+
         metrics.update(
             {
                 "dkd_fedos_clients": float(len(records)),
@@ -762,9 +804,16 @@ class DKDFedOSStrategy(FedAvg):
         )
         effective_round = self._effective_round(server_round)
         self._save_student_checkpoint(new_weights, effective_round, metrics)
+        metrics["server_aggregation_time_sec"] = float(time.perf_counter() - aggregation_start)
+
+        round_eval_start = time.perf_counter()
         round_open_set_metrics = self._run_round_open_set_evaluation(effective_round)
         if round_open_set_metrics:
             metrics.update({f"round_{k}": v for k, v in round_open_set_metrics.items() if isinstance(v, (int, float))})
+        metrics["open_set_round_eval_time_sec"] = float(time.perf_counter() - round_eval_start) if round_open_set_metrics else 0.0
+        round_start = self._round_wall_start.pop(effective_round, aggregation_start)
+        metrics["round_time_sec"] = float(time.perf_counter() - round_start)
+        self._append_scalability_round_row(round_num=effective_round, metrics=metrics)
         self._write_monitor_event(
             {
                 "event": "dkd_fedos_aggregation",
@@ -802,6 +851,47 @@ class DKDFedOSStrategy(FedAvg):
             distance_to_avg_after,
         )
         return self.global_student_parameters, metrics
+
+    def aggregate_evaluate(self, server_round: int, results, failures):
+        loss, metrics = super().aggregate_evaluate(server_round, results, failures)
+        if failures:
+            self._log_failures("DKD-FedOS evaluation", failures)
+        client_rows: list[dict[str, Any]] = []
+        macro_values: list[float] = []
+        accuracy_values: list[float] = []
+        effective_round = self._effective_round(server_round)
+        for client, evaluate_res in results:
+            result_metrics = dict(getattr(evaluate_res, "metrics", {}) or {})
+            macro_f1 = self._first_numeric_metric(result_metrics, ("student_f1_macro", "f1_macro", "macro_f1"))
+            accuracy = self._first_numeric_metric(result_metrics, ("student_accuracy", "accuracy"))
+            if macro_f1 is not None:
+                macro_values.append(macro_f1)
+            if accuracy is not None:
+                accuracy_values.append(accuracy)
+            if macro_f1 is not None or accuracy is not None:
+                client_rows.append(
+                    {
+                        "round": int(effective_round),
+                        "client_id": str(getattr(client, "cid", "?")),
+                        "num_examples": int(getattr(evaluate_res, "num_examples", 0)),
+                        "loss": float(getattr(evaluate_res, "loss", 0.0)),
+                        "macro_f1": macro_f1,
+                        "accuracy": accuracy,
+                        "client_evaluate_wall_time_sec": self._first_numeric_metric(
+                            result_metrics, ("client_evaluate_wall_time_sec",)
+                        ),
+                    }
+                )
+        for row in client_rows:
+            self._append_csv_row(
+                _resolve_path(Path(str(self.cfg.tracking.run_dir)) / "client_eval_fairness_metrics.csv"),
+                row,
+            )
+        eval_distribution = self._distribution_metrics(macro_values, prefix="eval_client_macro_f1")
+        if eval_distribution:
+            metrics.update(eval_distribution)
+        metrics.update(self._distribution_metrics(accuracy_values, prefix="eval_client_accuracy"))
+        return loss, metrics
 
     def _run_round_open_set_evaluation(self, server_round: int) -> dict[str, float]:
         """Run one server-side global-student open-set evaluation after aggregation.
@@ -866,6 +956,97 @@ class DKDFedOSStrategy(FedAvg):
                 exc,
             )
             return {"open_set_round_eval_failed": 1.0}
+
+    @staticmethod
+    def _first_numeric_metric(metrics: dict[str, Any], candidates: tuple[str, ...]) -> float | None:
+        for candidate in candidates:
+            value = metrics.get(candidate)
+            if isinstance(value, (int, float)) and np.isfinite(float(value)):
+                return float(value)
+        return None
+
+    @staticmethod
+    def _distribution_metrics(values: list[float], *, prefix: str) -> dict[str, float]:
+        finite = [float(v) for v in values if np.isfinite(float(v))]
+        if not finite:
+            return {}
+        arr = np.asarray(finite, dtype=np.float64)
+        bottom_k = max(1, int(np.ceil(0.10 * len(arr))))
+        return {
+            f"{prefix}_mean": float(np.mean(arr)),
+            f"{prefix}_std": float(np.std(arr, ddof=0)),
+            f"{prefix}_worst": float(np.min(arr)),
+            f"{prefix}_best": float(np.max(arr)),
+            f"{prefix}_bottom10_mean": float(np.mean(np.sort(arr)[:bottom_k])),
+        }
+
+    def _append_csv_row(self, path: Path, row: dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_header = not path.exists()
+        with path.open("a", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(row.keys()), extrasaction="ignore")
+            if write_header:
+                writer.writeheader()
+            writer.writerow(row)
+
+    def _append_fit_fairness_rows(self, *, round_num: int, records: list[dict[str, Any]]) -> None:
+        path = _resolve_path(Path(str(self.cfg.tracking.run_dir)) / "client_fit_fairness_metrics.csv")
+        for record in records:
+            metrics = dict(record.get("metrics", {}))
+            macro_f1 = self._first_numeric_metric(
+                metrics,
+                ("local_student_f1_macro", "student_before_local_f1_macro", "f1_macro", "audit_f1"),
+            )
+            accuracy = self._first_numeric_metric(
+                metrics,
+                ("local_student_accuracy", "student_before_local_accuracy", "accuracy"),
+            )
+            if macro_f1 is None and accuracy is None:
+                continue
+            self._append_csv_row(
+                path,
+                {
+                    "round": int(round_num),
+                    "client_id": str(record.get("cid", "?")),
+                    "num_examples": float(record.get("num_examples", 0.0)),
+                    "macro_f1": macro_f1,
+                    "accuracy": accuracy,
+                    "reliability_weight": float(record.get("reliability_weight", 1.0)),
+                    "client_fit_wall_time_sec": self._first_numeric_metric(
+                        metrics, ("client_fit_wall_time_sec",)
+                    ),
+                },
+            )
+
+    def _append_scalability_round_row(self, *, round_num: int, metrics: dict[str, Any]) -> None:
+        path = _resolve_path(Path(str(self.cfg.tracking.run_dir)) / "scalability_round_metrics.csv")
+        keys = [
+            "local_student_f1_macro",
+            "local_student_accuracy",
+            "mean_client_macro_f1",
+            "std_client_macro_f1",
+            "worst_client_macro_f1",
+            "client_fit_wall_time_sec",
+            "round_time_sec",
+            "server_aggregation_time_sec",
+            "open_set_round_eval_time_sec",
+            "round_openset_f1_macro",
+            "round_openset_overall_acc",
+            "round_openset_known_acc",
+            "round_openset_auroc",
+            "round_openset_fpr95",
+            "round_openset_unknown_recall",
+        ]
+        row: dict[str, Any] = {
+            "round": int(round_num),
+            "num_clients": int(OmegaConf.select(self.cfg, "federated.num_clients", default=0) or 0),
+            "seed": int(OmegaConf.select(self.cfg, "seed", default=0) or 0),
+            "alpha": float(OmegaConf.select(self.cfg, "dataset.preprocessing.alpha", default=0.0) or 0.0),
+        }
+        for key in keys:
+            value = metrics.get(key)
+            row[key] = float(value) if isinstance(value, (int, float)) else None
+        self._append_csv_row(path, row)
 
     def _client_reliability_weight(self, record: dict[str, Any], *, max_examples: float) -> float:
         """Privacy-preserving reliability score for student aggregation.
@@ -1075,6 +1256,7 @@ class FedGPAStrategy(FedAvg):
         return evaluate_pairs
 
     def aggregate_fit(self, server_round: int, results, failures):
+        aggregation_start = time.perf_counter()
         if failures:
             self._log_failures("FedGPA", failures)
         if not results:

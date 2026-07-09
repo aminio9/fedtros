@@ -24,3 +24,11 @@ export_latent_embeddings: true
 latent_embeddings_output: ${evaluation.output_dir}/latent_embeddings.csv
 latent_embeddings_batch_size: ${evaluation.batch_size}
 latent_embeddings_max_points: 5000
+
+# For large 50/100-client scalability runs, keep metric computation but avoid
+# producing thousands of per-client report/confusion-matrix files unless needed.
+save_client_reports: true
+save_client_reports_every_n_rounds: 1
+save_client_confusion_matrices: true
+save_client_confusion_matrices_every_n_rounds: 1
+log_client_reports: true

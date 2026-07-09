@@ -362,6 +362,8 @@ def run_dkd_fedos_student_open_set_evaluation(
 
     if tracker:
         tracker.log_metrics(metrics)
-    (output_dir / "evaluation_metrics.json").write_text(json.dumps(metrics, indent=2, sort_keys=True), encoding="utf-8")
+    metrics_payload = json.dumps(metrics, indent=2, sort_keys=True)
+    (output_dir / "evaluation_metrics.json").write_text(metrics_payload, encoding="utf-8")
+    (output_dir / "open_set_metrics.json").write_text(metrics_payload, encoding="utf-8")
     logger.info("Fed-DiGOS open-set evaluation complete: %s", output_dir)
     return metrics

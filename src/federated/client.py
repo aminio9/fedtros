@@ -1088,6 +1088,11 @@ class FlowerClient(fl.client.NumPyClient):
         return avg_loss, np.array(all_true), np.array(all_pred)
 
     def _save_client_report(self, round_index: int, report: str, prefix: str) -> None:
+        if not bool(getattr(self.cfg.evaluation, "save_client_reports", True)):
+            return
+        every_n = max(1, int(getattr(self.cfg.evaluation, "save_client_reports_every_n_rounds", 1) or 1))
+        if int(round_index) % every_n != 0:
+            return
         if not self.eval_output_dir:
             return
         path = self.eval_output_dir / f"report_{prefix}_round_{round_index:03d}.txt"
@@ -1097,6 +1102,11 @@ class FlowerClient(fl.client.NumPyClient):
     def _plot_client_confusion_matrix(
         self, round_index: int, y_true: np.ndarray, y_pred: np.ndarray, prefix: str
     ) -> None:
+        if not bool(getattr(self.cfg.evaluation, "save_client_confusion_matrices", True)):
+            return
+        every_n = max(1, int(getattr(self.cfg.evaluation, "save_client_confusion_matrices_every_n_rounds", 1) or 1))
+        if int(round_index) % every_n != 0:
+            return
         if not self.eval_output_dir:
             return
 
@@ -1169,23 +1179,29 @@ class FlowerClient(fl.client.NumPyClient):
                 max_prediction_ratio,
                 json.dumps(pred_counts, sort_keys=True),
             )
-        report = classification_report(
-            y_true,
-            y_pred,
-            labels=labels,
-            target_names=self.eval_class_names,
-            digits=4,
-            zero_division=0,
-        )
-        self._save_client_report(round_index, report, prefix)
+        save_reports = bool(getattr(self.cfg.evaluation, "save_client_reports", True))
+        log_reports = bool(getattr(self.cfg.evaluation, "log_client_reports", True))
+        report: str | None = None
+        if save_reports or log_reports:
+            report = classification_report(
+                y_true,
+                y_pred,
+                labels=labels,
+                target_names=self.eval_class_names,
+                digits=4,
+                zero_division=0,
+            )
+            self._save_client_report(round_index, report, prefix)
+
         self._plot_client_confusion_matrix(round_index, y_true, y_pred, prefix)
 
-        report_label = (
-            "Known-Class Report (pre-OSR)"
-            if str(getattr(self.cfg.evaluation, "mode", "closed_set")).lower() == "open_set"
-            else "Closed-Set Report"
-        )
-        self.logger.info(f"\n[Client {self.cid} | {prefix}] {report_label}:\n{report}")
+        if log_reports and report is not None:
+            report_label = (
+                "Known-Class Report (pre-OSR)"
+                if str(getattr(self.cfg.evaluation, "mode", "closed_set")).lower() == "open_set"
+                else "Closed-Set Report"
+            )
+            self.logger.info(f"\n[Client {self.cid} | {prefix}] {report_label}:\n{report}")
 
         return (
             loss,

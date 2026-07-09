@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -86,11 +87,14 @@ class _LegacyFlowerClientProxy(ClientProxy):
         self, ins: FitIns, timeout: float | None, group_id: int | None
     ) -> FitRes:
         _ = timeout, group_id
+        fit_start = time.perf_counter()
         try:
             parameters, num_examples, metrics = self._client.fit(
                 parameters_to_ndarrays(ins.parameters),
                 dict(ins.config),
             )
+            metrics = dict(metrics)
+            metrics["client_fit_wall_time_sec"] = float(time.perf_counter() - fit_start)
         except Exception:
             logger.exception(
                 "Local Flower client %s fit failed | config=%s",
@@ -109,10 +113,13 @@ class _LegacyFlowerClientProxy(ClientProxy):
         self, ins: EvaluateIns, timeout: float | None, group_id: int | None
     ) -> EvaluateRes:
         _ = timeout, group_id
+        eval_start = time.perf_counter()
         loss, num_examples, metrics = self._client.evaluate(
             parameters_to_ndarrays(ins.parameters),
             dict(ins.config),
         )
+        metrics = dict(metrics)
+        metrics["client_evaluate_wall_time_sec"] = float(time.perf_counter() - eval_start)
         return EvaluateRes(
             status=Status(code=Code.OK, message=""),
             loss=float(loss),
@@ -291,10 +298,32 @@ def run_federated_simulation(
                         "max_round": int(communication_df["round"].max()),
                     },
                 )
+    timing_summary: dict[str, float] = {}
+    try:
+        if history_rows:
+            timing_frame = pd.DataFrame(history_rows)
+            if {"metric_name", "metric_value"}.issubset(timing_frame.columns):
+                for source_name, output_name in (
+                    ("round_time_sec", "federated/avg_round_time_sec"),
+                    ("server_aggregation_time_sec", "federated/avg_server_aggregation_time_sec"),
+                    ("client_fit_wall_time_sec", "federated/avg_client_fit_time_sec"),
+                ):
+                    values = pd.to_numeric(
+                        timing_frame.loc[timing_frame["metric_name"] == source_name, "metric_value"],
+                        errors="coerce",
+                    ).dropna()
+                    if not values.empty:
+                        timing_summary[output_name] = float(values.mean())
+                        timing_summary[output_name.replace("avg_", "total_")] = float(values.sum())
+    except Exception:
+        logger.exception("Failed to compute federated timing summary; continuing.")
+
     summary = {
         "federated/rounds": int(cfg.federated.num_rounds),
         "federated/flower_rounds": get_effective_num_rounds(cfg),
         "federated/num_clients": int(cfg.federated.num_clients),
+        "federated/total_training_time_sec": float(_elapsed_time),
+        **timing_summary,
         "history": str(history),
     }
     if tracker:
