@@ -83,60 +83,8 @@ fed_digos:
       energy: 0.10
       prototype: 0.25
 
-  # Paper-style Positive-Negative Prototypes Fusion Framework (PNPFF).
-  # This head is fitted once from a deterministic known-only validation split
-  # after federated student aggregation. It is not fitted or executed by clients.
-  # The historical name `prototype_rank` is retained for CLI compatibility. It
-  # now means the calibrated robust PNPFF-Fed unknown score; the raw Equation
-  # 27-28 score is exported separately as pnpff_raw_unknown_score.
-  pnpff:
-    feature_dim: 128
-    num_positive_prototypes: 7
-    gamma1: 1.0
-    gamma2: 1.0
-    lambda0: 0.10
-    lambda1: 0.10
-    lambda2: 0.01
-    lambda_unknown: 0.10
-    diversity_temperature: 10.0
-    eta: 0.50
-    omega: 0.50
-    fit_fraction: 0.70
-    seed: ${seed}
-    epochs: 100
-    batch_size: 256
-    # 0.01 is stable for post-FL adaptation; paper_learning_rate preserves the
-    # paper's 0.1 setting for explicit reproduction experiments.
-    learning_rate: 0.01
-    paper_learning_rate: 0.10
-    momentum: 0.90
-    weight_decay: 0.0
-    lr_milestones: [30, 60, 90]
-    lr_gamma: 0.10
-    grad_clip_norm: 5.0
-    adapt_backbone: true
-    normalize_embedding: true
-    balanced_batches: true
-    known_accuracy_tolerance: 0.02
-    threshold_mode: pseudo_unknown_constrained  # pseudo_unknown_constrained | known_fpr | fixed
-    tau: 0.50
-    target_known_fpr: 0.05
-    health_min_auroc: 0.55
-    health_fpr_tolerance: 0.01
-    health_action: error  # error | warn
-    fit_each_round: false
-    pseudo_unknown:
-      enabled: true
-      ratio: 0.50
-      mixup_alpha: 0.40
-      mask_probability: 0.15
-      noise_std: 0.05
-    checkpoint_output: pnpff_state.pt
-
   prototype:
     enabled: true
-    # Legacy post-hoc KMeans settings retained only for old resolved configs.
-    # New runs use the PNPFF block above for the prototype component.
     # Use the disentangled OSR latent mean rather than the closed-set backbone.
     # Closed-set features drift as classification improves; OSR latent features
     # are trained for reconstruction/open-set geometry.

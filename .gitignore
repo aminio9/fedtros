@@ -152,8 +152,3 @@ checkpoints/
 /evt_results/
 
 papers/
-
-.agents/
-run_status.txt
-
-outputs.tar.zst.*

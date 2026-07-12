@@ -910,27 +910,6 @@ class DKDFedOSStrategy(FedAvg):
         if not bool(OmegaConf.select(self.cfg, "open_set.evt.enabled", default=False)):
             return {}
 
-        # Robust PNPFF adapts a private backbone for many epochs. Re-fitting that
-        # head after every FL round caused the previous 100-round run to spend
-        # most of its time in evaluation and terminate around round six. The
-        # normal path is one fit from the final aggregated checkpoint in run.py.
-        if not bool(
-            OmegaConf.select(
-                self.cfg,
-                "open_set.fed_digos.pnpff.fit_each_round",
-                default=False,
-            )
-        ):
-            logger.info(
-                "[Round %d] Global open-set evaluation skipped: robust PNPFF is configured final-only "
-                "(open_set.fed_digos.pnpff.fit_each_round=false).",
-                server_round,
-            )
-            return {
-                "open_set/pnpff_round_fit_skipped": 1.0,
-                "open_set/server_round": float(server_round),
-            }
-
         backend = str(OmegaConf.select(self.cfg, "open_set.evt.backend", default="fed_digos")).lower()
         if backend not in {"fed_digos", "digos", "student_digos"}:
             logger.info(
