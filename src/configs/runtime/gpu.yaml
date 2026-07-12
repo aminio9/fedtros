@@ -8,5 +8,5 @@ use_deterministic_algorithms: false
 client_num_cpus: 1
 client_num_gpus: 1.0
 simulation_gpu_batches:
-  enabled: false
-  batch_size: 50
+  enabled: true
+  batch_size: 100
