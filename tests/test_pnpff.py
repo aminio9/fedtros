@@ -6,6 +6,7 @@ from src.openset.pnpff import (
     PNPFFConfig,
     PNPFFModel,
     fit_pnpff_detector,
+    make_pseudo_unknowns,
     stratified_fit_calibration_split,
 )
 from src.openset.digos_eval import _oscr_score
@@ -54,7 +55,45 @@ def test_pnpff_structure_losses_and_trainable_radius():
     losses = model.positive_loss(torch.randn(6, 4), torch.tensor([0, 1, 2, 0, 1, 2]))
     losses["total"].backward()
     assert model.positive_prototypes.grad is not None
-    assert model.radius.grad is not None
+    assert model.raw_radius.grad is not None
+    assert model.radius.item() > 0.0
+
+
+def test_assignment_diversity_favours_nearest_prototype():
+    cfg = PNPFFConfig(feature_dim=2, num_positive_prototypes=2, diversity_temperature=10.0)
+    model = PNPFFModel(2, 2, cfg)
+    z = torch.tensor([[1.0, 0.0]])
+    prototypes = torch.tensor([[[1.0, 0.0], [-1.0, 0.0]]])
+    assignment = model.assignment_probabilities_from_embeddings(z, prototypes)
+    assert assignment[0, 0] > assignment[0, 1]
+
+
+def test_normalized_embeddings_and_loss_parameter_isolation():
+    cfg = PNPFFConfig(feature_dim=4, num_positive_prototypes=2)
+    model = PNPFFModel(4, 2, cfg)
+    x = torch.randn(6, 4)
+    y = torch.tensor([0, 1, 0, 1, 0, 1])
+    out = model.probabilities(x)
+    assert torch.allclose(out["embedding_norm"], torch.ones(6), atol=1e-5)
+    model.zero_grad(set_to_none=True)
+    model.positive_loss(x, y)["total"].backward()
+    assert model.positive_prototypes.grad is not None
+    assert model.negative_prototypes.grad is None
+    model.zero_grad(set_to_none=True)
+    model.negative_loss(x, y).backward()
+    assert model.negative_prototypes.grad is not None
+    assert model.positive_prototypes.grad is None
+
+
+def test_pseudo_unknown_generation_is_deterministic_and_cross_class():
+    x = torch.tensor([[-1.0, -1.0], [-0.8, -1.0], [1.0, 1.0], [0.8, 1.0]])
+    y = torch.tensor([0, 0, 1, 1])
+    kwargs = dict(ratio=1.0, mixup_alpha=1.0, mask_probability=0.0, noise_std=0.0, seed=11)
+    first = make_pseudo_unknowns(x, y, **kwargs)
+    second = make_pseudo_unknowns(x, y, **kwargs)
+    assert torch.equal(first, second)
+    assert first.shape == x.shape
+    assert torch.all(first.abs() <= 1.0)
 
 
 def test_stratified_split_is_deterministic_and_known_only():
@@ -78,21 +117,36 @@ def test_fit_detector_uses_fixed_and_known_fpr_thresholds():
     fit_idx, cal_idx = stratified_fit_calibration_split(labels, seed=2)
     cfg = PNPFFConfig(feature_dim=4, epochs=2, batch_size=8, learning_rate=0.01, tau=0.5)
     detector = fit_pnpff_detector(
-        features[fit_idx], labels[fit_idx], features[cal_idx], labels[cal_idx],
-        num_classes=2, cfg=cfg, device=torch.device("cpu"),
+        features[fit_idx],
+        labels[fit_idx],
+        features[cal_idx],
+        labels[cal_idx],
+        num_classes=2,
+        cfg=cfg,
+        device=torch.device("cpu"),
     )
     assert detector.threshold == 0.5
     assert detector.model.positive_prototypes.shape == (2, 7, 4)
     scores = detector.predict_features(features)
     assert scores["unknown_score"].shape == (24,)
+    assert scores["raw_unknown_score"].shape == (24,)
     assert np.all((scores["unknown_score"] >= 0.0) & (scores["unknown_score"] <= 1.0))
 
     quantile_cfg = PNPFFConfig(
-        feature_dim=4, epochs=1, batch_size=8, learning_rate=0.01,
-        threshold_mode="known_fpr", target_known_fpr=0.10,
+        feature_dim=4,
+        epochs=1,
+        batch_size=8,
+        learning_rate=0.01,
+        threshold_mode="known_fpr",
+        target_known_fpr=0.10,
     )
     quantile_detector = fit_pnpff_detector(
-        features[fit_idx], labels[fit_idx], features[cal_idx], labels[cal_idx],
-        num_classes=2, cfg=quantile_cfg, device=torch.device("cpu"),
+        features[fit_idx],
+        labels[fit_idx],
+        features[cal_idx],
+        labels[cal_idx],
+        num_classes=2,
+        cfg=quantile_cfg,
+        device=torch.device("cpu"),
     )
     assert 0.0 <= quantile_detector.threshold <= 1.0
