@@ -152,3 +152,7 @@ checkpoints/
 /evt_results/
 
 papers/
+
+run_status.txt
+
+outputs.tar.zst.*
