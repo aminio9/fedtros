@@ -154,3 +154,6 @@ checkpoints/
 papers/
 
 .agents/
+run_status.txt
+
+outputs.tar.zst.*
