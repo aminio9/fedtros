@@ -43,7 +43,9 @@ open_set:
   evt:
     enabled: true
     backend: fed_digos
-    evaluate_each_round: true
+    # PNPFF is fitted once after the final global student aggregation. Enabling
+    # this would refit the 100-epoch post-FL head after every federated round.
+    evaluate_each_round: false
     evaluate_every_n_rounds: 1
     round_eval_dir: open_set_rounds
     save_round_scores: true

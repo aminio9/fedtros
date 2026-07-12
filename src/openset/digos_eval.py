@@ -10,10 +10,11 @@ test showed class-wise Normal-tail calibration was still too broad for FoT:
   1. FedPD++/PROSER-style K+1 placeholder score,
   2. student OSR reconstruction/generative score, high tail,
   3. two-sided student energy deviation, both low and high energy are abnormal,
-  4. prototype/OpenMax-style activation distance, high tail.
+  4. paper-style PNPFF positive/negative prototype fusion.
 
-Final unknown score is the mean of the calibrated ranks.  This preserves useful
-middle-range separation instead of zeroing everything below an EVT threshold.
+The historical ``prototype_rank`` name now carries the direct PNPFF unknown
+score. Other components retain rank calibration and can still be combined with
+PNPFF by the mean, weighted, and maximum fusion modes.
 """
 
 from __future__ import annotations
@@ -42,6 +43,12 @@ from sklearn.metrics import (
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.openset.evt import EVTModel
+from src.openset.pnpff import (
+    PNPFFConfig,
+    PNPFFDetector,
+    fit_pnpff_detector,
+    stratified_fit_calibration_split,
+)
 
 logger = logging.getLogger("FedDiGOS")
 UNKNOWN_LABEL_ID = -1
@@ -342,6 +349,7 @@ def _collect_student_scores(
                     "correct_known": int((y[i].item() >= 0) and (y[i].item() == pred[i].item())),
                     "prototype_feature_source": proto_source,
                     "feature": proto_np[i],
+                    "classifier_feature": h_np[i],
                     "classifier_feature_norm": float(np.linalg.norm(h_np[i])),
                     "osr_mu_norm": float(np.linalg.norm(mu_np[i])),
                 })
@@ -539,6 +547,7 @@ def _build_rank_calibrators(
         gen_values = np.sort(_finite_array(cls_fit[gen_col].to_numpy()))
         proser_values = np.sort(_finite_array(cls_fit["proser_score"].to_numpy())) if "proser_score" in cls_fit.columns else np.asarray([], dtype=np.float64)
         proto_values = np.sort(_finite_array(cls_fit["prototype_score"].to_numpy()))
+        pnpff_active = "pnpff_threshold" in cls_fit.columns
         energy_values = _finite_array(cls_fit["energy_score"].to_numpy())
         energy_median = float(np.median(energy_values)) if energy_values.size else 0.0
         q75, q25 = (np.quantile(energy_values, [0.75, 0.25]) if energy_values.size else np.asarray([1.0, 0.0]))
@@ -567,7 +576,11 @@ def _build_rank_calibrators(
             )
             proser_rank = _rank_high(float(row.get("proser_score", 0.0)), proser_values)
             gen_rank = _rank_high(float(row[gen_col]), gen_values)
-            proto_rank = _rank_high(float(row["prototype_score"]), proto_values)
+            proto_rank = (
+                float(row["prototype_score"])
+                if pnpff_active
+                else _rank_high(float(row["prototype_score"]), proto_values)
+            )
             proser_rank_known.append(proser_rank)
             gen_rank_known.append(gen_rank)
             energy_rank_known.append(energy_rank)
@@ -585,12 +598,17 @@ def _build_rank_calibrators(
         proser_threshold = _rank_threshold(proser_rank_known, target_fpr)
         gen_threshold = _rank_threshold(gen_rank_known, target_fpr)
         energy_threshold = _rank_threshold(energy_rank_known, target_fpr)
-        proto_threshold = _rank_threshold(proto_rank_known, target_fpr)
+        proto_threshold = (
+            float(cls_fit["pnpff_threshold"].iloc[0])
+            if pnpff_active
+            else _rank_threshold(proto_rank_known, target_fpr)
+        )
         calibrators[int(class_key)] = {
             "generator_score_column": gen_col,
             "gen_values": gen_values,
             "proser_values": proser_values,
             "prototype_values": proto_values,
+            "pnpff_active": bool(pnpff_active),
             "energy_values": sorted_energy_values,
             "neg_energy_values": neg_energy_values,
             "energy_median": energy_median,
@@ -653,7 +671,11 @@ def _score_with_rank_calibrator(row: pd.Series, calibrator: dict[str, Any]) -> d
         gen_col = "gen_score"
     proser_rank = _rank_high(float(row.get("proser_score", 0.0)), calibrator.get("proser_values", np.asarray([], dtype=np.float64)))
     gen_rank = _rank_high(float(row[gen_col]), calibrator["gen_values"])
-    proto_rank = _rank_high(float(row["prototype_score"]), calibrator["prototype_values"])
+    proto_rank = (
+        float(row["prototype_score"])
+        if bool(calibrator.get("pnpff_active", False))
+        else _rank_high(float(row["prototype_score"]), calibrator["prototype_values"])
+    )
     energy_dev, energy_rank = _energy_rank(
         float(row["energy_score"]),
         median=float(calibrator["energy_median"]),
@@ -690,6 +712,26 @@ def _safe_auc(y_binary: np.ndarray, values: np.ndarray) -> float:
     return float(roc_auc_score(y_binary[mask], vals[mask]))
 
 
+def _oscr_score(
+    y_true: np.ndarray,
+    candidate_pred: np.ndarray,
+    unknown_score: np.ndarray,
+    *,
+    open_set_label_id: int,
+) -> float:
+    """Area under the Open-Set Classification Rate CCR-vs-FPR curve."""
+    known = y_true != int(open_set_label_id)
+    unknown = ~known
+    if not known.any() or not unknown.any():
+        return 0.0
+    known_confidence = 1.0 - np.asarray(unknown_score, dtype=np.float64)
+    order = np.argsort(-known_confidence, kind="stable")
+    correct_known = known & (np.asarray(candidate_pred, dtype=int) == y_true)
+    ccr = np.concatenate([[0.0], np.cumsum(correct_known[order]) / float(np.sum(known))])
+    fpr = np.concatenate([[0.0], np.cumsum(unknown[order]) / float(np.sum(unknown))])
+    return float(np.sum((ccr[1:] + ccr[:-1]) * 0.5 * np.diff(fpr)))
+
+
 def calibrate_fed_digos(
     features: torch.Tensor,
     labels: torch.Tensor,
@@ -699,7 +741,7 @@ def calibrate_fed_digos(
     device: torch.device,
     cfg: Any,
     logger_: logging.Logger | None = None,
-) -> tuple[dict[str, dict[int, EVTModel]], PrototypeBank, pd.DataFrame, dict[str, Any]]:
+) -> tuple[dict[str, dict[int, EVTModel]], PNPFFDetector, pd.DataFrame, dict[str, Any]]:
     log = logger_ or logger
     if not bool(getattr(student_model, "osr_enabled", False)):
         raise RuntimeError("Fed-DiGOS requires student_model.osr_enabled=True.")
@@ -718,11 +760,36 @@ def calibrate_fed_digos(
     )
     num_classes = int(student_model.num_classes)
     min_errors = int(_nested(cfg, "evt.min_errors_per_class", 50))
-    prototype_bank = _fit_prototypes(df, num_classes, cfg, log)
-    proto_scores = []
-    for _, row in df.iterrows():
-        proto_scores.append(float(prototype_bank.score(np.asarray(row["feature"]).reshape(1, -1), int(row["y_raw"]))[0]))
-    df["prototype_score"] = proto_scores
+    backbone_features = torch.from_numpy(np.stack(df["classifier_feature"].to_numpy())).float()
+    known_labels = torch.from_numpy(df["y_raw"].to_numpy(dtype=np.int64)).long()
+    pnpff_cfg = PNPFFConfig.from_cfg(
+        cfg,
+        feature_dim=int(backbone_features.shape[1]),
+        batch_size=int(batch_size),
+    )
+    fit_idx, pnpff_calibration_idx = stratified_fit_calibration_split(
+        known_labels,
+        fit_fraction=pnpff_cfg.fit_fraction,
+        seed=pnpff_cfg.seed,
+        unknown_label_id=unknown_label_id,
+    )
+    pnpff_detector = fit_pnpff_detector(
+        backbone_features[fit_idx],
+        known_labels[fit_idx],
+        backbone_features[pnpff_calibration_idx],
+        known_labels[pnpff_calibration_idx],
+        num_classes=num_classes,
+        cfg=pnpff_cfg,
+        device=device,
+    )
+    pnpff_scores = pnpff_detector.predict_features(backbone_features, device=device)
+    df["prototype_score"] = pnpff_scores["unknown_score"].astype(float)
+    df["pnpff_known_confidence"] = pnpff_scores["known_confidence"].astype(float)
+    df["pnpff_predicted_class"] = pnpff_scores["predicted_class"].astype(int)
+    df["pnpff_positive_probabilities"] = list(pnpff_scores["positive_probabilities"])
+    df["pnpff_negative_probabilities"] = list(pnpff_scores["negative_probabilities"])
+    df["pnpff_fused_scores"] = list(pnpff_scores["fused_scores"])
+    df["pnpff_threshold"] = float(pnpff_detector.threshold)
 
     models: dict[str, dict[int, EVTModel]] = {"proser": {}, "gen": {}, "energy": {}, "prototype": {}, "energy_deviation": {}}
     for c in range(num_classes):
@@ -797,11 +864,11 @@ def calibrate_fed_digos(
             name: {str(k): v.to_payload() for k, v in sorted(score_models.items())}
             for name, score_models in models.items()
         },
-        "prototypes": prototype_bank.to_payload(),
+        "pnpff": pnpff_detector.to_payload(),
     }
     # Attach non-serializable calibrators via DataFrame attrs for immediate evaluate.
     df.attrs["rank_calibrators"] = rank_calibrators
-    return models, prototype_bank, df, meta
+    return models, pnpff_detector, df, meta
 
 
 def evaluate_fed_digos(
@@ -815,7 +882,7 @@ def evaluate_fed_digos(
     class_names: dict[int, str],
     output_dir: Path,
     evt_models: dict[str, dict[int, EVTModel]],
-    prototype_bank: PrototypeBank,
+    pnpff_detector: PNPFFDetector,
     calibration_df: pd.DataFrame | None = None,
     logger_: logging.Logger | None = None,
     report_to_stdout: bool = False,
@@ -833,10 +900,17 @@ def evaluate_fed_digos(
         cfg=cfg,
         class_condition="pred",
     )
-    proto_scores = []
-    for _, row in df.iterrows():
-        proto_scores.append(float(prototype_bank.score(np.asarray(row["feature"]).reshape(1, -1), int(row["pred_before_osr"]))[0]))
-    df["prototype_score"] = proto_scores
+    backbone_features = torch.from_numpy(np.stack(df["classifier_feature"].to_numpy())).float()
+    pnpff_scores = pnpff_detector.predict_features(backbone_features, device=device)
+    df["prototype_score"] = pnpff_scores["unknown_score"].astype(float)
+    df["pnpff_known_confidence"] = pnpff_scores["known_confidence"].astype(float)
+    df["pnpff_predicted_class"] = pnpff_scores["predicted_class"].astype(int)
+    df["pnpff_positive_probabilities"] = list(pnpff_scores["positive_probabilities"])
+    df["pnpff_negative_probabilities"] = list(pnpff_scores["negative_probabilities"])
+    df["pnpff_fused_scores"] = list(pnpff_scores["fused_scores"])
+    df["pnpff_positive_distances"] = list(pnpff_scores["positive_distances"])
+    df["pnpff_negative_distances"] = list(pnpff_scores["negative_distances"])
+    df["pnpff_threshold"] = float(pnpff_detector.threshold)
 
     y_true = np.asarray([open_set_label_id if int(v) == unknown_label_id else int(v) for v in df["y_raw"]], dtype=int)
     y_before = df["pred_before_osr"].to_numpy(dtype=int)
@@ -856,6 +930,7 @@ def evaluate_fed_digos(
         log.warning("Fed-DiGOS evaluate has no calibration_df; rank-fusion scores will fall back to EVT probabilities.")
 
     final_preds = []
+    candidate_preds: list[int] = []
     unknown_probs = []
     proser_rejects: list[int] = []
     gen_rejects: list[int] = []
@@ -975,7 +1050,12 @@ def evaluate_fed_digos(
         weighted_fusion_reject = bool(weighted_rank_score > weighted_threshold)
         max_fusion_reject = bool(max_rank_score > max_threshold)
         final_reject = bool(unknown_score > selected_threshold)
-        final_preds.append(open_set_label_id if final_reject else c)
+        prototype_selected = str(selected_score_name).lower() in {
+            "prototype_rank", "proto_rank", "prototype", "proto_only", "prototype_only"
+        }
+        accepted_class = int(row["pnpff_predicted_class"]) if prototype_selected else c
+        candidate_preds.append(accepted_class)
+        final_preds.append(open_set_label_id if final_reject else accepted_class)
         unknown_probs.append(float(unknown_score))
         proser_rejects.append(int(evt_rejects.get("proser", False)))
         gen_rejects.append(int(evt_rejects.get("gen", False)))
@@ -1014,7 +1094,14 @@ def evaluate_fed_digos(
         prototype_rank_rejects.append(int(proto_rank_reject))
 
     y_pred = np.asarray(final_preds, dtype=int)
+    candidate_pred_arr = np.asarray(candidate_preds, dtype=int)
     score_arr = np.asarray(unknown_probs, dtype=float)
+    oscr = _oscr_score(
+        y_true,
+        candidate_pred_arr,
+        score_arr,
+        open_set_label_id=open_set_label_id,
+    )
     if np.unique(y_binary).size < 2:
         auroc = 0.0
         auprc = 0.0
@@ -1098,11 +1185,11 @@ def evaluate_fed_digos(
     ]
     df["final_reject"] = (y_pred == open_set_label_id).astype(int)
     df["known_or_unknown"] = np.where(y_binary == 1, "unknown", "known")
-    export_df = df.drop(columns=["feature"])
+    export_df = df.drop(columns=["feature", "classifier_feature"], errors="ignore")
     export_df.to_csv(output_dir / "open_set_scores.csv", index=False)
 
     if calibration_df is not None:
-        calibration_df.drop(columns=["feature"], errors="ignore").to_csv(output_dir / "fed_digos_calibration_scores.csv", index=False)
+        calibration_df.drop(columns=["feature", "classifier_feature"], errors="ignore").to_csv(output_dir / "fed_digos_calibration_scores.csv", index=False)
     thresholds_payload = {
         name: {str(k): v.to_payload() for k, v in sorted(models.items())}
         for name, models in evt_models.items()
@@ -1125,7 +1212,10 @@ def evaluate_fed_digos(
     }
     (output_dir / "fed_digos_evt_thresholds.json").write_text(json.dumps(thresholds_payload, indent=2, sort_keys=True), encoding="utf-8")
     (output_dir / "fed_digos_rank_calibration.json").write_text(json.dumps(rank_thresholds_payload, indent=2, sort_keys=True), encoding="utf-8")
-    (output_dir / "fed_digos_prototypes.json").write_text(json.dumps(prototype_bank.to_payload(), indent=2, sort_keys=True), encoding="utf-8")
+    pnpff_payload = pnpff_detector.to_payload()
+    (output_dir / "fed_digos_prototypes.json").write_text(json.dumps(pnpff_payload, indent=2, sort_keys=True), encoding="utf-8")
+    (output_dir / "pnpff_metadata.json").write_text(json.dumps(pnpff_payload, indent=2, sort_keys=True), encoding="utf-8")
+    pnpff_detector.save(output_dir / str(getattr(getattr(cfg, "pnpff", None), "checkpoint_output", "pnpff_state.pt")))
 
     quantiles: dict[str, dict[str, float]] = {}
     overlap: dict[str, Any] = {}
@@ -1210,6 +1300,7 @@ def evaluate_fed_digos(
         "openset_auroc": auroc,
         "openset_auprc": auprc,
         "openset_fpr95": fpr95,
+        "openset_oscr": oscr,
         "openset_f1_macro": f1_macro,
         "openset_unknown_f1": unknown_f1,
         "openset_known_acc_before": known_acc_before,
@@ -1235,6 +1326,7 @@ def evaluate_fed_digos(
         "open_set/auroc": auroc,
         "open_set/auprc": auprc,
         "open_set/fpr95": fpr95,
+        "open_set/oscr": oscr,
         "open_set/unknown_f1": unknown_f1,
         "open_set/unknown_detection_rate": unknown_recall,
         "open_set/known_false_unknown_rate": known_false_unknown_rate,

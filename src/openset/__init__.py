@@ -7,6 +7,7 @@ from src.openset.evt import (
     save_evt_collection,
     save_evt_meta,
 )
+from src.openset.pnpff import PNPFFConfig, PNPFFDetector, PNPFFModel
 
 __all__ = [
     "EVTModel",
@@ -14,4 +15,7 @@ __all__ = [
     "load_evt_meta",
     "save_evt_collection",
     "save_evt_meta",
+    "PNPFFConfig",
+    "PNPFFDetector",
+    "PNPFFModel",
 ]
