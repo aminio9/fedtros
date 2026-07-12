@@ -295,7 +295,7 @@ def run_dkd_fedos_student_open_set_evaluation(
     if num_unknown_train != 0:
         raise ValueError("Fed-DiGOS EVT calibration data must contain known classes only; found unknown labels.")
 
-    evt_models, prototype_bank, calibration_df, meta = calibrate_fed_digos(
+    evt_models, pnpff_detector, calibration_df, meta = calibrate_fed_digos(
         calibration_features,
         calibration_labels,
         student_model=agent.student_model,
@@ -317,7 +317,7 @@ def run_dkd_fedos_student_open_set_evaluation(
         class_names=class_names,
         output_dir=output_dir,
         evt_models=evt_models,
-        prototype_bank=prototype_bank,
+        pnpff_detector=pnpff_detector,
         calibration_df=calibration_df,
         logger_=logger,
         report_to_stdout=bool(cfg.evaluation.report_to_stdout),

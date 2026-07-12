@@ -25,6 +25,11 @@ open_set.evt.backend: fed_digos
 open_set.fed_digos.enabled: true
 open_set.fed_digos.score_fusion.method: prototype_rank
 open_set.fed_digos.proser.enabled: false
+
+`prototype_rank` is retained as the configuration name for compatibility. It
+now selects the paper-style PNPFF score fitted after global student aggregation;
+it is not the historical post-hoc KMeans empirical-rank detector. The evaluator
+also writes `pnpff_state.pt` and `pnpff_metadata.json`.
 evaluation.mode: open_set
 ```
 

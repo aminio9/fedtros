@@ -13,6 +13,18 @@ def _cfg():
         latent_nll_weight=0.05,
         energy=SimpleNamespace(enabled=True, temperature=1.0, rank_direction="low"),
         score_fusion=SimpleNamespace(method="mean_rank", calibration_scope="global", generator_score_column="recon_error", decision_rule="fused_rank_threshold"),
+        pnpff=SimpleNamespace(
+            feature_dim=8,
+            num_positive_prototypes=7,
+            fit_fraction=0.70,
+            seed=7,
+            epochs=2,
+            batch_size=16,
+            learning_rate=0.01,
+            threshold_mode="fixed",
+            tau=0.5,
+            checkpoint_output="pnpff_state.pt",
+        ),
         prototype=SimpleNamespace(enabled=True, num_prototypes_per_class=2, min_samples_per_prototype=5),
         evt=SimpleNamespace(
             threshold_method="quantile",
@@ -70,7 +82,7 @@ def test_fed_digos_eval_writes_artifacts(tmp_path):
     x_cal = torch.cat([x0, x1], dim=0)
     y_cal = torch.cat([torch.zeros(30), torch.ones(30)]).long()
     cfg = _cfg()
-    models, prototypes, calibration_df, _meta = calibrate_fed_digos(
+    models, detector, calibration_df, _meta = calibrate_fed_digos(
         x_cal,
         y_cal,
         student_model=model,
@@ -91,12 +103,15 @@ def test_fed_digos_eval_writes_artifacts(tmp_path):
         class_names={0: "A", 1: "B"},
         output_dir=tmp_path,
         evt_models=models,
-        prototype_bank=prototypes,
+        pnpff_detector=detector,
         calibration_df=calibration_df,
     )
     assert "openset_auroc" in metrics
+    assert "openset_oscr" in metrics
     assert (tmp_path / "open_set_scores.csv").exists()
     assert (tmp_path / "fed_digos_evt_thresholds.json").exists()
     assert (tmp_path / "fed_digos_rank_calibration.json").exists()
     assert (tmp_path / "fed_digos_component_aurocs.json").exists()
     assert (tmp_path / "score_overlap_report.json").exists()
+    assert (tmp_path / "pnpff_state.pt").exists()
+    assert (tmp_path / "pnpff_metadata.json").exists()
