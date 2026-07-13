@@ -5,8 +5,8 @@ experiment:
   family: closed_set
   method: FMRL_AVA
   pipeline: full
-  description: Closed-set validation on all B-NAT labels.
-  objective: Preserve classification quality across the full B-NAT label set.
+  description: Dataset-selectable IID closed-set validation on all source labels.
+  objective: Preserve classification quality across every class of the selected dataset.
   primary_metrics:
     - test/accuracy
     - test/balanced_accuracy
@@ -25,23 +25,32 @@ federated:
   num_clients: 10
   num_rounds: 100
 model:
-  num_actions: 5
+  num_actions: ${dataset.closed_set_num_actions}
 dataset:
   known_labels: ${dataset.source_labels}
   preprocessing:
+    protocol: closed_set
+    source_labels: ${dataset.source_labels}
+    known_labels: ${dataset.source_labels}
+    unknown_labels: []
     output_dir: ${tracking.run_dir}/processed
-    closed_set_test_size: 0.1
-    validation_split: 0.0
+    closed_set_test_size: 0.2
+    validation_split: 0.125
     alpha: 1.0
     iid: true
 open_set:
   evt:
     enabled: false
+  fed_digos:
+    enabled: false
 training:
+  local_episodes_per_round: 10
+  dkd_student_osr_enabled: false
+  dkd_student_open_set_enabled: false
   generator:
     enabled: false
 evaluation:
   mode: closed_set
   export_latent_embeddings: false
 tracking:
-  run_id: e1_${experiment.method}_iid_seed${seed}
+  run_id: e1_${dataset.registry_name}_${experiment.method}_iid_closed_seed${seed}

@@ -118,11 +118,11 @@ The main rule is simple: every method in a comparison must see the same data spl
 1. **B-NAT**
    Primary experimental dataset. The classes `Normal`, `DoS`, `FoT`, `MitM`, and `BP` are explicitly referenced in the source plan and plotting logic. B-NAT is used for the main IID, non-IID, open-set, ablation, efficiency, and robustness experiments.
 2. **B-TAT**
-   External benchmark dataset with eight total classes in the source plan. The known/unknown class mapping must be finalized before execution. This dataset is used only in the multi-dataset open-set non-IID validation experiment.
+   External benchmark dataset with seven classes: `Normal`, `DoS`, `OaU`, `FoT`, `Re`, `DeC`, and `FDV`. E5 fixes `Normal`, `DoS`, `OaU`, `FoT`, and `FDV` as known and holds out `Re` and `DeC` as unknown.
 3. **ToN-IoT**
-   External benchmark dataset with nine total classes in the source plan. The known/unknown class mapping must be finalized before execution. This dataset is used to evaluate the proposed model on heterogeneous IoT-device traffic under open-set and non-IID conditions.
+   External benchmark dataset with ten multiclass `type` values. E5 fixes `normal`, `backdoor`, `ddos`, `dos`, `injection`, `password`, and `scanning` as known and holds out `mitm`, `ransomware`, and `xss` as unknown. The binary `label` column is not a training target and is removed.
 4. **CIC-IDS2017**
-   External benchmark dataset with fourteen total classes in the source plan. The known/unknown class mapping must be finalized before execution. This dataset is used as an industry-standard benchmark to further validate model generalization under open-set and non-IID settings.
+   External benchmark dataset with fifteen classes. E5 uses nine known classes (`BENIGN`, `DDoS`, the four DoS variants, `FTP-Patator`, `PortScan`, and `SSH-Patator`) and holds out `Bot`, `Heartbleed`, `Infiltration`, and the three Web Attack classes.
 
 ### 4.2 Dataset handling
 
@@ -287,8 +287,10 @@ Smaller `alpha` values produce stronger class skew. All clients still share the 
 
 - Use B-TAT, ToN-IoT, and CIC-IDS2017 only. Do not repeat B-NAT in this experiment block.
 - Train, tune, and evaluate the model separately on each external dataset. This is not a cross-dataset transfer experiment.
-- Finalize the known/unknown class mapping for each dataset before execution and keep that mapping fixed for all methods compared on that dataset.
+- Use the frozen known/unknown mappings in Section 4.1; do not change them after observing results.
 - For each dataset, build its own train, validation, closed-set test, open-set test, and Dirichlet client partitions.
+- Use seed 42, 10 clients, Dirichlet alpha 0.5, 100 rounds, and 10 local episodes per round.
+- Run updated DKD-FedOS/Fed-DiGOS with reliability-weighted aggregation, `prototype_rank`, PROSER disabled, student-to-teacher transfer disabled, and the private generator disabled.
 - Reuse the same evaluation logic as the main B-NAT open-set non-IID protocol: validation-only EVT calibration, matched budgets across methods, and per-dataset non-IID client splits.
 
 **Metrics**

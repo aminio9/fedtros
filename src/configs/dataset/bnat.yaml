@@ -15,11 +15,15 @@ source_labels:
   - DoS
   - MitM
   - FoT
+closed_set_num_actions: 5
+open_set_num_actions: 4
 known_labels:
   - Normal
   - BP
   - DoS
   - MitM
+unknown_labels:
+  - FoT
 external_datasets:
   - B-TAT
   - ToN-IoT

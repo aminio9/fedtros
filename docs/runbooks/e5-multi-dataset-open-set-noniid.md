@@ -2,41 +2,42 @@
 
 ## Objective
 
-Validate the model independently on B-TAT, ToN-IoT, and CIC-IDS2017 under open-set and non-IID conditions.
+Run updated DKD-FedOS/Fed-DiGOS independently on BTAT, ToN-IoT, and
+CIC-IDS2017 using frozen open-set mappings and mild Dirichlet non-IID data.
 
-## Hydra Config Used
-
-`experiment=exp5` with dataset-specific raw paths and finalized known/unknown label maps.
-
-## Override Examples
+## Preparation and Execution
 
 ```bash
-python run.py experiment=exp5 +method=fmrl_ava dataset.name=B-TAT seed=42
-python run.py experiment=exp5 +method=fmrl_ava dataset.name=ToN-IoT seed=42
-python run.py experiment=exp5 +method=fedavg dataset.name=CIC-IDS2017 seed=42
+poetry run python scripts/prepare_external_datasets.py --dataset all
+poetry run python scripts/run_exp5.py --datasets all --seed 42 --smoke
+poetry run python scripts/run_exp5.py --datasets all --seed 42
 ```
 
-## Execution Commands
+Select a subset with `--datasets btat`, `--datasets toniot`, or
+`--datasets cicids2017`. Add `--profile full` to disable the deterministic
+20,000-row-per-class experiment cap.
 
-```bash
-python run.py experiment=exp5 +method=fmrl_ava dataset.name=B-TAT seed=42
-python run.py experiment=exp5 +method=fmrl_ava dataset.name=ToN-IoT seed=42
-python run.py experiment=exp5 +method=fmrl_ava dataset.name=CIC-IDS2017 seed=42
-bash scripts/experiments/e5_multi_dataset_open_set_noniid.sh
-```
+Copy-ready per-dataset commands with logging and status tracking are in
+`docs/runbooks/e1_e5_multidataset_commands.txt`.
 
-## Expected Outputs
+The preparer accepts the verified ToN-IoT file as either
+`Train_Test_Network.csv` or `train_test_network.csv`. It uses multiclass `type`
+as the target and removes binary `label`. For CIC-IDS2017, either place the
+official ZIP at `data/raw/source/cicids2017/MachineLearningCSV.zip` or extract
+its eight CSV files anywhere below `data/raw/source/cicids2017/`. Existing
+canonical CSVs are reused only after their manifests and SHA-256 values pass.
 
-- `evaluation_metrics.json`
-- `open_set_metrics.json`
-- `open_set_scores.csv`
-- `open_set_roc_curve.csv`
-- `open_set_pr_curve.csv`
-- `communication_metrics.csv`
-- `latent_embeddings.csv`
+## Frozen Contract
+
+- seed 42, 10 clients, 100 rounds, 10 local episodes;
+- known data split 70/10/20;
+- Dirichlet alpha 0.5 and at least 32 training rows per client;
+- unknown classes occur only in final open-set evaluation;
+- Fed-DiGOS `prototype_rank`, PROSER disabled, student OSR enabled;
+- private generator and student-to-teacher updates disabled.
 
 ## Validation
 
-- Confirm each dataset is trained, tuned, and evaluated independently.
-- Confirm B-NAT is not used in this block.
-- Confirm the known/unknown label maps are finalized before execution.
+Confirm all runs have resolved configs, preprocessing manifests, client
+histograms, checkpoints, open-set metrics, and logs. Literature values in
+`docs/exp5_literature_context.md` are context only, not same-protocol rows.

@@ -123,6 +123,7 @@ lightning_logs/
 
 # Data generated during preprocessing / training
 data/processed/
+data/raw/source/
 data/raw/**/*.csv
 data/raw/**/*.tsv
 data/raw/**/*.json

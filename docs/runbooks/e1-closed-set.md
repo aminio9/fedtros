@@ -2,91 +2,30 @@
 
 ## Objective
 
-Verify that the unified model preserves performance across the full B-NAT label set, with no unknown labels held out.
+Run IID closed-set DKD-FedOS on every class of a selected dataset. E1 supports
+`bnat`, `btat`, `toniot`, and `cicids2017`; external datasets resolve to 7, 10,
+and 15 actions automatically.
 
-## Hydra Config Used
-
-`experiment=exp1` with optional method overlays:
-
-- `+method=fmrl_ava`
-- `+method=fedavg`
-- `+method=fedprox`
-- `+method=centralized_no_osr` (commented reference only in the shell script)
-- `dataset.known_labels=${dataset.source_labels}`
-
-Default run-local paths:
-
-- `dataset.preprocessing.output_dir=${tracking.run_dir}/processed`
-- `dataset.preprocessing.iid=true`
-- `tracking.run_id=e1_${experiment.method}_iid_seed${seed}`
-
-`tracking.*` is derived from the root `output.*` config values rather than a separate config group.
-
-## Override Examples
+## Commands
 
 ```bash
-python run.py experiment=exp1 +method=fmrl_ava seed=42
-python run.py experiment=exp1 +method=fedavg seed=42
-python run.py experiment=exp1 +method=fedprox seed=42
-# python run.py experiment=exp1 +method=centralized_no_osr seed=42
+poetry run python run.py experiment=exp1 dataset=btat +method=dkd_fedos seed=42
+poetry run python run.py experiment=exp1 dataset=toniot +method=dkd_fedos seed=42
+poetry run python run.py experiment=exp1 dataset=cicids2017 +method=dkd_fedos seed=42
 ```
 
-## Execution Commands
+Copy-ready commands with logging and status tracking are in
+`docs/runbooks/e1_e5_multidataset_commands.txt`.
 
-```bash
-python run.py experiment=exp1 +method=fmrl_ava seed=42
-python run.py experiment=exp1 +method=fedavg seed=42
-python run.py experiment=exp1 +method=fedprox seed=42
-# python run.py experiment=exp1 +method=centralized_no_osr seed=42
-bash scripts/experiments/e1_closed_set.sh
-```
+## Contract
 
-## Expected Outputs
-
-- `evaluation_metrics.json`
-- `test_metrics.json`
-- `test_confusion_matrix.csv`
-- `federated_history.csv`
-- `communication_metrics.csv`
-
-## Checkpoints
-
-- `best_model.pt`
-- `latest_checkpoint.pt`
-- `final_model.pt`
-
-## Logs
-
-- `run.log`
-- `debug.log`
-- `metrics.jsonl`
-- `metrics.csv`
-- `metadata.json`
-
-## Metrics
-
-- `test/accuracy`
-- `test/balanced_accuracy`
-- `test/macro_f1`
-- `test/weighted_f1`
-
-## Artifacts
-
-- `resolved_config.yaml`
-- `processed/`
-- `plots/`
-- `plot_manifest.json`
+- all source labels are known;
+- stratified 70/10/20 train/validation/test data;
+- IID client partitioning;
+- Fed-DiGOS, student OSR, student open-set head, and private generator disabled;
+- state and action dimensions derived from preprocessing metadata.
 
 ## Validation
 
-- Confirm `resolved_config.yaml` records the chosen method overlay.
-- Confirm `resolved_config.yaml` records `dataset.preprocessing.iid: true`.
-- Confirm `evaluation_metrics.json` contains closed-set metrics.
-- Confirm the run-local `processed/` directory exists.
-
-## Troubleshooting
-
-- If preprocessing fails, check `dataset.preprocessing.raw_file`.
-- If the run reuses the wrong output directory, inspect `tracking.run_id`.
-- If the checkpoint is missing, check `checkpointing.save_best` and
-  `checkpointing.save_latest`.
+Confirm `resolved_config.yaml`, `preprocess_metadata.json`, `class_support.csv`,
+`split_manifest.csv`, client tensors, checkpoints, and closed-set metrics exist.

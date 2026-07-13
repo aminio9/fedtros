@@ -116,3 +116,90 @@ def test_preprocessing_can_skip_validation_split(tmp_path):
     assert known_train["labels"].numel() == metadata["num_train_samples"] == 115
     assert validation["labels"].numel() == metadata["num_validation_samples"] == 0
     assert closed_test["labels"].numel() == metadata["num_closed_test_samples"] == 13
+
+
+def test_external_protocol_caps_classes_balances_unknowns_and_writes_manifests(tmp_path):
+    raw_path = tmp_path / "external.csv"
+    output_dir = tmp_path / "processed"
+    rows = []
+    source_labels = ["KnownA", "KnownB", "KnownC", "KnownD", "UnknownA", "UnknownB"]
+    for class_index, label in enumerate(source_labels):
+        for sample_index in range(60):
+            rows.append(
+                {
+                    "numeric": (
+                        float("inf")
+                        if sample_index == 0
+                        else (None if sample_index == 1 else class_index + sample_index / 100)
+                    ),
+                    "service": "unknown_only" if label.startswith("Unknown") else "known",
+                    "label": label,
+                }
+            )
+    pd.DataFrame(rows).to_csv(raw_path, index=False)
+    cfg = OmegaConf.create(
+        {
+            "seed": 42,
+            "dataset": {
+                "name": "external-fixture",
+                "preprocessing": {
+                    "output_dir": str(output_dir),
+                    "raw_file": str(raw_path),
+                    "label_column": "label",
+                    "source_labels": source_labels,
+                    "known_labels": source_labels[:4],
+                    "unknown_labels": source_labels[4:],
+                    "require_all_source_labels": True,
+                    "drop_duplicates": True,
+                    "max_samples_per_class": 40,
+                    "numerical_cols": None,
+                    "categorical_cols": None,
+                    "numeric_threshold": 0.9,
+                    "categorical_schema_scope": "known_train",
+                    "validation_split": 0.125,
+                    "closed_set_test_size": 0.2,
+                    "num_clients": 4,
+                    "min_samples_per_client": 10,
+                    "partition_max_attempts": 200,
+                    "max_unknown_test_ratio": 1.0,
+                    "alpha": 0.5,
+                    "iid": False,
+                    "unknown_label_id": -1,
+                },
+            },
+        }
+    )
+
+    metadata = run_preprocessing(cfg, project_root=tmp_path)
+
+    assert metadata["source_class_counts"] == {label: 60 for label in source_labels}
+    assert metadata["experiment_class_counts"] == {label: 40 for label in source_labels}
+    assert metadata["num_train_samples"] == 112
+    assert metadata["num_validation_samples"] == 16
+    assert metadata["num_closed_test_samples"] == 32
+    assert metadata["num_unknown_samples"] == 32
+    assert metadata["num_open_test_samples"] == 64
+    assert "__UNK__" in metadata["categorical_categories"][0]
+
+    split_manifest = pd.read_csv(output_dir / "split_manifest.csv")
+    assert set(split_manifest["split"]) == {
+        "known_train",
+        "validation",
+        "known_test",
+        "unknown_test",
+    }
+    assert split_manifest["source_index"].is_unique
+    assert (output_dir / "class_support.csv").exists()
+    assert (output_dir / "feature_schema.json").exists()
+    assert (output_dir / "numeric_imputer.joblib").exists()
+
+    open_test = torch.load(output_dir / "open_set_test.pt", map_location="cpu", weights_only=True)
+    assert torch.isfinite(open_test["features"]).all()
+    assert int((open_test["labels"] == -1).sum()) == 32
+    for client_id in range(1, 5):
+        client = torch.load(
+            output_dir / f"client_{client_id}_train.pt",
+            map_location="cpu",
+            weights_only=True,
+        )
+        assert client["labels"].numel() >= 10

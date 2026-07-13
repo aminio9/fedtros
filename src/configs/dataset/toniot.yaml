@@ -1,0 +1,56 @@
+name: ToN-IoT
+registry_name: toniot
+raw_path: data/raw/ToN-IoT.csv
+label_column: type
+source_url: https://research.unsw.edu.au/projects/toniot-datasets
+source_labels:
+  - normal
+  - backdoor
+  - ddos
+  - dos
+  - injection
+  - mitm
+  - password
+  - ransomware
+  - scanning
+  - xss
+closed_set_num_actions: 10
+open_set_num_actions: 7
+known_labels:
+  - normal
+  - backdoor
+  - ddos
+  - dos
+  - injection
+  - password
+  - scanning
+unknown_labels:
+  - mitm
+  - ransomware
+  - xss
+preprocessing:
+  mode: single_source
+  protocol: open_set
+  output_dir: data/processed
+  raw_file: ${dataset.raw_path}
+  label_column: ${dataset.label_column}
+  source_labels: ${dataset.source_labels}
+  known_labels: ${dataset.known_labels}
+  unknown_labels: ${dataset.unknown_labels}
+  require_all_source_labels: true
+  drop_duplicates: true
+  max_samples_per_class: 20000
+  read_chunksize: 100000
+  numerical_cols: null
+  categorical_cols: null
+  numeric_threshold: 0.9
+  categorical_schema_scope: known_train
+  closed_set_test_size: 0.2
+  validation_split: 0.125
+  num_clients: ${federated.num_clients}
+  min_samples_per_client: 32
+  partition_max_attempts: 200
+  alpha: 0.5
+  iid: false
+  max_unknown_test_ratio: 1.0
+  unknown_label_id: -1

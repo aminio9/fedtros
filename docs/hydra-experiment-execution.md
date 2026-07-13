@@ -48,11 +48,14 @@ Single run:
 ```bash
 python run.py experiment=exp1
 python run.py experiment=exp2 dataset=bnat model=transformer
-python run.py experiment=exp5 +method=fmrl_ava dataset.name=B-TAT
+python run.py experiment=exp5 dataset=btat +method=dkd_fedos
 python run.py experiment=exp6 runtime=gpu
 python run.py experiment=validation runtime=tiny
 bash scripts/experiments/e5_multi_dataset_open_set_noniid.sh
 ```
+
+Copy-ready E1/E5 commands with `tee` logging and `run_status.txt` updates are
+in `docs/runbooks/e1_e5_multidataset_commands.txt`.
 
 Hydra multirun:
 
@@ -148,7 +151,7 @@ outputs/<run_id>/
 6. EVT calibration uses validation data only.
 7. FMRL-AVA uses selected-client parameter deltas to build vector-aligned aggregation weights. Validation metrics, when present, train and monitor the server-side critic/mixer; if they are unavailable, the mixer target falls back to the support reward from client diagnostics.
 8. Latent export uses the open-set evaluation tensor for open-set runs, so each held-out-label run writes a clean latent CSV for plotting.
-9. The E5 shell runner repeats the full train/tune/evaluate cycle separately for B-TAT, ToN-IoT, and CIC-IDS2017 once their label maps are finalized.
+9. The E5 Python launcher repeats the frozen DKD-FedOS/Fed-DiGOS cycle separately for BTAT, ToN-IoT, and CIC-IDS2017 using versioned dataset configs.
 10. Plots and suite exports read saved artifacts only.
 
 ## Reproducibility

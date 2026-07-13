@@ -145,6 +145,33 @@ def _select_str(cfg: DictConfig, key: str, default: str = "") -> str:
 
 def validate_config(cfg: DictConfig, extra_required: Iterable[str] = ()) -> None:
     """Fail early when a required Hydra key is missing or unresolved."""
+    _apply_experiment_protocol(cfg)
+    required = (
+        "seed",
+        "dataset.name",
+        "dataset.preprocessing.raw_file",
+        "dataset.preprocessing.known_labels",
+        "federated.num_clients",
+        "dataset.preprocessing.num_clients",
+        "model.num_actions",
+    ) + tuple(extra_required)
+    missing = [
+        key
+        for key in required
+        if OmegaConf.select(cfg, key, default=None) in {None, "???"}
+    ]
+    if missing:
+        raise ValueError("Missing required Hydra values: " + ", ".join(missing))
+
+    _validate_runtime(cfg)
+    num_clients = int(OmegaConf.select(cfg, "federated.num_clients"))
+    preprocessing_num_clients = int(OmegaConf.select(cfg, "dataset.preprocessing.num_clients"))
+    if preprocessing_num_clients != num_clients:
+        raise ValueError(
+            "dataset.preprocessing.num_clients must match federated.num_clients. "
+            "Override federated.num_clients to change both values."
+        )
+    _validate_external_experiment_contract(cfg)
     # missing: list[str] = []
     # for key in tuple(REQUIRED_CONFIG_KEYS) + tuple(extra_required):
     #     value = OmegaConf.select(cfg, key, default=None)
@@ -228,6 +255,78 @@ def validate_config(cfg: DictConfig, extra_required: Iterable[str] = ()) -> None
     #     raise ValueError("federated.strategy.max_agents must match federated.num_clients.")
     # if not 0.0 < max_selected_fraction <= 1.0:
     #     raise ValueError("federated.strategy.max_selected_fraction must be in (0, 1].")
+
+
+def _apply_experiment_protocol(cfg: DictConfig) -> None:
+    """Resolve E1/E5 settings after method overlays, which Hydra composes last."""
+    experiment_id = _select_str(cfg, "experiment.id").upper()
+    if experiment_id == "E1":
+        _set_cfg_value(cfg, "dataset.preprocessing.protocol", "closed_set")
+        _set_cfg_value(
+            cfg,
+            "dataset.preprocessing.known_labels",
+            list(OmegaConf.select(cfg, "dataset.source_labels", default=[])),
+        )
+        _set_cfg_value(cfg, "dataset.preprocessing.unknown_labels", [])
+        _set_cfg_value(cfg, "open_set.evt.enabled", False)
+        _set_cfg_value(cfg, "open_set.fed_digos.enabled", False)
+        _set_cfg_value(cfg, "training.dkd_student_osr_enabled", False)
+        _set_cfg_value(cfg, "training.dkd_student_open_set_enabled", False)
+        _set_cfg_value(cfg, "training.generator.enabled", False)
+    elif experiment_id == "E5":
+        _set_cfg_value(cfg, "dataset.preprocessing.protocol", "open_set")
+        _set_cfg_value(cfg, "open_set.evt.enabled", True)
+        _set_cfg_value(cfg, "open_set.evt.backend", "fed_digos")
+        _set_cfg_value(cfg, "open_set.fed_digos.enabled", True)
+        _set_cfg_value(cfg, "open_set.fed_digos.score_fusion.method", "prototype_rank")
+        _set_cfg_value(cfg, "open_set.fed_digos.proser.enabled", False)
+        _set_cfg_value(cfg, "training.dkd_student_osr_enabled", True)
+        _set_cfg_value(cfg, "training.dkd_student_open_set_enabled", True)
+        _set_cfg_value(cfg, "training.dkd_update_teacher_from_student", False)
+        _set_cfg_value(cfg, "training.generator.enabled", False)
+
+
+def _validate_external_experiment_contract(cfg: DictConfig) -> None:
+    experiment_id = _select_str(cfg, "experiment.id").upper()
+    if experiment_id not in {"E1", "E5"}:
+        return
+
+    source_labels = [str(value) for value in OmegaConf.select(cfg, "dataset.source_labels", default=[])]
+    known_labels = [
+        str(value)
+        for value in OmegaConf.select(cfg, "dataset.preprocessing.known_labels", default=[])
+    ]
+    num_actions = int(OmegaConf.select(cfg, "model.num_actions"))
+    if len(known_labels) != num_actions:
+        raise ValueError(
+            f"{experiment_id} model.num_actions={num_actions} does not match "
+            f"the {len(known_labels)} configured known labels."
+        )
+
+    if experiment_id == "E1":
+        if known_labels != source_labels:
+            raise ValueError("E1 closed-set runs must use every source label as known.")
+        if _select_str(cfg, "evaluation.mode").lower() != "closed_set":
+            raise ValueError("E1 must use evaluation.mode=closed_set.")
+        return
+
+    registry_name = _select_str(cfg, "dataset.registry_name").lower()
+    if registry_name not in {"btat", "toniot", "cicids2017"}:
+        raise ValueError("E5 requires dataset=btat, dataset=toniot, or dataset=cicids2017.")
+    if _select_str(cfg, "strategy.name").lower() != "dkd_fedos":
+        raise ValueError("E5 is restricted to the +method=dkd_fedos overlay.")
+    if int(OmegaConf.select(cfg, "seed")) != 42:
+        raise ValueError("E5 uses the frozen seed=42 protocol.")
+    if int(OmegaConf.select(cfg, "federated.num_clients")) != 10:
+        raise ValueError("E5 requires federated.num_clients=10.")
+    if int(OmegaConf.select(cfg, "federated.num_rounds")) not in {1, 100}:
+        raise ValueError("E5 requires 100 rounds, or 1 round for an explicit smoke run.")
+    if int(OmegaConf.select(cfg, "training.local_episodes_per_round")) not in {1, 10}:
+        raise ValueError("E5 requires 10 local episodes, or 1 for an explicit smoke run.")
+    if float(OmegaConf.select(cfg, "dataset.preprocessing.alpha")) != 0.5:
+        raise ValueError("E5 requires Dirichlet alpha=0.5.")
+    if bool(OmegaConf.select(cfg, "dataset.preprocessing.iid")):
+        raise ValueError("E5 requires dataset.preprocessing.iid=false.")
 
 
 
