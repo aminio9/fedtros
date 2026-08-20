@@ -1,0 +1,4 @@
+# Stage: ablation
+stage: ablation
+federated.num_rounds: 50
+training.local_epochs: 1

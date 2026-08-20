@@ -17,8 +17,8 @@ def test_bnat_config_points_to_canonical_csv():
     assert cfg.dataset.source_url == "https://github.com/avitech-vnu/BNaT"
     assert cfg.dataset.source_labels == ["Normal", "BP", "DoS", "MitM", "FoT"]
     assert cfg.dataset.known_labels == ["Normal", "BP", "DoS", "MitM"]
-    assert cfg.model.num_actions == 4
-    assert cfg.model.state_dim == 31
+    assert cfg.model.num_classes == 4
+    assert cfg.model.feature_dim == 31
 
 
 def test_bnat_csv_contains_expected_source_labels():
@@ -39,23 +39,33 @@ def test_bnat_csv_contains_expected_source_labels():
 
 
 def test_exp5_config_is_external_validation_ready():
-    with initialize_config_dir(version_base=None, config_dir=_config_dir()):
-        cfg = compose(config_name="config_fl", overrides=["experiment=exp5"])
+    from src.infrastructure.study import load_study_config
+    cfg = load_study_config("E5-DATASET", Path(__file__).resolve().parents[1])
 
-    assert cfg.experiment.id == "E5"
-    assert cfg.experiment.name == "exp5_multi_dataset_external_validation"
-    assert cfg.federated.num_clients == 10
-    assert cfg.federated.num_rounds == 100
-    assert cfg.open_set.evt.enabled is True
-    assert cfg.evaluation.export_latent_embeddings is True
+    assert cfg["study_id"] == "E5-DATASET"
+    assert cfg["name"] == "E5_datasetwise"
+    assert cfg["num_clients"] == 10
+    assert cfg["base_overrides"]["federated.num_rounds"] == 100
+    assert cfg["base_overrides"]["evaluation.mode"] == "open_set"
+    assert "bnat" in cfg["datasets"]
+    assert "btat" in cfg["datasets"]
+
+
+def test_external_dataset_aliases_normalize_to_registry_ids():
+    from src.utils.config import _canonical_dataset_id
+
+    assert _canonical_dataset_id("B-NAT") == "bnat"
+    assert _canonical_dataset_id("B-TAT") == "btat"
+    assert _canonical_dataset_id("CIC-IDS2017") == "cicids2017"
+    assert _canonical_dataset_id("ToN-IoT") == "toniot"
 
 
 def test_exp8_config_is_labelwise_open_set():
-    with initialize_config_dir(version_base=None, config_dir=_config_dir()):
-        cfg = compose(config_name="config_fl", overrides=["experiment=exp8"])
+    from src.infrastructure.study import load_study_config
+    cfg = load_study_config("E8-LOAO", Path(__file__).resolve().parents[1])
 
-    assert cfg.experiment.id == "E8"
-    assert cfg.experiment.name == "exp8_labelwise_open_set"
-    assert cfg.model.num_actions == 4
-    assert cfg.dataset.known_labels == ["Normal", "BP", "DoS", "FoT"]
-    assert cfg.evaluation.export_latent_embeddings is True
+    assert cfg["study_id"] == "E8-LOAO"
+    assert cfg["name"] == "E8_leave_one_attack_out"
+    assert cfg["num_clients"] == 10
+    assert "Normal" in cfg["known_labels_by_unknown"]["FoT"]
+    assert cfg["base_overrides"]["evaluation.mode"] == "open_set"

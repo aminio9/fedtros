@@ -1,0 +1,5 @@
+# Stage: tuning
+# NOTE: Tuning runs are tagged stage=tuning to prevent silent inclusion in paper results (Item B18)
+stage: tuning
+federated.num_rounds: 20
+training.local_epochs: 1

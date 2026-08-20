@@ -1,0 +1,8 @@
+# Stage: smoke
+stage: smoke
+federated.num_rounds: 2
+training.local_epochs: 1
+federated.num_clients: 2
+dataset.preprocessing.num_clients: 2
+dataset.preprocessing.smoke: true
+runtime: tiny

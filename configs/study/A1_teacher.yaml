@@ -1,0 +1,26 @@
+# A1 Variational Classifier Teacher Ablation
+study_id: A1-TEACHER
+name: A1_teacher
+description: Ablation comparing Variational Classifier Teacher against standard deterministic teacher and teacher-free baselines.
+
+methods:
+  - fedtros_pr
+datasets:
+  - bnat
+alphas:
+  - 0.1
+  - 0.5
+iids:
+  - false
+unknown_label_sets:
+  - ["FoT"]
+seeds:
+  - 17
+  - 42
+  - 73
+num_clients: 10
+
+base_overrides:
+  federated.num_rounds: 50
+  training.local_epochs: 1
+  evaluation.mode: open_set

@@ -9,7 +9,7 @@ done
 poetry run python run.py "experiment=validation" "runtime=tiny" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=smoke" "runtime=tiny" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp1" "+method=fedprox" --cfg job --resolve >/dev/null
-poetry run python run.py "experiment=exp1" "+method=dkd_fedos" --cfg job --resolve >/dev/null
+poetry run python run.py "experiment=exp1" "+method=fedtros" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp1" "+method=fedgpa" --cfg job --resolve >/dev/null
 # poetry run python run.py "experiment=exp1" "+method=centralized_no_osr" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp2" "+method=fmrl_ava" "open_set.evt.enabled=false" "experiment.method=ClosedSet_No_EVT" --cfg job --resolve >/dev/null
@@ -23,7 +23,7 @@ poetry run python run.py "experiment=exp7" "federated.num_clients=20" "federated
 poetry run python run.py "experiment=exp7" "federated.num_clients=20" "federated.num_rounds=100" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp3" "+method=fedavg" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp3" "+method=fedprox" --cfg job --resolve >/dev/null
-poetry run python run.py "experiment=exp3" "+method=dkd_fedos" --cfg job --resolve >/dev/null
+poetry run python run.py "experiment=exp3" "+method=fedtros" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp3" "+method=fedgpa" --cfg job --resolve >/dev/null
 # poetry run python run.py "experiment=exp3" "+method=centralized_no_osr" --cfg job --resolve >/dev/null
 poetry run python run.py "experiment=exp4" "+method=fmrl_ava" "open_set.evt.enabled=false" "experiment.method=ClosedSet_No_EVT" --cfg job --resolve >/dev/null

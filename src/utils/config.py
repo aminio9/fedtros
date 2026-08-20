@@ -12,6 +12,17 @@ from omegaconf import DictConfig, OmegaConf
 logger = logging.getLogger(__name__)
 
 
+def _canonical_dataset_id(value: str) -> str:
+    compact = "".join(character for character in str(value).lower() if character.isalnum())
+    aliases = {
+        "bnat": "bnat",
+        "btat": "btat",
+        "cicids2017": "cicids2017",
+        "toniot": "toniot",
+    }
+    return aliases.get(compact, compact)
+
+
 
 def _set_cfg_value(cfg: DictConfig, key: str, value: Any) -> None:
     """Set a nested OmegaConf value even when struct mode is enabled."""
@@ -29,7 +40,7 @@ def sync_model_dimensions_from_preprocessing(
     project_root: Path,
     metadata: dict[str, Any] | None = None,
     metadata_path: str | Path | None = None,
-    strict_num_actions: bool = True,
+    strict_num_classes: bool = True,
 ) -> dict[str, Any]:
     """Synchronize runtime model dimensions with processed tensor metadata."""
     if metadata is None:
@@ -43,94 +54,52 @@ def sync_model_dimensions_from_preprocessing(
             )
         metadata = json.loads(path.read_text(encoding="utf-8"))
 
-    if "state_dim" not in metadata or "num_actions" not in metadata:
-        raise KeyError("preprocess_metadata.json must contain state_dim and num_actions.")
+    if "feature_dim" not in metadata or "num_classes" not in metadata:
+        raise KeyError("preprocess_metadata.json must contain feature_dim and num_classes.")
 
-    actual_state_dim = int(metadata["state_dim"])
-    actual_num_actions = int(metadata["num_actions"])
-    configured_state_dim = int(OmegaConf.select(cfg, "model.state_dim"))
-    configured_num_actions = int(OmegaConf.select(cfg, "model.num_actions"))
+    actual_feature_dim = int(metadata["feature_dim"])
+    actual_num_classes = int(metadata["num_classes"])
+    configured_feature_dim = int(OmegaConf.select(cfg, "model.feature_dim"))
+    configured_num_classes = int(OmegaConf.select(cfg, "model.num_classes"))
 
-    if configured_state_dim != actual_state_dim:
+    if configured_feature_dim != actual_feature_dim:
         logger.warning(
-            "Model state_dim synchronized from preprocessing metadata | config=%d processed=%d known_labels=%s",
-            configured_state_dim,
-            actual_state_dim,
+            "Model feature_dim synchronized from preprocessing metadata | config=%d processed=%d known_labels=%s",
+            configured_feature_dim,
+            actual_feature_dim,
             metadata.get("known_labels"),
         )
-        _set_cfg_value(cfg, "model.state_dim", actual_state_dim)
-        _set_cfg_value(cfg, "env_metadata.state_dim", actual_state_dim)
+        _set_cfg_value(cfg, "model.feature_dim", actual_feature_dim)
         if OmegaConf.select(cfg, "model.transformer.input_dim", default=None) is not None:
-            _set_cfg_value(cfg, "model.transformer.input_dim", actual_state_dim)
+            _set_cfg_value(cfg, "model.transformer.input_dim", actual_feature_dim)
 
-    if configured_num_actions != actual_num_actions:
+    if configured_num_classes != actual_num_classes:
         message = (
-            "model.num_actions does not match preprocessing metadata: "
-            f"config={configured_num_actions}, processed={actual_num_actions}, "
+            "model.num_classes does not match preprocessing metadata: "
+            f"config={configured_num_classes}, processed={actual_num_classes}, "
             f"known_labels={metadata.get('known_labels')}"
         )
-        if strict_num_actions:
+        if strict_num_classes:
             raise ValueError(message)
         logger.warning("%s; synchronizing config to processed dataset.", message)
-        _set_cfg_value(cfg, "model.num_actions", actual_num_actions)
-        _set_cfg_value(cfg, "env_metadata.num_actions", actual_num_actions)
+        _set_cfg_value(cfg, "model.num_classes", actual_num_classes)
 
     return metadata
 
 
 REQUIRED_CONFIG_KEYS = (
     "seed",
-    "device.prefer",
-    "device.allow_cpu_fallback",
-    "runtime.name",
-    "runtime.device_prefer",
-    "runtime.allow_cpu_fallback",
-    "runtime.client_num_cpus",
-    "runtime.client_num_gpus",
-    "runtime.simulation_gpu_batches.enabled",
-    "runtime.simulation_gpu_batches.batch_size",
     "dataset.name",
     "dataset.preprocessing.raw_file",
     "dataset.preprocessing.output_dir",
-    "dataset.preprocessing.label_column",
     "dataset.preprocessing.known_labels",
-    "model.name",
-    "model.state_dim",
-    "model.latent_dim",
-    "model.num_actions",
-    "training.epochs",
+    "model.num_classes",
     "training.batch_size",
-    "training.local_episodes_per_round",
-    "training.steps_per_episode",
-    "training.replay_buffer_size",
-    "training.min_buffer_size",
-    "training.gamma",
-    "training.lr_prior",
-    "training.lr_q_rl",
-    "training.tau",
-    "training.target_update_freq",
-    "training.epsilon_start",
-    "training.epsilon_end",
-    "training.epsilon_decay_rate",
+    "training.local_epochs",
     "federated.num_clients",
     "federated.num_rounds",
-    "federated.local_client_epochs",
-    "federated.evaluation_frequency",
-    "federated.server.address",
-    "federated.server.fraction_fit",
-    "federated.server.fraction_evaluate",
-    "federated.server.min_fit_clients",
-    "federated.server.min_evaluate_clients",
-    "federated.server.min_available_clients",
     "federated.strategy.name",
-    "federated.strategy.aggregation_strategy",
-    "federated.strategy.min_selected_clients",
-    "federated.strategy.max_selected_fraction",
-    "federated.strategy.max_agents",
-    "federated.strategy.warmup_rounds",
-    "open_set.evt.tail_size_percent",
-    "open_set.evt.target_known_fpr",
-    "plotting.required_plots",
+    "open_set.enabled",
     "tracking.run_dir",
     "checkpointing.latest_checkpoint_path",
     "logging.level",
@@ -153,7 +122,7 @@ def validate_config(cfg: DictConfig, extra_required: Iterable[str] = ()) -> None
         "dataset.preprocessing.known_labels",
         "federated.num_clients",
         "dataset.preprocessing.num_clients",
-        "model.num_actions",
+        "model.num_classes",
     ) + tuple(extra_required)
     missing = [
         key
@@ -172,170 +141,69 @@ def validate_config(cfg: DictConfig, extra_required: Iterable[str] = ()) -> None
             "Override federated.num_clients to change both values."
         )
     _validate_external_experiment_contract(cfg)
-    # missing: list[str] = []
-    # for key in tuple(REQUIRED_CONFIG_KEYS) + tuple(extra_required):
-    #     value = OmegaConf.select(cfg, key, default=None)
-    #     if value is None or value == "???":
-    #         missing.append(key)
-    # if missing:
-    #     formatted = "\n  - ".join(missing)
-    #     raise ValueError(f"Missing required Hydra config values:\n  - {formatted}")
+    _validate_experiment_contract(cfg)
 
-    # _validate_runtime(cfg)
-    # _validate_experiment_contract(cfg)
 
-    # known_labels = OmegaConf.select(cfg, "dataset.preprocessing.known_labels")
-    # if not known_labels:
-    #     raise ValueError("dataset.preprocessing.known_labels must contain at least one label.")
-
-    # num_clients = int(OmegaConf.select(cfg, "federated.num_clients"))
-    # if num_clients <= 0:
-    #     raise ValueError("federated.num_clients must be positive.")
-    # preprocessing_num_clients = int(OmegaConf.select(cfg, "dataset.preprocessing.num_clients"))
-    # if preprocessing_num_clients != num_clients:
-    #     raise ValueError(
-    #         "dataset.preprocessing.num_clients must match federated.num_clients. "
-    #         "Override federated.num_clients to change the client count for preprocessing and FL."
-    #     )
-
-    # batch_size = int(OmegaConf.select(cfg, "training.batch_size"))
-    # min_buffer_size = int(OmegaConf.select(cfg, "training.min_buffer_size"))
-    # if batch_size <= 0 or min_buffer_size <= 0:
-    #     raise ValueError("training.batch_size and training.min_buffer_size must be positive.")
-
-    # training_epochs = int(OmegaConf.select(cfg, "training.epochs"))
-    # local_episodes = int(OmegaConf.select(cfg, "training.local_episodes_per_round"))
-    # steps_per_episode = int(OmegaConf.select(cfg, "training.steps_per_episode"))
-    # replay_buffer_size = int(OmegaConf.select(cfg, "training.replay_buffer_size"))
-    # if min(training_epochs, local_episodes, steps_per_episode, replay_buffer_size) <= 0:
-    #     raise ValueError(
-    #         "training.epochs, local_episodes_per_round, steps_per_episode, "
-    #         "and replay_buffer_size must be positive."
-    #     )
-    # if min_buffer_size > replay_buffer_size:
-    #     raise ValueError("training.min_buffer_size cannot exceed training.replay_buffer_size.")
-
-    # validation_interval = int(OmegaConf.select(cfg, "training.validation_interval"))
-    # checkpoint_interval = int(OmegaConf.select(cfg, "training.checkpoint_interval"))
-    # if validation_interval <= 0 or checkpoint_interval <= 0:
-    #     raise ValueError("training validation/checkpoint intervals must be positive.")
-
-    # gamma = float(OmegaConf.select(cfg, "training.gamma"))
-    # tau = float(OmegaConf.select(cfg, "training.tau"))
-    # if not 0.0 <= gamma <= 1.0:
-    #     raise ValueError("training.gamma must be in [0, 1].")
-    # if not 0.0 < tau <= 1.0:
-    #     raise ValueError("training.tau must be in (0, 1].")
-
-    # num_rounds = int(OmegaConf.select(cfg, "federated.num_rounds"))
-    # if num_rounds <= 0:
-    #     raise ValueError("federated.num_rounds must be positive.")
-    # if int(OmegaConf.select(cfg, "federated.local_client_epochs")) != local_episodes:
-    #     raise ValueError("federated.local_client_epochs must match training.local_episodes_per_round.")
-    # fraction_fit = float(OmegaConf.select(cfg, "federated.server.fraction_fit"))
-    # fraction_evaluate = float(OmegaConf.select(cfg, "federated.server.fraction_evaluate"))
-    # if fraction_fit != 1.0 or fraction_evaluate != 1.0:
-    #     raise ValueError("Paper experiments require federated.server.fraction_fit/evaluate == 1.0.")
-    # min_fit_clients = int(OmegaConf.select(cfg, "federated.server.min_fit_clients"))
-    # min_eval_clients = int(OmegaConf.select(cfg, "federated.server.min_evaluate_clients"))
-    # min_available_clients = int(OmegaConf.select(cfg, "federated.server.min_available_clients"))
-    # if (
-    #     min_fit_clients != num_clients
-    #     or min_eval_clients != num_clients
-    #     or min_available_clients != num_clients
-    # ):
-    #     raise ValueError("Federated server client counts must match federated.num_clients.")
-
-    # min_selected = int(OmegaConf.select(cfg, "federated.strategy.min_selected_clients"))
-    # max_agents = int(OmegaConf.select(cfg, "federated.strategy.max_agents"))
-    # max_selected_fraction = float(OmegaConf.select(cfg, "federated.strategy.max_selected_fraction"))
-    # if min_selected <= 0 or min_selected > num_clients:
-    #     raise ValueError("federated.strategy.min_selected_clients must be in [1, num_clients].")
-    # if max_agents != num_clients:
-    #     raise ValueError("federated.strategy.max_agents must match federated.num_clients.")
-    # if not 0.0 < max_selected_fraction <= 1.0:
-    #     raise ValueError("federated.strategy.max_selected_fraction must be in (0, 1].")
+def _study_prefix(cfg: DictConfig) -> str:
+    value = _select_str(cfg, "experiment.id").upper()
+    return value.split("-", 1)[0].split("_", 1)[0]
 
 
 def _apply_experiment_protocol(cfg: DictConfig) -> None:
-    """Resolve E1/E5 settings after method overlays, which Hydra composes last."""
-    experiment_id = _select_str(cfg, "experiment.id").upper()
-    if experiment_id == "E1":
+    """Enforce canonical open/closed-set selector values without legacy aliases."""
+    study = _study_prefix(cfg)
+    unknown_labels = list(OmegaConf.select(cfg, "dataset.preprocessing.unknown_labels", default=[]) or [])
+    open_mode = bool(unknown_labels) or _select_str(cfg, "evaluation.mode").lower() == "open_set"
+
+    if study == "E1":
+        open_mode = False
         _set_cfg_value(cfg, "dataset.preprocessing.protocol", "closed_set")
-        _set_cfg_value(
-            cfg,
-            "dataset.preprocessing.known_labels",
-            list(OmegaConf.select(cfg, "dataset.source_labels", default=[])),
-        )
         _set_cfg_value(cfg, "dataset.preprocessing.unknown_labels", [])
-        _set_cfg_value(cfg, "open_set.evt.enabled", False)
-        _set_cfg_value(cfg, "open_set.fed_digos.enabled", False)
-        _set_cfg_value(cfg, "training.dkd_student_osr_enabled", False)
-        _set_cfg_value(cfg, "training.dkd_student_open_set_enabled", False)
-        _set_cfg_value(cfg, "training.generator.enabled", False)
-    elif experiment_id == "E5":
+        source_labels = list(OmegaConf.select(cfg, "dataset.source_labels", default=[]) or [])
+        if source_labels:
+            _set_cfg_value(cfg, "dataset.preprocessing.known_labels", source_labels)
+    elif open_mode:
         _set_cfg_value(cfg, "dataset.preprocessing.protocol", "open_set")
-        _set_cfg_value(cfg, "open_set.evt.enabled", True)
-        _set_cfg_value(cfg, "open_set.evt.backend", "fed_digos")
-        _set_cfg_value(cfg, "open_set.fed_digos.enabled", True)
-        _set_cfg_value(cfg, "open_set.fed_digos.score_fusion.method", "prototype_rank")
-        _set_cfg_value(cfg, "open_set.fed_digos.proser.enabled", False)
-        _set_cfg_value(cfg, "training.dkd_student_osr_enabled", True)
-        _set_cfg_value(cfg, "training.dkd_student_open_set_enabled", True)
-        _set_cfg_value(cfg, "training.dkd_update_teacher_from_student", False)
-        _set_cfg_value(cfg, "training.generator.enabled", False)
+
+    _set_cfg_value(cfg, "open_set.enabled", bool(open_mode))
+    _set_cfg_value(cfg, "open_set.method", "prototype_rank" if open_mode else "disabled")
+    _set_cfg_value(cfg, "open_set.detector", "prototype_rank" if open_mode else "disabled")
+    _set_cfg_value(cfg, "open_set.prototype_rank.enabled", bool(open_mode))
+    if OmegaConf.select(cfg, "open_set.prototype_rank.proser.enabled", default=None) is not None:
+        _set_cfg_value(cfg, "open_set.prototype_rank.proser.enabled", False)
+    if OmegaConf.select(cfg, "open_set.prototype_rank.energy.train_margin_enabled", default=None) is not None:
+        _set_cfg_value(cfg, "open_set.prototype_rank.energy.train_margin_enabled", False)
 
 
 def _validate_external_experiment_contract(cfg: DictConfig) -> None:
-    experiment_id = _select_str(cfg, "experiment.id").upper()
-    if experiment_id not in {"E1", "E5"}:
+    """Validate dataset-wise external-validation invariants without single-seed restrictions."""
+    if _study_prefix(cfg) != "E5":
         return
-
-    source_labels = [str(value) for value in OmegaConf.select(cfg, "dataset.source_labels", default=[])]
-    known_labels = [
-        str(value)
-        for value in OmegaConf.select(cfg, "dataset.preprocessing.known_labels", default=[])
-    ]
-    num_actions = int(OmegaConf.select(cfg, "model.num_actions"))
-    if len(known_labels) != num_actions:
-        raise ValueError(
-            f"{experiment_id} model.num_actions={num_actions} does not match "
-            f"the {len(known_labels)} configured known labels."
-        )
-
-    if experiment_id == "E1":
-        if known_labels != source_labels:
-            raise ValueError("E1 closed-set runs must use every source label as known.")
-        if _select_str(cfg, "evaluation.mode").lower() != "closed_set":
-            raise ValueError("E1 must use evaluation.mode=closed_set.")
-        return
-
-    registry_name = _select_str(cfg, "dataset.registry_name").lower()
-    if registry_name not in {"btat", "toniot", "cicids2017"}:
-        raise ValueError("E5 requires dataset=btat, dataset=toniot, or dataset=cicids2017.")
-    if _select_str(cfg, "strategy.name").lower() != "dkd_fedos":
-        raise ValueError("E5 is restricted to the +method=dkd_fedos overlay.")
-    if int(OmegaConf.select(cfg, "seed")) != 42:
-        raise ValueError("E5 uses the frozen seed=42 protocol.")
-    if int(OmegaConf.select(cfg, "federated.num_clients")) != 10:
-        raise ValueError("E5 requires federated.num_clients=10.")
-    if int(OmegaConf.select(cfg, "federated.num_rounds")) not in {1, 100}:
-        raise ValueError("E5 requires 100 rounds, or 1 round for an explicit smoke run.")
-    if int(OmegaConf.select(cfg, "training.local_episodes_per_round")) not in {1, 10}:
-        raise ValueError("E5 requires 10 local episodes, or 1 for an explicit smoke run.")
-    if float(OmegaConf.select(cfg, "dataset.preprocessing.alpha")) != 0.5:
+    registry_name = _canonical_dataset_id(_select_str(cfg, "dataset.registry_name"))
+    dataset_name = _canonical_dataset_id(_select_str(cfg, "dataset.name"))
+    if registry_name and registry_name not in {"bnat", "btat", "toniot", "cicids2017"}:
+        raise ValueError(f"Unsupported E5 dataset registry: {registry_name}")
+    if dataset_name not in {"bnat", "btat", "toniot", "cicids2017"}:
+        raise ValueError(f"E5 dataset-wise validation received unsupported dataset={dataset_name!r}")
+    stage = _select_str(cfg, "stage", "development").lower()
+    if stage in {"paper_final", "reproduction"} and int(OmegaConf.select(cfg, "federated.num_clients", default=10)) != 10:
+        raise ValueError("E5 requires 10 clients in the canonical dataset-wise protocol.")
+    if abs(float(OmegaConf.select(cfg, "dataset.preprocessing.alpha", default=0.5)) - 0.5) > 1e-12:
         raise ValueError("E5 requires Dirichlet alpha=0.5.")
-    if bool(OmegaConf.select(cfg, "dataset.preprocessing.iid")):
-        raise ValueError("E5 requires dataset.preprocessing.iid=false.")
-
+    if bool(OmegaConf.select(cfg, "dataset.preprocessing.iid", default=False)):
+        raise ValueError("E5 requires non-IID partitioning.")
+    unknown = list(OmegaConf.select(cfg, "dataset.preprocessing.unknown_labels", default=[]) or [])
+    if not unknown:
+        raise ValueError("E5 requires a predeclared held-out unknown protocol for each dataset.")
 
 
 def _validate_runtime(cfg: DictConfig) -> None:
     prefer = str(OmegaConf.select(cfg, "device.prefer")).lower()
     runtime_prefer = str(OmegaConf.select(cfg, "runtime.device_prefer")).lower()
     allow_fallback = bool(OmegaConf.select(cfg, "device.allow_cpu_fallback"))
-    if allow_fallback or bool(OmegaConf.select(cfg, "runtime.allow_cpu_fallback")):
-        raise ValueError("Automatic CPU fallback is disabled; allow_cpu_fallback must be false.")
+    stage = _select_str(cfg, "stage", "development").lower()
+    if (allow_fallback or bool(OmegaConf.select(cfg, "runtime.allow_cpu_fallback"))) and stage in {"paper_final", "reproduction"}:
+        raise ValueError("Automatic CPU fallback is disabled; allow_cpu_fallback must be false for publication stages.")
     if prefer != runtime_prefer:
         raise ValueError("device.prefer must resolve from runtime.device_prefer.")
     if prefer in {"gpu", "cuda"}:
@@ -352,36 +220,69 @@ def _validate_runtime(cfg: DictConfig) -> None:
 
 
 def _validate_experiment_contract(cfg: DictConfig) -> None:
-    """Enforce the paper-level experiment contract from docs/cf_marlos-experiment-plan.md."""
-    experiment_id = str(OmegaConf.select(cfg, "experiment.id", default="")).upper()
+    """Enforce immutable headline-study constraints at publication stages.
+
+    Development/smoke/ablation runs intentionally use smaller budgets, so the hard
+    horizon/client constraints apply only to ``paper_final`` and ``reproduction``.
+    Study YAML files remain the declarative source of the full matrix; this validator
+    is the last line of defense against a manual CLI override quietly changing a
+    publication run.
+    """
+    study = _study_prefix(cfg)
+    stage = _select_str(cfg, "stage", "development").lower()
     pipeline = str(OmegaConf.select(cfg, "experiment.pipeline", default="full")).lower()
     valid_pipelines = {
-        "suite",
-        "plot",
-        "export",
-        "suite_artifacts",
-        "preprocess",
-        "compare",
         "full",
         "reproduce",
         "centralized",
-        "train",
         "federated",
         "evaluate",
     }
     if pipeline not in valid_pipelines:
         raise ValueError(f"Unknown experiment.pipeline={pipeline!r}.")
-    if experiment_id in {"E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8"}:
-        rounds = int(OmegaConf.select(cfg, "federated.num_rounds"))
-        if experiment_id != "E7" and rounds != 100:
-            raise ValueError(
-                f"{experiment_id} must use 100 logical federated rounds per cf_marlos-experiment-plan.md."
-            )
-        expected_clients = 10
-        if experiment_id != "E7" and int(OmegaConf.select(cfg, "federated.num_clients")) != expected_clients:
-            raise ValueError(
-                f"{experiment_id} must use {expected_clients} clients per cf_marlos-experiment-plan.md."
-            )
+    canonical_studies = {
+        "E0", "E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8",
+        "A1", "A2", "A3", "A4", "A5", "S1",
+    }
+    if stage in {"paper_final", "reproduction"} and study not in canonical_studies:
+        raise ValueError(
+            f"stage={stage!r} requires a canonical E0-E8/A1-A5/S1 study ID; got {study!r}. "
+            "Use the declarative study runner instead of publishing an ad-hoc baseline config."
+        )
+
+    if study not in {f"E{i}" for i in range(1, 9)} or stage not in {"paper_final", "reproduction"}:
+        return
+
+    rounds = int(OmegaConf.select(cfg, "federated.num_rounds"))
+    if rounds != 100:
+        raise ValueError(f"{study} {stage} runs must use the predeclared 100-round horizon.")
+
+    clients = int(OmegaConf.select(cfg, "federated.num_clients"))
+    if study == "E6":
+        if clients not in {10, 50, 100}:
+            raise ValueError("E6 fixed-data scalability requires clients in {10,50,100}.")
+    elif clients != 10:
+        raise ValueError(f"{study} {stage} runs require 10 clients in the canonical protocol.")
+
+    iid = bool(OmegaConf.select(cfg, "dataset.preprocessing.iid", default=False))
+    if study in {"E1", "E2"} and not iid:
+        raise ValueError(f"{study} is an IID publication study.")
+    if study in {"E3", "E4", "E5", "E6", "E7", "E8"} and iid:
+        raise ValueError(f"{study} is a non-IID publication study.")
+
+    alpha = float(OmegaConf.select(cfg, "dataset.preprocessing.alpha", default=0.5))
+    if study in {"E3", "E4"} and not any(abs(alpha - x) <= 1e-12 for x in (1.0, 0.5, 0.1)):
+        raise ValueError(f"{study} requires alpha in {{1.0,0.5,0.1}}.")
+    if study in {"E5", "E6", "E7", "E8"} and abs(alpha - 0.5) > 1e-12:
+        raise ValueError(f"{study} requires canonical alpha=0.5.")
+
+    if study == "E8":
+        unknown = list(OmegaConf.select(cfg, "dataset.preprocessing.unknown_labels", default=[]) or [])
+        known = list(OmegaConf.select(cfg, "dataset.preprocessing.known_labels", default=[]) or [])
+        if len(unknown) != 1 or str(unknown[0]) not in {"BP", "DoS", "MitM", "FoT"}:
+            raise ValueError("E8 requires exactly one held-out attack from {BP,DoS,MitM,FoT}.")
+        if "Normal" not in known or str(unknown[0]) in {str(x) for x in known}:
+            raise ValueError("E8 requires Normal to remain known and the held-out attack to be absent from known labels.")
 
 
 def resolve_path(project_root: Path, path_like: str | Path) -> Path:

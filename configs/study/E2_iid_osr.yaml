@@ -1,0 +1,30 @@
+# E2 IID Open-Set Recognition Benchmark
+study_id: E2-IID-OSR
+name: E2_iid_osr
+description: Open-set recognition performance under IID client distribution.
+
+methods:
+  - fedtros_pr
+  - fedavg
+  - fedprox
+  - fedgpa
+datasets:
+  - bnat
+alphas:
+  - 1.0
+iids:
+  - true
+unknown_label_sets:
+  - ["FoT"]
+seeds:
+  - 17
+  - 42
+  - 73
+  - 101
+  - 137
+num_clients: 10
+
+base_overrides:
+  federated.num_rounds: 100
+  training.local_epochs: 1
+  evaluation.mode: open_set

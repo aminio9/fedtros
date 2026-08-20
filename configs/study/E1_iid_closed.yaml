@@ -1,0 +1,30 @@
+# E1 IID Closed-Set Benchmark
+study_id: E1-IID-CS
+name: E1_iid_closed
+description: Closed-set classification under uniform IID client data partitioning.
+
+methods:
+  - fedtros_pr
+  - fedavg
+  - fedprox
+  - fedgpa
+datasets:
+  - bnat
+alphas:
+  - 1.0
+iids:
+  - true
+unknown_label_sets:
+  - []
+seeds:
+  - 17
+  - 42
+  - 73
+  - 101
+  - 137
+num_clients: 10
+
+base_overrides:
+  federated.num_rounds: 100
+  training.local_epochs: 1
+  evaluation.mode: closed_set

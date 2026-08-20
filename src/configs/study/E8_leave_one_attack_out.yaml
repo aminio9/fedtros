@@ -1,0 +1,19 @@
+study_id: E8-LOAO
+name: E8_leave_one_attack_out
+description: Leave-one-attack-out OSR at canonical alpha=0.5; Normal always remains known.
+methods: [fedtros_pr]
+datasets: [bnat]
+alphas: [0.5]
+iids: [false]
+unknown_label_sets: [[BP], [DoS], [MitM], [FoT]]
+known_labels_by_unknown:
+  BP: [Normal, DoS, MitM, FoT]
+  DoS: [Normal, BP, MitM, FoT]
+  MitM: [Normal, BP, DoS, FoT]
+  FoT: [Normal, BP, DoS, MitM]
+seeds: [17, 42, 73, 101, 137]
+num_clients: 10
+base_overrides:
+  federated.num_rounds: 100
+  training.local_epochs: 2
+  evaluation.mode: open_set

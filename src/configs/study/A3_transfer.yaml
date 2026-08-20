@@ -1,0 +1,21 @@
+study_id: A3-TRANSFER
+name: A3_transfer
+description: "Isolate teacher-transfer components: KD gating and feature alignment."
+methods: [fedtros_pr]
+datasets: [bnat]
+alphas: [0.5]
+iids: [false]
+unknown_label_sets: [[FoT]]
+known_labels: [Normal, BP, DoS, MitM]
+seeds: [17, 42, 73]
+num_clients: 10
+variants:
+  - name: no_kd_no_alignment
+    overrides: {training.kd_enabled: false, training.alignment_enabled: false}
+  - name: ungated_kd
+    overrides: {training.kd_enabled: true, training.kd_gating_enabled: false, training.alignment_enabled: false}
+  - name: gated_kd
+    overrides: {training.kd_enabled: true, training.kd_gating_enabled: true, training.alignment_enabled: false}
+  - name: full_transfer
+    overrides: {training.kd_enabled: true, training.kd_gating_enabled: true, training.alignment_enabled: true}
+base_overrides: {federated.num_rounds: 100, training.local_epochs: 2, evaluation.mode: open_set}

@@ -1,4 +1,6 @@
+id: smoke
 name: smoke
+pipeline: all
 description: Synthetic end-to-end smoke test.
 method: smoke
 dataset: synthetic

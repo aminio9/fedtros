@@ -1,0 +1,32 @@
+# E5 Multi-Dataset Generalization
+study_id: E5-MULTI-DATASET
+name: E5_datasetwise
+description: Generalization across multiple network security datasets (BNaT, BTAT, ToN-IoT, CIC-IDS2017).
+
+methods:
+  - fedtros_pr
+  - fedavg
+  - fedprox
+datasets:
+  - bnat
+  - btat
+  - toniot
+  - cicids2017
+alphas:
+  - 0.1
+iids:
+  - false
+unknown_label_sets:
+  - ["FoT"]
+seeds:
+  - 17
+  - 42
+  - 73
+  - 101
+  - 137
+num_clients: 10
+
+base_overrides:
+  federated.num_rounds: 100
+  training.local_epochs: 1
+  evaluation.mode: open_set

@@ -15,7 +15,7 @@ RAW_FILES = {
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the frozen DKD-FedOS E5 protocol.")
+    parser = argparse.ArgumentParser(description="Run the frozen FedTROS E5 protocol.")
     parser.add_argument(
         "--datasets",
         nargs="+",
@@ -42,13 +42,13 @@ def selected_datasets(values: list[str]) -> list[str]:
 
 def build_command(dataset: str, args: argparse.Namespace) -> list[str]:
     smoke_prefix = "smoke_" if args.smoke else ""
-    run_id = f"{smoke_prefix}e5_{dataset}_noniid_alpha05_open_dkd_fedos_seed{args.seed}"
+    run_id = f"{smoke_prefix}e5_{dataset}_noniid_alpha05_open_fedtros_seed{args.seed}"
     command = [
         sys.executable,
         "run.py",
         "experiment=exp5",
         f"dataset={dataset}",
-        "+method=dkd_fedos",
+        "+method=fedtros",
         f"seed={args.seed}",
         f"tracking.run_id={run_id}",
     ]

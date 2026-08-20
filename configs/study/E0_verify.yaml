@@ -1,0 +1,23 @@
+# E0 Verification Study
+study_id: E0-VERIFY
+name: E0_verify
+description: Quick end-to-end verification of FedTROS-PR variational teacher and prototype-rank rejection.
+
+methods:
+  - fedtros_pr
+datasets:
+  - bnat
+alphas:
+  - 0.1
+iids:
+  - false
+unknown_label_sets:
+  - ["FoT"]
+seeds:
+  - 42
+num_clients: 10
+
+base_overrides:
+  federated.num_rounds: 10
+  training.local_epochs: 1
+  training.fedtros_global_anchor_weight: 0.1

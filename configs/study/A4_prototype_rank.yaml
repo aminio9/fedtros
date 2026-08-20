@@ -1,0 +1,25 @@
+# A4 Prototype-Rank Rejection Ablation
+study_id: A4-PROTOTYPE-RANK
+name: A4_prototype_rank
+description: Ablation comparing Prototype-Rank score against Softmax Confidence, Energy, and Raw Distance rejection.
+
+methods:
+  - fedtros_pr
+datasets:
+  - bnat
+alphas:
+  - 0.1
+iids:
+  - false
+unknown_label_sets:
+  - ["FoT"]
+seeds:
+  - 17
+  - 42
+  - 73
+num_clients: 10
+
+base_overrides:
+  federated.num_rounds: 50
+  training.local_epochs: 1
+  evaluation.mode: open_set

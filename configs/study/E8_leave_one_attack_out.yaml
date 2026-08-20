@@ -1,0 +1,32 @@
+# E8 Leave-One-Attack-Out (LOAO) Open-Set Evaluation
+study_id: E8-LOAO
+name: E8_leave_one_attack_out
+description: Systematic leave-one-attack-out open-set evaluation across all attack classes.
+
+methods:
+  - fedtros_pr
+  - fedavg
+  - fedprox
+datasets:
+  - bnat
+alphas:
+  - 0.1
+iids:
+  - false
+unknown_label_sets:
+  - ["BP"]
+  - ["DoS"]
+  - ["MitM"]
+  - ["FoT"]
+seeds:
+  - 17
+  - 42
+  - 73
+  - 101
+  - 137
+num_clients: 10
+
+base_overrides:
+  federated.num_rounds: 100
+  training.local_epochs: 1
+  evaluation.mode: open_set

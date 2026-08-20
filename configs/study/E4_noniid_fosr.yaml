@@ -1,0 +1,32 @@
+# E4 Non-IID Federated Open-Set Recognition Main Benchmark
+study_id: E4-NIID-FOSR
+name: E4_noniid_fosr
+description: Core benchmark combining statistical heterogeneity (Dirichlet alpha) and open-set recognition.
+
+methods:
+  - fedtros_pr
+  - fedavg
+  - fedprox
+  - fedgpa
+datasets:
+  - bnat
+alphas:
+  - 0.1
+  - 0.5
+  - 1.0
+iids:
+  - false
+unknown_label_sets:
+  - ["FoT"]
+seeds:
+  - 17
+  - 42
+  - 73
+  - 101
+  - 137
+num_clients: 10
+
+base_overrides:
+  federated.num_rounds: 100
+  training.local_epochs: 1
+  evaluation.mode: open_set

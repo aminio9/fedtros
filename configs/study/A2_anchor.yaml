@@ -1,0 +1,25 @@
+# A2 Student-Anchor Regularization Ablation
+study_id: A2-ANCHOR
+name: A2_anchor
+description: Ablation of the global anchor weight (gamma = 0.0, 0.05, 0.1, 0.2, 0.5) preventing representation drift.
+
+methods:
+  - fedtros_pr
+datasets:
+  - bnat
+alphas:
+  - 0.1
+iids:
+  - false
+unknown_label_sets:
+  - ["FoT"]
+seeds:
+  - 17
+  - 42
+  - 73
+num_clients: 10
+
+base_overrides:
+  federated.num_rounds: 50
+  training.local_epochs: 1
+  evaluation.mode: open_set

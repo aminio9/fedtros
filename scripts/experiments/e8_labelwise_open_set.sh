@@ -10,28 +10,28 @@ invoke_hydra_run() {
 
 invoke_hydra_run \
   "experiment=exp8" \
-  "+method=dkd_fedos" \
+  "+method=fedtros" \
   "seed=42" \
   "dataset.known_labels=[Normal,DoS,MitM,FoT]" \
-  "tracking.run_id=e8_bp_dkd_fedos_seed42"
+  "tracking.run_id=e8_bp_fedtros_seed42"
 
 invoke_hydra_run \
   "experiment=exp8" \
-  "+method=dkd_fedos" \
+  "+method=fedtros" \
   "seed=42" \
   "dataset.known_labels=[Normal,BP,MitM,FoT]" \
-  "tracking.run_id=e8_dos_dkd_fedos_seed42"
+  "tracking.run_id=e8_dos_fedtros_seed42"
 
 invoke_hydra_run \
   "experiment=exp8" \
-  "+method=dkd_fedos" \
+  "+method=fedtros" \
   "seed=42" \
   "dataset.known_labels=[Normal,BP,DoS,FoT]" \
-  "tracking.run_id=e8_mitm_dkd_fedos_seed42"
+  "tracking.run_id=e8_mitm_fedtros_seed42"
 
 invoke_hydra_run \
   "experiment=exp8" \
-  "+method=dkd_fedos" \
+  "+method=fedtros" \
   "seed=42" \
   "dataset.known_labels=[Normal,BP,DoS,MitM]" \
-  "tracking.run_id=e8_fot_dkd_fedos_seed42"
+  "tracking.run_id=e8_fot_fedtros_seed42"

@@ -6,8 +6,8 @@ invoke_hydra_run() {
 }
 
 for alpha in "0.1" "0.5" "1.0" "10.0"; do
+  invoke_hydra_run "experiment=exp4" "+method=fedtros" "seed=42" "dataset.preprocessing.alpha=$alpha"
   invoke_hydra_run "experiment=exp4" "+method=fmrl_ava" "seed=42" "dataset.preprocessing.alpha=$alpha"
-  invoke_hydra_run "experiment=exp4" "+method=dkd_fedos" "seed=42" "dataset.preprocessing.alpha=$alpha"
   invoke_hydra_run "experiment=exp4" "+method=fedgpa" "seed=42" "dataset.preprocessing.alpha=$alpha"
   invoke_hydra_run "experiment=exp4" "+method=fmrl_ava" "seed=42" "dataset.preprocessing.alpha=$alpha" "open_set.evt.enabled=false" "experiment.method=ClosedSet_No_EVT" "tracking.run_id=e4_no_evt_alpha${alpha}_seed42"
   invoke_hydra_run "experiment=exp4" "+method=fedavg" "seed=42" "dataset.preprocessing.alpha=$alpha"

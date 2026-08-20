@@ -1,0 +1,27 @@
+# E7 Communication and Runtime Efficiency
+study_id: E7-EFFICIENCY
+name: E7_efficiency
+description: Communication overhead and runtime comparison against standard FedAvg and FedProx baselines.
+
+methods:
+  - fedtros_pr
+  - fedavg
+  - fedprox
+datasets:
+  - bnat
+alphas:
+  - 0.1
+iids:
+  - false
+unknown_label_sets:
+  - ["FoT"]
+seeds:
+  - 17
+  - 42
+  - 73
+num_clients: 10
+
+base_overrides:
+  federated.num_rounds: 50
+  training.local_epochs: 1
+  evaluation.mode: open_set

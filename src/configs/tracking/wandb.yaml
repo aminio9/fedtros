@@ -1,0 +1,19 @@
+# Canonical FedTROS-PR interactive experiment tracking.
+# Durable scientific results are written independently by ResultStore.
+backend: wandb
+mode: online           # online | offline | disabled
+project: FedTROS-PR
+entity: null
+group: ${experiment.id}
+job_type: ${stage}
+tags: []
+notes: null
+save_code: false
+resume: never          # never | allow | must | auto
+log_artifacts: true
+
+# Compatibility paths used by older scientific modules during the migration.
+# scripts/run.py rewrites run_id/run_dir to the generated canonical run before execution.
+output_dir: ${output.root_dir}/runs
+run_id: pending
+run_dir: ${tracking.output_dir}/${tracking.run_id}

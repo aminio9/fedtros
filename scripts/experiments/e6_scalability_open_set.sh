@@ -13,19 +13,19 @@ run_exp6_scalability() {
   echo "================================================================================"
 
   if poetry run python run.py experiment=exp6 \
-    +method=dkd_fedos \
+    +method=fedtros \
     seed=42 \
     federated.num_rounds=100 \
     training.local_episodes_per_round=10 \
-    open_set.evt.backend=fed_digos \
+    open_set.evt.backend=fedtros_osr \
     open_set.evt.evaluate_each_round=true \
     open_set.evt.evaluate_every_n_rounds=1 \
     open_set.evt.save_round_scores=false \
-    open_set.fed_digos.enabled=true \
-    open_set.fed_digos.score_fusion.method=prototype_rank \
-    open_set.fed_digos.proser.enabled=false \
-    training.dkd_student_osr_enabled=true \
-    training.dkd_student_open_set_enabled=true \
+    open_set.fedtros_osr.enabled=true \
+    open_set.fedtros_osr.score_fusion.method=prototype_rank \
+    open_set.fedtros_osr.proser.enabled=false \
+    training.fedtros_student_osr_enabled=true \
+    training.fedtros_student_open_set_enabled=true \
     training.generator.enabled=false \
     training.evaluate_after_local_fit=true \
     evaluation.save_client_reports=false \

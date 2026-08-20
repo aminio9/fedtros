@@ -1,0 +1,32 @@
+# E3 Non-IID Closed-Set Benchmark
+study_id: E3-NIID-CS
+name: E3_noniid_closed
+description: Closed-set robustness under severe label skew (Dirichlet alpha 0.1, 0.5, 1.0).
+
+methods:
+  - fedtros_pr
+  - fedavg
+  - fedprox
+  - fedgpa
+datasets:
+  - bnat
+alphas:
+  - 0.1
+  - 0.5
+  - 1.0
+iids:
+  - false
+unknown_label_sets:
+  - []
+seeds:
+  - 17
+  - 42
+  - 73
+  - 101
+  - 137
+num_clients: 10
+
+base_overrides:
+  federated.num_rounds: 100
+  training.local_epochs: 1
+  evaluation.mode: closed_set

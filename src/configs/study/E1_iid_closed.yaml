@@ -1,0 +1,17 @@
+study_id: E1-IID-CS
+name: E1_iid_closed
+description: IID closed-set utility on BNaT and BTAT with architecture-matched student baselines.
+methods: [fedtros_pr, fedavg, fedprox]
+datasets: [bnat, btat]
+alphas: [1.0]
+iids: [true]
+unknown_label_sets: [[]]
+known_labels_by_dataset:
+  bnat: [Normal, BP, DoS, MitM, FoT]
+  btat: [Normal, DoS, OaU, FoT, Re, DeC, FDV]
+seeds: [17, 42, 73, 101, 137]
+num_clients: 10
+base_overrides:
+  federated.num_rounds: 100
+  training.local_epochs: 2
+  evaluation.mode: closed_set

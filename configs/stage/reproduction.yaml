@@ -1,0 +1,10 @@
+# Stage: reproduction
+stage: reproduction
+federated.num_rounds: 100
+training.local_epochs: 1
+seeds:
+  - 17
+  - 42
+  - 73
+  - 101
+  - 137

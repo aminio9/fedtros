@@ -1,7 +1,10 @@
+id: baseline
 name: baseline
-description: B-NAT FMRL-AVA baseline with EVT open-set evaluation.
-method: FMRL_AVA
-dataset: B-NAT
+variant: canonical
+pipeline: full
+description: BNaT FedTROS-PR baseline with canonical VCT training and Prototype-Rank evaluation.
+method: FedTROS-PR
+dataset: BNaT
 partition: dirichlet
 alpha: ${dataset.preprocessing.alpha}
 notes: "Use saved metrics/CSV artifacts for every figure; do not use template arrays as evidence."

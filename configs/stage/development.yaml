@@ -1,0 +1,6 @@
+# Stage: development
+stage: development
+federated.num_rounds: 5
+training.local_epochs: 1
+federated.num_clients: 5
+dataset.preprocessing.num_clients: 5

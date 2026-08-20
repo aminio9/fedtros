@@ -1,0 +1,23 @@
+# @package _global_
+stage: smoke
+federated:
+  num_rounds: 2
+  num_clients: 2
+training:
+  local_epochs: 1
+dataset:
+  preprocessing:
+    num_clients: 2
+    smoke: true
+open_set:
+  calibration:
+    min_samples_per_class: 2
+  prototype_rank:
+    prototype:
+      num_prototypes_per_class: 2
+      min_samples_per_prototype: 2
+      negative:
+        num_prototypes: 4
+        max_samples: 128
+runtime:
+  allow_cpu_fallback: true

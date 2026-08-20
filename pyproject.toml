@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "cf-marlos"
+name = "fedtros-ids"
 version = "0.1.0"
-description = "Federated Learning with Open-Set Recognition and Reinforcement"
+description = "FedTROS-PR: Federated Teacher-Regularized Open-Set Recognition with Prototype-Rank Rejection"
 authors = ["moha_amini <mhaminii18@gmail.com>"]
 readme = "README.md"
 packages = [{ include = "src", from = "." }]
@@ -13,7 +13,6 @@ flwr = { version = ">=1.29.0,<2.0.0", extras = ["simulation"] }
 
 torch = { version = "==2.11.0", source = "pytorch-cu128" }
 
-gymnasium = ">=1.2.3,<2.0.0"
 hydra-core = ">=1.3.2,<2.0.0"
 
 numpy = ">=1.26.4,<2.3.0"
@@ -23,8 +22,7 @@ scipy = ">=1.13.0,<2.0.0"
 joblib = ">=1.5.0,<2.0.0"
 tqdm = ">=4.67.0,<5.0.0"
 
-matplotlib = ">=3.9.0,<4.0.0"
-seaborn = ">=0.13.2,<0.14.0"
+wandb = ">=0.22.0,<1.0.0"
 
 [tool.poetry.group.dev.dependencies]
 ruff = ">=0.8.0,<1.0.0"

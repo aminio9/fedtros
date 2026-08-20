@@ -1,0 +1,31 @@
+# S1 Fine-Grained Sensitivity Study
+study_id: S1-SENSITIVITY
+name: S1_sensitivity
+description: Fine-grained Dirichlet alpha sensitivity across a wider range (0.05, 0.1, 0.2, 0.5, 1.0, 2.0).
+
+methods:
+  - fedtros_pr
+  - fedavg
+datasets:
+  - bnat
+alphas:
+  - 0.05
+  - 0.1
+  - 0.2
+  - 0.5
+  - 1.0
+  - 2.0
+iids:
+  - false
+unknown_label_sets:
+  - ["FoT"]
+seeds:
+  - 17
+  - 42
+  - 73
+num_clients: 10
+
+base_overrides:
+  federated.num_rounds: 50
+  training.local_epochs: 1
+  evaluation.mode: open_set

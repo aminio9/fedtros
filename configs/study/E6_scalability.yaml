@@ -1,0 +1,26 @@
+# E6 Scalability Study
+study_id: E6-SCALABILITY
+name: E6_scalability
+description: Performance and aggregation scaling across large client populations (c=10, 20, 50, 100).
+
+methods:
+  - fedtros_pr
+  - fedavg
+datasets:
+  - bnat
+alphas:
+  - 0.1
+iids:
+  - false
+unknown_label_sets:
+  - ["FoT"]
+seeds:
+  - 17
+  - 42
+  - 73
+num_clients: 50
+
+base_overrides:
+  federated.num_rounds: 50
+  training.local_epochs: 1
+  evaluation.mode: open_set

@@ -1,0 +1,32 @@
+study_id: A4-PR
+name: A4_prototype_rank
+description: Matched open-set detector ablation on the same frozen student representation.
+methods: [fedtros_pr]
+datasets: [bnat]
+alphas: [0.5]
+iids: [false]
+unknown_label_sets: [[FoT]]
+known_labels: [Normal, BP, DoS, MitM]
+num_clients: 10
+seeds: [17, 42, 73, 101, 137]
+variants:
+  - name: msp
+    overrides:
+      open_set.prototype_rank.score_fusion.method: msp_rank
+      open_set.prototype_rank.prototype.negative.enabled: false
+  - name: energy
+    overrides:
+      open_set.prototype_rank.score_fusion.method: energy_rank
+      open_set.prototype_rank.prototype.negative.enabled: false
+  - name: positive_only
+    overrides:
+      open_set.prototype_rank.prototype.negative.enabled: false
+      open_set.prototype_rank.score_fusion.method: prototype_raw
+  - name: boundary_raw
+    overrides:
+      open_set.prototype_rank.prototype.negative.enabled: true
+      open_set.prototype_rank.score_fusion.method: prototype_raw
+  - name: full_rank
+    overrides:
+      open_set.prototype_rank.prototype.negative.enabled: true
+      open_set.prototype_rank.score_fusion.method: prototype_rank
