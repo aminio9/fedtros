@@ -1,0 +1,54 @@
+run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,fpr,tpr,threshold
+e5dataset_bnat_fedtros_pr_a0p5_fotunk_c2_s42_d367ed,E5-DATASET,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,0.0,0.0,inf
+e5dataset_bnat_fedtros_pr_a0p5_fotunk_c2_s42_d367ed,E5-DATASET,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,0.1688311688311688,0.9479166666666666,1.0
+e5dataset_bnat_fedtros_pr_a0p5_fotunk_c2_s42_d367ed,E5-DATASET,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,0.3116883116883117,1.0,0.8571428571428571
+e5dataset_bnat_fedtros_pr_a0p5_fotunk_c2_s42_d367ed,E5-DATASET,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,0.3636363636363636,1.0,0.7142857142857143
+e5dataset_bnat_fedtros_pr_a0p5_fotunk_c2_s42_d367ed,E5-DATASET,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,0.4675324675324675,1.0,0.5714285714285714
+e5dataset_bnat_fedtros_pr_a0p5_fotunk_c2_s42_d367ed,E5-DATASET,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,0.7012987012987013,1.0,0.2857142857142857
+e5dataset_bnat_fedtros_pr_a0p5_fotunk_c2_s42_d367ed,E5-DATASET,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,0.7532467532467533,1.0,0.1428571428571428
+e5dataset_bnat_fedtros_pr_a0p5_fotunk_c2_s42_d367ed,E5-DATASET,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,1.0,1.0,0.0
+e5dataset_btat_fedtros_pr_a0p5_2unk_c2_s42_c0e96c,E5-DATASET,FedTROS-PR,B-TAT,0.5,42,2,canonical,Re|DeC,0.0,0.0,inf
+e5dataset_btat_fedtros_pr_a0p5_2unk_c2_s42_c0e96c,E5-DATASET,FedTROS-PR,B-TAT,0.5,42,2,canonical,Re|DeC,0.3645833333333333,0.21875,1.0
+e5dataset_btat_fedtros_pr_a0p5_2unk_c2_s42_c0e96c,E5-DATASET,FedTROS-PR,B-TAT,0.5,42,2,canonical,Re|DeC,0.46875,0.96875,0.75
+e5dataset_btat_fedtros_pr_a0p5_2unk_c2_s42_c0e96c,E5-DATASET,FedTROS-PR,B-TAT,0.5,42,2,canonical,Re|DeC,0.4895833333333333,0.96875,0.6666666666666666
+e5dataset_btat_fedtros_pr_a0p5_2unk_c2_s42_c0e96c,E5-DATASET,FedTROS-PR,B-TAT,0.5,42,2,canonical,Re|DeC,0.5625,0.9791666666666666,0.5833333333333334
+e5dataset_btat_fedtros_pr_a0p5_2unk_c2_s42_c0e96c,E5-DATASET,FedTROS-PR,B-TAT,0.5,42,2,canonical,Re|DeC,0.6145833333333334,0.9895833333333334,0.5
+e5dataset_btat_fedtros_pr_a0p5_2unk_c2_s42_c0e96c,E5-DATASET,FedTROS-PR,B-TAT,0.5,42,2,canonical,Re|DeC,0.6875,1.0,0.4166666666666667
+e5dataset_btat_fedtros_pr_a0p5_2unk_c2_s42_c0e96c,E5-DATASET,FedTROS-PR,B-TAT,0.5,42,2,canonical,Re|DeC,0.8125,1.0,0.3333333333333333
+e5dataset_btat_fedtros_pr_a0p5_2unk_c2_s42_c0e96c,E5-DATASET,FedTROS-PR,B-TAT,0.5,42,2,canonical,Re|DeC,0.8958333333333334,1.0,0.1666666666666666
+e5dataset_btat_fedtros_pr_a0p5_2unk_c2_s42_c0e96c,E5-DATASET,FedTROS-PR,B-TAT,0.5,42,2,canonical,Re|DeC,0.9895833333333334,1.0,0.0833333333333333
+e5dataset_btat_fedtros_pr_a0p5_2unk_c2_s42_c0e96c,E5-DATASET,FedTROS-PR,B-TAT,0.5,42,2,canonical,Re|DeC,1.0,1.0,0.0
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.0,0.0,inf
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.1618497109826589,0.8497109826589595,1.0
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.2080924855491329,0.8670520231213873,0.9583333333333334
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.2138728323699422,0.8728323699421965,0.875
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.2312138728323699,0.8901734104046243,0.7916666666666666
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.3294797687861271,0.907514450867052,0.75
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.3872832369942196,0.907514450867052,0.7083333333333334
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.3988439306358382,0.907514450867052,0.6666666666666666
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.4277456647398844,0.907514450867052,0.625
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.4335260115606936,0.907514450867052,0.5833333333333334
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.5317919075144508,0.9190751445086706,0.5
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.5664739884393064,0.9190751445086706,0.4583333333333333
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.5838150289017341,0.9190751445086706,0.4166666666666667
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.7109826589595376,0.9190751445086706,0.3333333333333333
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.7167630057803468,0.9190751445086706,0.2916666666666667
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.8265895953757225,0.9190751445086706,0.25
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.8670520231213873,0.9190751445086706,0.1666666666666666
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.8786127167630058,0.9190751445086706,0.0833333333333333
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,0.930635838150289,0.9190751445086706,0.0416666666666666
+e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,1.0,1.0,0.0
+e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032,E5-DATASET,FedTROS-PR,ToN-IoT,0.5,42,2,canonical,mitm|ransomware|xss,0.0,0.0,inf
+e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032,E5-DATASET,FedTROS-PR,ToN-IoT,0.5,42,2,canonical,mitm|ransomware|xss,0.0444444444444444,0.1851851851851851,1.0
+e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032,E5-DATASET,FedTROS-PR,ToN-IoT,0.5,42,2,canonical,mitm|ransomware|xss,0.1777777777777777,0.3037037037037037,0.9285714285714286
+e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032,E5-DATASET,FedTROS-PR,ToN-IoT,0.5,42,2,canonical,mitm|ransomware|xss,0.2592592592592592,0.7185185185185186,0.8571428571428571
+e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032,E5-DATASET,FedTROS-PR,ToN-IoT,0.5,42,2,canonical,mitm|ransomware|xss,0.362962962962963,0.9185185185185184,0.7857142857142857
+e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032,E5-DATASET,FedTROS-PR,ToN-IoT,0.5,42,2,canonical,mitm|ransomware|xss,0.4148148148148148,0.9333333333333332,0.7142857142857143
+e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032,E5-DATASET,FedTROS-PR,ToN-IoT,0.5,42,2,canonical,mitm|ransomware|xss,0.5851851851851851,0.9703703703703704,0.6428571428571429
+e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032,E5-DATASET,FedTROS-PR,ToN-IoT,0.5,42,2,canonical,mitm|ransomware|xss,0.6296296296296297,0.9777777777777776,0.5714285714285714
+e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032,E5-DATASET,FedTROS-PR,ToN-IoT,0.5,42,2,canonical,mitm|ransomware|xss,0.7333333333333333,0.9851851851851852,0.5
+e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032,E5-DATASET,FedTROS-PR,ToN-IoT,0.5,42,2,canonical,mitm|ransomware|xss,0.7777777777777778,0.9925925925925926,0.3571428571428571
+e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032,E5-DATASET,FedTROS-PR,ToN-IoT,0.5,42,2,canonical,mitm|ransomware|xss,0.8074074074074075,0.9925925925925926,0.2857142857142857
+e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032,E5-DATASET,FedTROS-PR,ToN-IoT,0.5,42,2,canonical,mitm|ransomware|xss,0.8666666666666667,0.9925925925925926,0.2142857142857142
+e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032,E5-DATASET,FedTROS-PR,ToN-IoT,0.5,42,2,canonical,mitm|ransomware|xss,0.9111111111111112,1.0,0.0714285714285714
+e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032,E5-DATASET,FedTROS-PR,ToN-IoT,0.5,42,2,canonical,mitm|ransomware|xss,1.0,1.0,0.0

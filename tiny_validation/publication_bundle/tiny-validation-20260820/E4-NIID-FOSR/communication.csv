@@ -1,0 +1,11 @@
+run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,round,communication/downlink_bytes,communication/round_bytes,communication/uplink_bytes,communication/cumulative_bytes
+e4niidfosr_bnat_fedavg_a0p5_fotunk_c2_s42_4acb35,E4-NIID-FOSR,FedAvg-Student,B-NAT,0.5,42,2,canonical,FoT,1,1451040.0,2902080.0,1451040.0,2902080.0
+e4niidfosr_bnat_fedavg_a0p5_fotunk_c2_s42_4acb35,E4-NIID-FOSR,FedAvg-Student,B-NAT,0.5,42,2,canonical,FoT,2,1451040.0,2902080.0,1451040.0,5804160.0
+e4niidfosr_bnat_fedprox_a0p5_fotunk_c2_s42_fd594b,E4-NIID-FOSR,FedProx-Student,B-NAT,0.5,42,2,canonical,FoT,1,1451040.0,2902080.0,1451040.0,2902080.0
+e4niidfosr_bnat_fedprox_a0p5_fotunk_c2_s42_fd594b,E4-NIID-FOSR,FedProx-Student,B-NAT,0.5,42,2,canonical,FoT,2,1451040.0,2902080.0,1451040.0,5804160.0
+e4niidfosr_bnat_fedtros_pr_a0p5_fotunk_c2_s17_da8ef0,E4-NIID-FOSR,FedTROS-PR,B-NAT,0.5,17,2,canonical,FoT,1,1451040.0,2902080.0,1451040.0,2902080.0
+e4niidfosr_bnat_fedtros_pr_a0p5_fotunk_c2_s17_da8ef0,E4-NIID-FOSR,FedTROS-PR,B-NAT,0.5,17,2,canonical,FoT,2,1451040.0,2902080.0,1451040.0,5804160.0
+e4niidfosr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_8cc835,E4-NIID-FOSR,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,1,1451040.0,2902080.0,1451040.0,2902080.0
+e4niidfosr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_8cc835,E4-NIID-FOSR,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,2,1451040.0,2902080.0,1451040.0,5804160.0
+e4niidfosr_bnat_fedtros_pr_a0p5_fotunk_c2_s73_e69c8c,E4-NIID-FOSR,FedTROS-PR,B-NAT,0.5,73,2,canonical,FoT,1,1451040.0,2902080.0,1451040.0,2902080.0
+e4niidfosr_bnat_fedtros_pr_a0p5_fotunk_c2_s73_e69c8c,E4-NIID-FOSR,FedTROS-PR,B-NAT,0.5,73,2,canonical,FoT,2,1451040.0,2902080.0,1451040.0,5804160.0

@@ -1,0 +1,9 @@
+run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,client_id,Normal,BP,DoS,MitM
+a3transfer_bnat_fedtros_pr_a0p5_fotunk_c2_s42_full_transfer_26cafa,A3-TRANSFER,FedTROS-PR,B-NAT,0.5,42,2,full_transfer,FoT,1,63,0,68,62
+a3transfer_bnat_fedtros_pr_a0p5_fotunk_c2_s42_full_transfer_26cafa,A3-TRANSFER,FedTROS-PR,B-NAT,0.5,42,2,full_transfer,FoT,2,6,69,1,7
+a3transfer_bnat_fedtros_pr_a0p5_fotunk_c2_s42_gated_kd_a940d4,A3-TRANSFER,FedTROS-PR,B-NAT,0.5,42,2,gated_kd,FoT,1,63,0,68,62
+a3transfer_bnat_fedtros_pr_a0p5_fotunk_c2_s42_gated_kd_a940d4,A3-TRANSFER,FedTROS-PR,B-NAT,0.5,42,2,gated_kd,FoT,2,6,69,1,7
+a3transfer_bnat_fedtros_pr_a0p5_fotunk_c2_s42_no_kd_no_alignment_250c17,A3-TRANSFER,FedTROS-PR,B-NAT,0.5,42,2,no_kd_no_alignment,FoT,1,63,0,68,62
+a3transfer_bnat_fedtros_pr_a0p5_fotunk_c2_s42_no_kd_no_alignment_250c17,A3-TRANSFER,FedTROS-PR,B-NAT,0.5,42,2,no_kd_no_alignment,FoT,2,6,69,1,7
+a3transfer_bnat_fedtros_pr_a0p5_fotunk_c2_s42_ungated_kd_b36141,A3-TRANSFER,FedTROS-PR,B-NAT,0.5,42,2,ungated_kd,FoT,1,63,0,68,62
+a3transfer_bnat_fedtros_pr_a0p5_fotunk_c2_s42_ungated_kd_b36141,A3-TRANSFER,FedTROS-PR,B-NAT,0.5,42,2,ungated_kd,FoT,2,6,69,1,7

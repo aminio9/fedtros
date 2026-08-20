@@ -1,0 +1,96 @@
+{
+  "artifact_failures": 0,
+  "completed_run_count": 53,
+  "forbidden_run_figures": [],
+  "legacy_log_hits": [],
+  "manifest_failures": [],
+  "missing_studies": [],
+  "status": "PASS",
+  "studies": {
+    "A1-TEACHER": [
+      "a1teacher_bnat_fedtros_pr_a0p5_fotunk_c2_s42_deterministic_teacher_40352e",
+      "a1teacher_bnat_fedtros_pr_a0p5_fotunk_c2_s42_no_teacher_e633ea",
+      "a1teacher_bnat_fedtros_pr_a0p5_fotunk_c2_s42_vct_17b46b",
+      "a1teacher_bnat_fedtros_pr_a0p5_fotunk_c2_s42_vct_beta0_d6b016"
+    ],
+    "A2-ANCHOR": [
+      "a2anchor_bnat_fedtros_pr_a0p5_fotunk_c2_s42_adaptive_anchor_22ae9d",
+      "a2anchor_bnat_fedtros_pr_a0p5_fotunk_c2_s42_fixed_anchor_84962e",
+      "a2anchor_bnat_fedtros_pr_a0p5_fotunk_c2_s42_no_anchor_3f2353"
+    ],
+    "A3-TRANSFER": [
+      "a3transfer_bnat_fedtros_pr_a0p5_fotunk_c2_s42_full_transfer_26cafa",
+      "a3transfer_bnat_fedtros_pr_a0p5_fotunk_c2_s42_gated_kd_a940d4",
+      "a3transfer_bnat_fedtros_pr_a0p5_fotunk_c2_s42_no_kd_no_alignment_250c17",
+      "a3transfer_bnat_fedtros_pr_a0p5_fotunk_c2_s42_ungated_kd_b36141"
+    ],
+    "A4-PR": [
+      "a4pr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_boundary_raw_0e4bd4",
+      "a4pr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_energy_65380e",
+      "a4pr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_full_rank_d28513",
+      "a4pr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_msp_f01d87",
+      "a4pr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_positive_only_3cafe6"
+    ],
+    "A5-FEATURE": [
+      "a5feature_bnat_fedtros_pr_a0p5_fotunk_c2_s42_osr_branch_embedding_095f59",
+      "a5feature_bnat_fedtros_pr_a0p5_fotunk_c2_s42_student_embedding_0867b8"
+    ],
+    "E0-VERIFY": [
+      "e0verify_bnat_fedtros_pr_a0p5_fotunk_c2_s42_cc8230",
+      "e0verify_bnat_fedtros_pr_a0p5_fotunk_c2_s42_rerun_20260820t075909z_2218b1"
+    ],
+    "E1-IID-CS": [
+      "e1iidcs_bnat_fedavg_iid_closed_c2_s42_254dcf",
+      "e1iidcs_bnat_fedavg_iid_closed_c2_s43_410107",
+      "e1iidcs_bnat_fedprox_iid_closed_c2_s42_6af6ce",
+      "e1iidcs_bnat_fedtros_pr_iid_closed_c2_s42_e53c8b",
+      "e1iidcs_btat_fedtros_pr_iid_closed_c2_s42_64bb3d"
+    ],
+    "E2-IID-OSR": [
+      "e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f"
+    ],
+    "E3-NIID-CS": [
+      "e3niidcs_bnat_fedavg_a0p1_closed_c2_s42_6e7c42",
+      "e3niidcs_bnat_fedavg_a0p5_closed_c2_s42_a8322c",
+      "e3niidcs_bnat_fedprox_a0p1_closed_c2_s42_7786fa",
+      "e3niidcs_bnat_fedprox_a0p5_closed_c2_s42_1ee96f",
+      "e3niidcs_bnat_fedtros_pr_a0p1_closed_c2_s42_48729d",
+      "e3niidcs_bnat_fedtros_pr_a0p5_closed_c2_s42_0f6f2b"
+    ],
+    "E4-NIID-FOSR": [
+      "e4niidfosr_bnat_fedavg_a0p5_fotunk_c2_s42_4acb35",
+      "e4niidfosr_bnat_fedprox_a0p5_fotunk_c2_s42_fd594b",
+      "e4niidfosr_bnat_fedtros_pr_a0p5_fotunk_c2_s17_da8ef0",
+      "e4niidfosr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_8cc835",
+      "e4niidfosr_bnat_fedtros_pr_a0p5_fotunk_c2_s73_e69c8c"
+    ],
+    "E5-DATASET": [
+      "e5dataset_bnat_fedtros_pr_a0p5_fotunk_c2_s42_d367ed",
+      "e5dataset_btat_fedtros_pr_a0p5_2unk_c2_s42_c0e96c",
+      "e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9",
+      "e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032"
+    ],
+    "E6-SCALE": [
+      "e6scale_bnat_fedtros_pr_a0p5_fotunk_c2_s42_e3cfd2",
+      "e6scale_bnat_fedtros_pr_a0p5_fotunk_c3_s42_c3adae",
+      "e6scale_bnat_fedtros_pr_a0p5_fotunk_c4_s42_199059"
+    ],
+    "E7-EFFICIENCY": [
+      "e7efficiency_bnat_fedavg_a0p5_fotunk_c2_s42_70a246",
+      "e7efficiency_bnat_fedprox_a0p5_fotunk_c2_s42_0811ac",
+      "e7efficiency_bnat_fedtros_pr_a0p5_fotunk_c2_s42_df3cf8"
+    ],
+    "E8-LOAO": [
+      "e8loao_bnat_fedtros_pr_a0p5_bpunk_c2_s42_9e886d",
+      "e8loao_bnat_fedtros_pr_a0p5_dosunk_c2_s42_9c8a83",
+      "e8loao_bnat_fedtros_pr_a0p5_fotunk_c2_s42_de0bde",
+      "e8loao_bnat_fedtros_pr_a0p5_mitmunk_c2_s42_5b3571"
+    ],
+    "S1-SENSITIVITY": [
+      "s1sensitivity_bnat_fedtros_pr_a0p5_fotunk_c2_s42_beta0_7f27bb",
+      "s1sensitivity_bnat_fedtros_pr_a0p5_fotunk_c2_s42_beta_canonical_2d6b34"
+    ]
+  },
+  "wandb_comparisons": 3623,
+  "wandb_consistency_failures": 0
+}

@@ -1,0 +1,13 @@
+run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,round,communication/downlink_bytes,communication/round_bytes,communication/uplink_bytes,communication/cumulative_bytes
+e3niidcs_bnat_fedavg_a0p1_closed_c2_s42_6e7c42,E3-NIID-CS,FedAvg-Student,B-NAT,0.1,42,2,canonical,,1,1452072.0,2904144.0,1452072.0,2904144.0
+e3niidcs_bnat_fedavg_a0p1_closed_c2_s42_6e7c42,E3-NIID-CS,FedAvg-Student,B-NAT,0.1,42,2,canonical,,2,1452072.0,2904144.0,1452072.0,5808288.0
+e3niidcs_bnat_fedavg_a0p5_closed_c2_s42_a8322c,E3-NIID-CS,FedAvg-Student,B-NAT,0.5,42,2,canonical,,1,1452072.0,2904144.0,1452072.0,2904144.0
+e3niidcs_bnat_fedavg_a0p5_closed_c2_s42_a8322c,E3-NIID-CS,FedAvg-Student,B-NAT,0.5,42,2,canonical,,2,1452072.0,2904144.0,1452072.0,5808288.0
+e3niidcs_bnat_fedprox_a0p1_closed_c2_s42_7786fa,E3-NIID-CS,FedProx-Student,B-NAT,0.1,42,2,canonical,,1,1452072.0,2904144.0,1452072.0,2904144.0
+e3niidcs_bnat_fedprox_a0p1_closed_c2_s42_7786fa,E3-NIID-CS,FedProx-Student,B-NAT,0.1,42,2,canonical,,2,1452072.0,2904144.0,1452072.0,5808288.0
+e3niidcs_bnat_fedprox_a0p5_closed_c2_s42_1ee96f,E3-NIID-CS,FedProx-Student,B-NAT,0.5,42,2,canonical,,1,1452072.0,2904144.0,1452072.0,2904144.0
+e3niidcs_bnat_fedprox_a0p5_closed_c2_s42_1ee96f,E3-NIID-CS,FedProx-Student,B-NAT,0.5,42,2,canonical,,2,1452072.0,2904144.0,1452072.0,5808288.0
+e3niidcs_bnat_fedtros_pr_a0p1_closed_c2_s42_48729d,E3-NIID-CS,FedTROS-PR,B-NAT,0.1,42,2,canonical,,1,1452072.0,2904144.0,1452072.0,2904144.0
+e3niidcs_bnat_fedtros_pr_a0p1_closed_c2_s42_48729d,E3-NIID-CS,FedTROS-PR,B-NAT,0.1,42,2,canonical,,2,1452072.0,2904144.0,1452072.0,5808288.0
+e3niidcs_bnat_fedtros_pr_a0p5_closed_c2_s42_0f6f2b,E3-NIID-CS,FedTROS-PR,B-NAT,0.5,42,2,canonical,,1,1452072.0,2904144.0,1452072.0,2904144.0
+e3niidcs_bnat_fedtros_pr_a0p5_closed_c2_s42_0f6f2b,E3-NIID-CS,FedTROS-PR,B-NAT,0.5,42,2,canonical,,2,1452072.0,2904144.0,1452072.0,5808288.0

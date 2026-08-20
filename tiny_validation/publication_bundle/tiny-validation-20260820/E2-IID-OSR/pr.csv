@@ -1,0 +1,13 @@
+run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,precision,recall,threshold
+e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f,E2-IID-OSR,FedTROS-PR,B-NAT,1.0,42,2,canonical,FoT,0.5549132947976878,1.0,0.0
+e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f,E2-IID-OSR,FedTROS-PR,B-NAT,1.0,42,2,canonical,FoT,0.4728682170542636,0.6354166666666666,0.1
+e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f,E2-IID-OSR,FedTROS-PR,B-NAT,1.0,42,2,canonical,FoT,0.4758064516129032,0.6145833333333334,0.2
+e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f,E2-IID-OSR,FedTROS-PR,B-NAT,1.0,42,2,canonical,FoT,0.4285714285714285,0.40625,0.3
+e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f,E2-IID-OSR,FedTROS-PR,B-NAT,1.0,42,2,canonical,FoT,0.3333333333333333,0.2083333333333333,0.4
+e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f,E2-IID-OSR,FedTROS-PR,B-NAT,1.0,42,2,canonical,FoT,0.3448275862068966,0.2083333333333333,0.5
+e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f,E2-IID-OSR,FedTROS-PR,B-NAT,1.0,42,2,canonical,FoT,0.4042553191489361,0.1979166666666666,0.6
+e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f,E2-IID-OSR,FedTROS-PR,B-NAT,1.0,42,2,canonical,FoT,0.4047619047619047,0.1770833333333333,0.7
+e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f,E2-IID-OSR,FedTROS-PR,B-NAT,1.0,42,2,canonical,FoT,0.425,0.1770833333333333,0.8
+e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f,E2-IID-OSR,FedTROS-PR,B-NAT,1.0,42,2,canonical,FoT,0.5862068965517241,0.1770833333333333,0.9
+e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f,E2-IID-OSR,FedTROS-PR,B-NAT,1.0,42,2,canonical,FoT,0.85,0.1770833333333333,1.0
+e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f,E2-IID-OSR,FedTROS-PR,B-NAT,1.0,42,2,canonical,FoT,1.0,0.0,

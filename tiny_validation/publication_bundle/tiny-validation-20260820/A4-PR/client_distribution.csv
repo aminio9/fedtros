@@ -1,0 +1,11 @@
+run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,client_id,Normal,BP,DoS,MitM
+a4pr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_boundary_raw_0e4bd4,A4-PR,FedTROS-PR,B-NAT,0.5,42,2,boundary_raw,FoT,1,63,0,68,62
+a4pr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_boundary_raw_0e4bd4,A4-PR,FedTROS-PR,B-NAT,0.5,42,2,boundary_raw,FoT,2,6,69,1,7
+a4pr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_energy_65380e,A4-PR,FedTROS-PR,B-NAT,0.5,42,2,energy,FoT,1,63,0,68,62
+a4pr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_energy_65380e,A4-PR,FedTROS-PR,B-NAT,0.5,42,2,energy,FoT,2,6,69,1,7
+a4pr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_full_rank_d28513,A4-PR,FedTROS-PR,B-NAT,0.5,42,2,full_rank,FoT,1,63,0,68,62
+a4pr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_full_rank_d28513,A4-PR,FedTROS-PR,B-NAT,0.5,42,2,full_rank,FoT,2,6,69,1,7
+a4pr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_msp_f01d87,A4-PR,FedTROS-PR,B-NAT,0.5,42,2,msp,FoT,1,63,0,68,62
+a4pr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_msp_f01d87,A4-PR,FedTROS-PR,B-NAT,0.5,42,2,msp,FoT,2,6,69,1,7
+a4pr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_positive_only_3cafe6,A4-PR,FedTROS-PR,B-NAT,0.5,42,2,positive_only,FoT,1,63,0,68,62
+a4pr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_positive_only_3cafe6,A4-PR,FedTROS-PR,B-NAT,0.5,42,2,positive_only,FoT,2,6,69,1,7

@@ -1,0 +1,48 @@
+{
+  "checkpoint": {
+    "max_absolute_delta": 0.0040375664830207825,
+    "max_absolute_tolerance": 0.005,
+    "mean_absolute_delta": 0.0003637579793576151,
+    "mean_absolute_tolerance": 0.0005,
+    "num_parameters": 181380,
+    "rmse": 0.0004994858172722161
+  },
+  "comparison": "near_equivalent_with_explicit_tiny_stage_tolerances",
+  "metrics": {
+    "open_set/auprc": {
+      "absolute_delta": 0.004283701654642202,
+      "passed": true,
+      "resumed": 0.513850686369109,
+      "tolerance": 0.01,
+      "uninterrupted": 0.5181343880237512
+    },
+    "open_set/auroc": {
+      "absolute_delta": 0.021374458874458935,
+      "passed": true,
+      "resumed": 0.3252840909090909,
+      "tolerance": 0.03,
+      "uninterrupted": 0.3466585497835498
+    },
+    "open_set/fpr95": {
+      "absolute_delta": 0.18181818181818177,
+      "passed": true,
+      "resumed": 1.0,
+      "tolerance": 0.2,
+      "uninterrupted": 0.8181818181818182
+    },
+    "open_set/unknown_recall": {
+      "absolute_delta": 0.020833333333333332,
+      "passed": true,
+      "resumed": 0.0,
+      "tolerance": 0.03,
+      "uninterrupted": 0.020833333333333332
+    }
+  },
+  "resumed_run": "D:\\Research\\Code\\fedtros\\outputs\\tiny_validation\\resume_integrity\\runs\\e0verify_bnat_fedtros_pr_a0p5_fotunk_c2_s42_rerun_resume_final_20260820_3859cf",
+  "rounds": {
+    "resumed": 2,
+    "uninterrupted": 2
+  },
+  "status": "PASS",
+  "uninterrupted_run": "D:\\Research\\Code\\fedtros\\outputs\\tiny_validation\\resume_integrity\\runs\\e0verify_bnat_fedtros_pr_a0p5_fotunk_c2_s42_rerun_resume_uninterrupted_fixed_20260820_9821bf"
+}

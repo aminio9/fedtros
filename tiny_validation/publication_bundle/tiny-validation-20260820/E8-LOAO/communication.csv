@@ -1,0 +1,9 @@
+run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,round,communication/downlink_bytes,communication/round_bytes,communication/uplink_bytes,communication/cumulative_bytes
+e8loao_bnat_fedtros_pr_a0p5_bpunk_c2_s42_9e886d,E8-LOAO,FedTROS-PR,B-NAT,0.5,42,2,canonical,BP,1,1451040.0,2902080.0,1451040.0,2902080.0
+e8loao_bnat_fedtros_pr_a0p5_bpunk_c2_s42_9e886d,E8-LOAO,FedTROS-PR,B-NAT,0.5,42,2,canonical,BP,2,1451040.0,2902080.0,1451040.0,5804160.0
+e8loao_bnat_fedtros_pr_a0p5_dosunk_c2_s42_9c8a83,E8-LOAO,FedTROS-PR,B-NAT,0.5,42,2,canonical,DoS,1,1451040.0,2902080.0,1451040.0,2902080.0
+e8loao_bnat_fedtros_pr_a0p5_dosunk_c2_s42_9c8a83,E8-LOAO,FedTROS-PR,B-NAT,0.5,42,2,canonical,DoS,2,1451040.0,2902080.0,1451040.0,5804160.0
+e8loao_bnat_fedtros_pr_a0p5_fotunk_c2_s42_de0bde,E8-LOAO,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,1,1451040.0,2902080.0,1451040.0,2902080.0
+e8loao_bnat_fedtros_pr_a0p5_fotunk_c2_s42_de0bde,E8-LOAO,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,2,1451040.0,2902080.0,1451040.0,5804160.0
+e8loao_bnat_fedtros_pr_a0p5_mitmunk_c2_s42_5b3571,E8-LOAO,FedTROS-PR,B-NAT,0.5,42,2,canonical,MitM,1,1451040.0,2902080.0,1451040.0,2902080.0
+e8loao_bnat_fedtros_pr_a0p5_mitmunk_c2_s42_5b3571,E8-LOAO,FedTROS-PR,B-NAT,0.5,42,2,canonical,MitM,2,1451040.0,2902080.0,1451040.0,5804160.0

@@ -1,0 +1,9 @@
+run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,client_id,Normal,BP,DoS,MitM
+a1teacher_bnat_fedtros_pr_a0p5_fotunk_c2_s42_deterministic_teacher_40352e,A1-TEACHER,FedTROS-PR,B-NAT,0.5,42,2,deterministic_teacher,FoT,1,63,0,68,62
+a1teacher_bnat_fedtros_pr_a0p5_fotunk_c2_s42_deterministic_teacher_40352e,A1-TEACHER,FedTROS-PR,B-NAT,0.5,42,2,deterministic_teacher,FoT,2,6,69,1,7
+a1teacher_bnat_fedtros_pr_a0p5_fotunk_c2_s42_no_teacher_e633ea,A1-TEACHER,FedTROS-PR,B-NAT,0.5,42,2,no_teacher,FoT,1,63,0,68,62
+a1teacher_bnat_fedtros_pr_a0p5_fotunk_c2_s42_no_teacher_e633ea,A1-TEACHER,FedTROS-PR,B-NAT,0.5,42,2,no_teacher,FoT,2,6,69,1,7
+a1teacher_bnat_fedtros_pr_a0p5_fotunk_c2_s42_vct_17b46b,A1-TEACHER,FedTROS-PR,B-NAT,0.5,42,2,vct,FoT,1,63,0,68,62
+a1teacher_bnat_fedtros_pr_a0p5_fotunk_c2_s42_vct_17b46b,A1-TEACHER,FedTROS-PR,B-NAT,0.5,42,2,vct,FoT,2,6,69,1,7
+a1teacher_bnat_fedtros_pr_a0p5_fotunk_c2_s42_vct_beta0_d6b016,A1-TEACHER,FedTROS-PR,B-NAT,0.5,42,2,vct_beta0,FoT,1,63,0,68,62
+a1teacher_bnat_fedtros_pr_a0p5_fotunk_c2_s42_vct_beta0_d6b016,A1-TEACHER,FedTROS-PR,B-NAT,0.5,42,2,vct_beta0,FoT,2,6,69,1,7

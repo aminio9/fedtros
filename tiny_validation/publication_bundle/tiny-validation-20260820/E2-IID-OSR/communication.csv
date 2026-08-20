@@ -1,0 +1,3 @@
+run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,round,communication/downlink_bytes,communication/round_bytes,communication/uplink_bytes,communication/cumulative_bytes
+e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f,E2-IID-OSR,FedTROS-PR,B-NAT,1.0,42,2,canonical,FoT,1,1451040.0,2902080.0,1451040.0,2902080.0
+e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f,E2-IID-OSR,FedTROS-PR,B-NAT,1.0,42,2,canonical,FoT,2,1451040.0,2902080.0,1451040.0,5804160.0

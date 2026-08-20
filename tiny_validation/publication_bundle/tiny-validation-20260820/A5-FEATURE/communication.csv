@@ -1,0 +1,5 @@
+run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,round,communication/downlink_bytes,communication/round_bytes,communication/uplink_bytes,communication/cumulative_bytes
+a5feature_bnat_fedtros_pr_a0p5_fotunk_c2_s42_osr_branch_embedding_095f59,A5-FEATURE,FedTROS-PR,B-NAT,0.5,42,2,osr_branch_embedding,FoT,1,1769856.0,3539712.0,1769856.0,3539712.0
+a5feature_bnat_fedtros_pr_a0p5_fotunk_c2_s42_osr_branch_embedding_095f59,A5-FEATURE,FedTROS-PR,B-NAT,0.5,42,2,osr_branch_embedding,FoT,2,1769856.0,3539712.0,1769856.0,7079424.0
+a5feature_bnat_fedtros_pr_a0p5_fotunk_c2_s42_student_embedding_0867b8,A5-FEATURE,FedTROS-PR,B-NAT,0.5,42,2,student_embedding,FoT,1,1451040.0,2902080.0,1451040.0,2902080.0
+a5feature_bnat_fedtros_pr_a0p5_fotunk_c2_s42_student_embedding_0867b8,A5-FEATURE,FedTROS-PR,B-NAT,0.5,42,2,student_embedding,FoT,2,1451040.0,2902080.0,1451040.0,5804160.0
