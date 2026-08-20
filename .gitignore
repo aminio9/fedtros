@@ -153,3 +153,8 @@ checkpoints/
 /evt_results/
 
 papers/
+/publication_exports/
+/paper_results/
+
+# Deterministic preprocessing/partition caches are regenerated from manifests.
+/partitions/

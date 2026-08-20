@@ -1,424 +1,206 @@
-# FedPROTEUS
+# FedTROS-PR
 
-**Federated Prototype-Ranked Teacher–Student Learning for Unknown Attack Detection in Blockchain Traffic**
+**FedTROS-PR — Federated Teacher-Regularized Open-Set Recognition with Prototype-Rank Rejection**
 
-FedPROTEUS is a research framework for **federated open-set intrusion detection** in blockchain traffic. The method combines a **private reinforcement-learning teacher** on each client with a **shared federated student model**, then performs unknown attack detection through **prototype-rank scoring** in the global student latent space.
-
-The goal is to detect both known blockchain traffic classes and previously unseen/unknown attacks under realistic federated conditions, including IID and highly non-IID client distributions.
-
----
-
-## Highlights
-
-- **Federated intrusion detection** for blockchain traffic and transaction/network traces.
-- **Open-set recognition** for unknown attack detection.
-- **Private RL teacher per client** for local specialization.
-- **Shared student model** for federated aggregation.
-- **Teacher–student knowledge distillation** for transferring local teacher knowledge into the student.
-- **Prototype-ranked open-set detector** using the global student latent representation.
-- **Strict raw-data-free federated setting**: raw traffic, labels, and private teacher parameters remain local.
-- **IID and non-IID experiments**, including Dirichlet splits.
-- **Round-wise evaluation**, checkpointing, resume support, open-set metrics, and publication-ready plots.
-
----
-
-## Method Name
-
-**FedPROTEUS** stands for:
-
-```text
-Fed      → Federated learning
-PRO      → Prototype-ranked open-set scoring
-TE       → Teacher–student learning
-US       → Unknown attack/security detection
-```
-
-Full title:
-
-```text
-FedPROTEUS: Federated Prototype-Ranked Teacher–Student Learning for Unknown Attack Detection in Blockchain Traffic
-```
-
----
-
-## Method Overview
-
-FedPROTEUS separates **local specialization** from **federated generalization**.
-
-Each client maintains a private RL-based teacher trained only on its local blockchain traffic. This teacher is not uploaded to the server. Instead, the teacher guides a compact student model through knowledge distillation and feature alignment. The student is the only model exchanged and aggregated across clients.
-
-After federated training, the global student becomes the shared representation backbone. Unknown attacks are detected using prototype-rank scoring in the global student latent space.
-
-```text
-Client i
- ├── Local blockchain traffic
- ├── Private RL teacher T_i
- │    └── learns local traffic behavior
- ├── Shared student S_i
- │    ├── learns from local labels
- │    ├── learns from teacher logits
- │    ├── aligns with teacher features
- │    └── stays close to global anchor
- └── Uploads only student update
-
-Server
- ├── receives student updates
- ├── aggregates global student
- └── evaluates open-set detection using prototype-rank scoring
-```
-
----
-
-## Core Idea
-
-For each communication round:
-
-1. The server broadcasts the current global student.
-2. Each client trains a private RL teacher locally.
-3. The local student learns from:
-   - local supervised labels,
-   - teacher logits,
-   - teacher features,
-   - frozen global-student anchor.
-4. The client uploads only the student parameters.
-5. The server aggregates student updates.
-6. Open-set detection is performed using prototype-ranked scoring in the student latent space.
-
-The final detector is **not reconstruction-based**. It is based on:
-
-```text
-global student latent features + positive prototypes + boundary prototypes + prototype-rank score
-```
-
----
+This repository is the scientific training/evaluation side of a two-repository research workflow. The private teacher is a supervised **Variational Classifier Teacher (VCT)** and the final known/unknown decision is **Prototype-Rank Rejection (PR)**. Only student parameters are federated. The separate `plots` repository renders publication figures from a versioned publication bundle; it never imports FedTROS Python modules.
 
 ## Architecture
 
-### Private RL Teacher
-
-The teacher is a local CVAE-DQN/RL-style model. It learns client-specific traffic behavior and produces teacher logits and latent features.
-
-Teacher components include:
-
 ```text
-prior_net
-recognition_net
-value_net_main
-value_net_target
+study YAML -> run_study.py / run.py -> FedTROS-PR train/evaluate
+                                     |-> W&B (monitoring only)
+                                     `-> outputs/runs/<run_id> (scientific source of truth)
+                                                |
+                                   build_q1_results.py
+                                                |
+                              export_publication_bundle.py
+                                                |
+                              separate plots repository
 ```
 
-The teacher remains local and is not uploaded to the server.
+FedTROS deliberately contains **no publication plotting subsystem**. W&B provides live run monitoring; local structured results and manifests are the reproducibility/publication source of truth.
 
-### Shared Student
+## Server setup
 
-The student is a compact MLP-based IDS classifier. It is the federated model exchanged between clients and the server.
-
-The student produces:
-
-```text
-student_features, student_logits = student_model(x)
-```
-
-The student feature vector is later used for prototype-based open-set detection.
-
-### Prototype-Ranked Open-Set Detector
-
-After federated training, FedPROTEUS builds prototypes in the global student latent space:
-
-```text
-positive prototypes  → known traffic regions
-boundary prototypes  → open-space / unknown regions
-```
-
-A test sample is rejected as unknown if its prototype-rank score exceeds a calibrated threshold.
-
----
-
-## Learning Objective
-
-The local student is trained using a combined objective:
-
-```text
-L_student =
-    L_task
-  + λ_anchor L_anchor
-  + λ_KD L_teacher_to_student
-  + λ_align L_feature_alignment
-```
-
-Where:
-
-- `L_task`: supervised local classification loss.
-- `L_anchor`: keeps the local student close to the received global student.
-- `L_teacher_to_student`: distills teacher logits into the student.
-- `L_feature_alignment`: aligns projected teacher features with student features.
-
-This design is especially important under non-IID data, where a client may not contain all known traffic classes.
-
----
-
-## Strict Federated Setting
-
-FedPROTEUS uses a strict raw-data-free federated setup.
-
-The server receives:
-
-```text
-student model updates
-number of local examples
-label-free diagnostics
-```
----
-
-
-## Installation
-
-### 1. Create Poetry environment
-
-For Flower simulation stability, Python 3.11 is recommended.
+Use Python **3.11 or 3.12**. The migration changed direct dependencies (W&B added; internal Matplotlib/Seaborn removed), so the historical `poetry.lock` was archived and **must be regenerated on the target environment**:
 
 ```bash
-cd ~/cf_marlos
-
-poetry env remove --all || true
-poetry env use /usr/bin/python3.12
-
+cd fedtros
 poetry lock
-poetry install --with dev
+poetry install
 ```
----
 
-## Experiments
-
-The project supports closed-set, open-set, IID, non-IID, and label-wise unknown experiments.
-
-### Experiment 1: Closed-set IID
+For online W&B runs, authenticate outside source control:
 
 ```bash
-poetry run python run.py experiment=exp1 +method=dkd_fedos seed=42 \
-  tracking.run_id=e1_iid_closed_dkd_fedos_seed42
+wandb login
 ```
 
-### Experiment 2: Open-set IID, FoT unknown
+For an offline server, no login is required for the scientific pipeline; select `--wandb-mode offline` or `tracking.mode=offline` and sync later if desired.
 
-Known labels exclude the unknown class.
+## First command on a new server
 
 ```bash
-poetry run python run.py experiment=exp2 +method=dkd_fedos seed=42 \
-  dataset.known_labels=[Normal,BP,DoS,MitM] \
-  training.generator.enabled=false \
-  training.dkd_student_osr_enabled=true \
-  training.dkd_student_open_set_enabled=true \
-  open_set.evt.backend=fed_digos \
-  open_set.fed_digos.enabled=true \
-  open_set.fed_digos.score_fusion.method=prototype_rank \
-  tracking.run_id=e2_iid_openset_fot_dkd_fedos_seed42
+poetry run python scripts/doctor.py --plots-repo ../plots --wandb-mode online
 ```
 
-### Experiment 3: Closed-set non-IID
+Use `--wandb-mode offline` or `disabled` when appropriate.
+
+## Discover experiments
 
 ```bash
-poetry run python run.py experiment=exp3 +method=dkd_fedos seed=42 \
-  dataset.preprocessing.iid=false \
-  dataset.preprocessing.dirichlet_alpha=0.1 \
-  tracking.run_id=e3_noniid_alpha01_closed_dkd_fedos_seed42
+poetry run python scripts/studies.py list
+poetry run python scripts/studies.py show E4-NIID-FOSR --stage paper_final
 ```
 
-### Experiment 4: Open-set non-IID, FoT unknown
+Canonical studies are E0–E8 plus A1–A5 and S1. Headline seeds are `17 42 73 101 137`.
+
+## Safe dry run
 
 ```bash
-poetry run python run.py experiment=exp4 +method=dkd_fedos seed=42 \
-  dataset.known_labels=[Normal,BP,DoS,MitM] \
-  dataset.preprocessing.iid=false \
-  dataset.preprocessing.dirichlet_alpha=0.1 \
-  training.generator.enabled=false \
-  training.dkd_student_osr_enabled=true \
-  training.dkd_student_open_set_enabled=true \
-  open_set.evt.backend=fed_digos \
-  open_set.fed_digos.enabled=true \
-  open_set.fed_digos.score_fusion.method=prototype_rank \
-  tracking.run_id=e4_noniid_alpha01_openset_fot_dkd_fedos_seed42
+poetry run python scripts/run_study.py E4-NIID-FOSR \
+  --stage paper_final \
+  --dry-run
 ```
 
-### Experiment 8: Label-wise open-set unknown detection
+A dry run does not start training.
 
-Example: MitM unknown.
+## Run one exact study cell
+
+`run.py` refuses ambiguous study requests. Supply enough dimensions to select one cell:
 
 ```bash
-poetry run python run.py experiment=exp8 +method=dkd_fedos seed=42 \
-  dataset.known_labels=[Normal,BP,DoS,FoT] \
-  training.generator.enabled=false \
-  training.dkd_student_osr_enabled=true \
-  training.dkd_student_open_set_enabled=true \
-  open_set.evt.backend=fed_digos \
-  open_set.fed_digos.enabled=true \
-  open_set.fed_digos.score_fusion.method=prototype_rank \
-  tracking.run_id=e8_mitm_unknown_dkd_fedos_seed42
+poetry run python scripts/run.py \
+  study=E4-NIID-FOSR \
+  stage=paper_final \
+  method=fedtros_pr \
+  alpha=0.5 \
+  seed=42 \
+  wandb_mode=online
 ```
 
----
-
-## Resume Interrupted Training
-
-Student checkpoints are saved as:
-
-```text
-dkd_fedos_student_round_XXXX.pt
-dkd_fedos_student_latest.pt
-```
-
-To resume, use:
-
-```text
-federated.resume_from=<path_to_latest_checkpoint>
-federated.resume_round_offset=<last_completed_round>
-federated.num_rounds=<remaining_rounds>
-```
-
-Example: resume Exp8 MitM from round 52 to 100.
+For E8, also specify the held-out attack when needed:
 
 ```bash
-poetry run python run.py experiment=exp8 +method=dkd_fedos seed=42 \
-  dataset.known_labels=[Normal,BP,DoS,FoT] \
-  federated.resume_from=outputs/e8_mitm_unknown_dkd_fedos_seed42/dkd_fedos_student_latest.pt \
-  federated.resume_round_offset=52 \
-  federated.num_rounds=48 \
-  training.generator.enabled=false \
-  training.dkd_student_osr_enabled=true \
-  training.dkd_student_open_set_enabled=true \
-  open_set.evt.backend=fed_digos \
-  open_set.fed_digos.enabled=true \
-  open_set.fed_digos.score_fusion.method=prototype_rank \
-  tracking.run_id=e8_mitm_unknown_resume_from52_seed42 \
-  2>&1 | tee e8_mitm_unknown_resume_from52_seed42.log
+poetry run python scripts/run.py \
+  study=E8-LOAO stage=paper_final seed=42 unknown=MitM
 ```
 
----
-
-## Output Artifacts
-
-Typical output folder:
-
-```text
-outputs/<run_id>/
-├── config.yaml
-├── resolved_config.yaml
-├── run.log
-├── debug.log
-├── metadata.json
-├── dkd_fedos_monitoring.jsonl
-├── dkd_fedos_student_latest.pt
-├── dkd_fedos_student_round_XXXX.pt
-├── open_set_round_metrics.csv
-├── open_set_rounds/
-├── evt/
-├── processed/
-└── plots/
-```
-
-Important open-set artifacts:
-
-```text
-open_set_scores.csv
-open_set_metrics.json
-fed_digos_prototypes.json
-fed_digos_rank_calibration.json
-known_unknown_score_quantiles.json
-score_overlap_report.json
-latent_embeddings.csv
-```
-
----
-
-## Evaluation Metrics
-
-Closed-set metrics:
-
-```text
-accuracy
-macro precision
-macro recall
-macro F1
-weighted F1
-classification report
-confusion matrix
-```
-
-Open-set metrics:
-
-```text
-AUROC
-AUPRC
-unknown precision
-unknown recall
-unknown F1
-known retention
-false unknown rate
-score distribution
-before/after open-set confusion matrix
-```
-
-Federated metrics:
-
-```text
-round-wise global accuracy
-round-wise macro F1
-client pre-aggregation metrics
-client post-aggregation metrics
-aggregation reliability weight
-communication rounds
-scalability across number of clients
-```
-
----
-
-## Plotting
-
-Use the updated Pastel Sunset plotting script:
+## Run a complete five-seed paper study
 
 ```bash
-python scripts/updated_testplot_3alg_theme.py \
-  --run-dir outputs/<run_id> \
-  --output-dir outputs/<run_id>/plots/updated_testplot_3alg
+poetry run python scripts/run_study.py E4-NIID-FOSR \
+  --stage paper_final \
+  --seeds 17 42 73 101 137 \
+  --only-missing \
+  --wandb-mode online
 ```
 
-The final comparison plots should include only:
+For two independent GPUs:
+
+```bash
+poetry run python scripts/run_study.py E3-NIID-CS \
+  --stage paper_final \
+  --gpus 0 1 \
+  --max-parallel 2 \
+  --only-missing
+```
+
+This schedules **independent runs** across devices; it does not change the scientific model into distributed multi-GPU training.
+
+## E0 gate before expensive runs
+
+```bash
+poetry run pytest -q
+poetry run python scripts/run_study.py E0-VERIFY \
+  --stage smoke \
+  --wandb-mode disabled
+```
+
+Do not launch publication runs until E0 and the required teacher/anchor/PR gates are satisfied.
+
+## Inspect run state
+
+```bash
+poetry run python scripts/runs.py summary
+poetry run python scripts/runs.py failed
+poetry run python scripts/runs.py interrupted
+poetry run python scripts/runs.py resumable
+poetry run python scripts/runs.py missing E4-NIID-FOSR --stage paper_final
+poetry run python scripts/runs.py show RUN_ID
+```
+
+## Resume an interrupted VCT run
+
+```bash
+poetry run python scripts/resume.py RUN_ID
+```
+
+Exact resume validates the schema/config hash and requires persistent private client VCT state when the teacher persists across rounds. Old DQN-era checkpoints are incompatible by design.
+
+## Build paper statistics/tables
+
+```bash
+poetry run python scripts/build_q1_results.py \
+  --outputs-dir outputs \
+  --target paper_results \
+  --stage paper_final ablation reproduction
+```
+
+This computes non-visual statistics and tables. It does **not** render figures.
+
+## Export the plots-repository bundle
+
+After the final freeze:
+
+```bash
+poetry run python scripts/export_publication_bundle.py \
+  --outputs-dir outputs \
+  --target-root publication_exports \
+  --freeze-id fedtros-pr-vct-paper-final-01 \
+  --include-stages paper_final ablation reproduction
+```
+
+Then, in the separate plots repository:
+
+```bash
+cd ../plots
+python scripts/generate_all.py \
+  --bundle ../fedtros/publication_exports/fedtros-pr-vct-paper-final-01 \
+  --output-dir outputs/figures \
+  --strict
+
+python scripts/verify_outputs.py \
+  --bundle ../fedtros/publication_exports/fedtros-pr-vct-paper-final-01 \
+  --figures-dir outputs/figures
+```
+
+The plots repository validates bundle schema/checksums before rendering.
+
+## W&B modes
+
+- `online`: live dashboard and system/run monitoring.
+- `offline`: local W&B run state plus complete canonical FedTROS outputs.
+- `disabled`: no W&B dependency at runtime; canonical local results still complete.
+
+Examples:
+
+```bash
+# Whole study offline
+poetry run python scripts/run_study.py E3-NIID-CS --wandb-mode offline
+
+# One exact run without W&B
+poetry run python scripts/run.py study=E2-IID-OSR seed=42 wandb_mode=disabled
+```
+
+## Canonical output contract
+
+Each run is rooted at:
 
 ```text
-Proposed
-FedAvg
-FedProx
+outputs/runs/<run_id>/
 ```
 
----
+with resolved configuration, run/data/partition/feature/seed/model manifests, run-local `data/`, `metrics/`, `predictions/`, `artifacts/`, `checkpoints/`, and centralized logs. The `data/` directory is intentionally isolated per run so parallel study cells cannot overwrite one another's preprocessed tensors. Matched methods still reuse the same immutable paired-partition file for a given dataset/protocol/seed. Canonical tabular files use **CSV** so the core experiment pipeline does not depend on a Parquet engine.
 
-## Citation
-
-If you use this repository, please cite the corresponding paper:
-
-```bibtex
-@article{fedproteus2026,
-  title   = {FedPROTEUS: Federated Prototype-Ranked Teacher--Student Learning for Unknown Attack Detection in Blockchain Traffic},
-  author  = {Amini, Mohammad and collaborators},
-  journal = {To be added},
-  year    = {2026}
-}
-```
-
----
-
-## License
-
-Add your license here.
-
-Recommended for research code:
-
-```text
-MIT License
-```
-
-or, if dataset/license restrictions require it:
-
-```text
-Apache License 2.0
-```
+See `docs/RUNNING_GUIDE.md`, `docs/WANDB_TRACKING.md`, and `docs/PUBLICATION_BUNDLE_CONTRACT.md` for details.
