@@ -1,0 +1,2 @@
+Dataset,Method,Seeds,Open-Set Macro-F1 (%),AUROC (%)
+B-NAT,FedTROS-PR,10,57.46 ± 0.00,79.08 ± 0.00

@@ -1,0 +1,26 @@
+{
+  "metadata": {
+    "dataset": "B-NAT",
+    "evidence_policy": "Authoritative measured outputs from FedTROS canonical runs.",
+    "method_display_name": "FedTROS-PR",
+    "seed": 42,
+    "source_runs": [
+      "20260819_185421_tiny_e2e_validation_seed42",
+      "20260819_185654_tiny_e2e_validation_seed42",
+      "20260819_185917_tiny_e2e_validation_seed42",
+      "20260819_190006_tiny_e2e_validation_seed42",
+      "20260819_190655_tiny_e2e_validation_seed42",
+      "20260819_191532_tiny_e2e_validation_seed42",
+      "20260819_192309_tiny_e2e_validation_seed42",
+      "20260819_203348_tiny_e2e_validation_seed42",
+      "20260819_203422_tiny_e2e_validation_seed42",
+      "20260819_203532_tiny_e2e_validation_seed42"
+    ]
+  },
+  "plots": {},
+  "schema_version": "2.0",
+  "units": {
+    "classification_metrics": "percent",
+    "communication": "MB"
+  }
+}

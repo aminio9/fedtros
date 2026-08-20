@@ -1,0 +1,179 @@
+{
+  "analysis_timestamp_utc": "2026-08-19T17:58:51.111210+00:00",
+  "artifacts_dir": "D:\\Research\\Code\\fedtros\\paper_artifacts",
+  "config_hashes": [],
+  "datasets": [
+    "B-NAT"
+  ],
+  "git_commits": [
+    "82d4fdf6e07c7b306671b12e516e839b79a4719f"
+  ],
+  "methods": [
+    "FedTROS-PR"
+  ],
+  "runs_summary": [
+    {
+      "alpha": 0.1,
+      "config_hash": "",
+      "dataset": "B-NAT",
+      "git_commit": "82d4fdf6e07c7b306671b12e516e839b79a4719f",
+      "method": "FedTROS-PR",
+      "num_clients": 2,
+      "run_id": "20260819_185421_tiny_e2e_validation_seed42",
+      "seed": 42,
+      "stage": "paper_final",
+      "status": "INCOMPLETE",
+      "study": "VALIDATION",
+      "timestamp_utc": "2026-08-19T15:24:21.211892+00:00"
+    },
+    {
+      "alpha": 0.1,
+      "config_hash": "",
+      "dataset": "B-NAT",
+      "git_commit": "82d4fdf6e07c7b306671b12e516e839b79a4719f",
+      "method": "FedTROS-PR",
+      "num_clients": 2,
+      "run_id": "20260819_185654_tiny_e2e_validation_seed42",
+      "seed": 42,
+      "stage": "paper_final",
+      "status": "INCOMPLETE",
+      "study": "VALIDATION",
+      "timestamp_utc": "2026-08-19T15:26:54.450999+00:00"
+    },
+    {
+      "alpha": 0.1,
+      "config_hash": "",
+      "dataset": "B-NAT",
+      "git_commit": "82d4fdf6e07c7b306671b12e516e839b79a4719f",
+      "method": "FedTROS-PR",
+      "num_clients": 2,
+      "run_id": "20260819_185917_tiny_e2e_validation_seed42",
+      "seed": 42,
+      "stage": "paper_final",
+      "status": "INCOMPLETE",
+      "study": "VALIDATION",
+      "timestamp_utc": "2026-08-19T15:29:17.425814+00:00"
+    },
+    {
+      "alpha": 0.1,
+      "config_hash": "",
+      "dataset": "B-NAT",
+      "git_commit": "82d4fdf6e07c7b306671b12e516e839b79a4719f",
+      "method": "FedTROS-PR",
+      "num_clients": 2,
+      "run_id": "20260819_190006_tiny_e2e_validation_seed42",
+      "seed": 42,
+      "stage": "paper_final",
+      "status": "INCOMPLETE",
+      "study": "VALIDATION",
+      "timestamp_utc": "2026-08-19T15:30:06.324231+00:00"
+    },
+    {
+      "alpha": 0.1,
+      "config_hash": "",
+      "dataset": "B-NAT",
+      "git_commit": "82d4fdf6e07c7b306671b12e516e839b79a4719f",
+      "method": "FedTROS-PR",
+      "num_clients": 2,
+      "run_id": "20260819_190655_tiny_e2e_validation_seed42",
+      "seed": 42,
+      "stage": "paper_final",
+      "status": "INCOMPLETE",
+      "study": "VALIDATION",
+      "timestamp_utc": "2026-08-19T15:36:55.614373+00:00"
+    },
+    {
+      "alpha": 0.1,
+      "config_hash": "",
+      "dataset": "B-NAT",
+      "git_commit": "82d4fdf6e07c7b306671b12e516e839b79a4719f",
+      "method": "FedTROS-PR",
+      "num_clients": 2,
+      "run_id": "20260819_191532_tiny_e2e_validation_seed42",
+      "seed": 42,
+      "stage": "paper_final",
+      "status": "INCOMPLETE",
+      "study": "VALIDATION",
+      "timestamp_utc": "2026-08-19T15:45:32.467703+00:00"
+    },
+    {
+      "alpha": 0.1,
+      "config_hash": "",
+      "dataset": "B-NAT",
+      "git_commit": "82d4fdf6e07c7b306671b12e516e839b79a4719f",
+      "method": "FedTROS-PR",
+      "num_clients": 2,
+      "run_id": "20260819_192309_tiny_e2e_validation_seed42",
+      "seed": 42,
+      "stage": "paper_final",
+      "status": "COMPLETED",
+      "study": "VALIDATION",
+      "timestamp_utc": "2026-08-19T15:53:09.792489+00:00"
+    },
+    {
+      "alpha": 0.1,
+      "config_hash": "",
+      "dataset": "B-NAT",
+      "git_commit": "82d4fdf6e07c7b306671b12e516e839b79a4719f",
+      "method": "FedTROS-PR",
+      "num_clients": 2,
+      "run_id": "20260819_203348_tiny_e2e_validation_seed42",
+      "seed": 42,
+      "stage": "paper_final",
+      "status": "INCOMPLETE",
+      "study": "VALIDATION",
+      "timestamp_utc": "2026-08-19T17:03:48.368530+00:00"
+    },
+    {
+      "alpha": 0.1,
+      "config_hash": "",
+      "dataset": "B-NAT",
+      "git_commit": "82d4fdf6e07c7b306671b12e516e839b79a4719f",
+      "method": "FedTROS-PR",
+      "num_clients": 2,
+      "run_id": "20260819_203422_tiny_e2e_validation_seed42",
+      "seed": 42,
+      "stage": "paper_final",
+      "status": "INCOMPLETE",
+      "study": "VALIDATION",
+      "timestamp_utc": "2026-08-19T17:04:22.167446+00:00"
+    },
+    {
+      "alpha": 0.1,
+      "config_hash": "",
+      "dataset": "B-NAT",
+      "git_commit": "82d4fdf6e07c7b306671b12e516e839b79a4719f",
+      "method": "FedTROS-PR",
+      "num_clients": 2,
+      "run_id": "20260819_203532_tiny_e2e_validation_seed42",
+      "seed": 42,
+      "stage": "paper_final",
+      "status": "COMPLETED",
+      "study": "VALIDATION",
+      "timestamp_utc": "2026-08-19T17:05:32.873387+00:00"
+    }
+  ],
+  "seeds": [
+    42
+  ],
+  "source_run_ids": [
+    "20260819_185421_tiny_e2e_validation_seed42",
+    "20260819_185654_tiny_e2e_validation_seed42",
+    "20260819_185917_tiny_e2e_validation_seed42",
+    "20260819_190006_tiny_e2e_validation_seed42",
+    "20260819_190655_tiny_e2e_validation_seed42",
+    "20260819_191532_tiny_e2e_validation_seed42",
+    "20260819_192309_tiny_e2e_validation_seed42",
+    "20260819_203348_tiny_e2e_validation_seed42",
+    "20260819_203422_tiny_e2e_validation_seed42",
+    "20260819_203532_tiny_e2e_validation_seed42"
+  ],
+  "stages": [
+    "paper_final"
+  ],
+  "studies": [
+    "VALIDATION"
+  ],
+  "total_aggregated_conditions": 0,
+  "total_source_runs": 10
+}

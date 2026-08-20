@@ -1,0 +1,2 @@
+round,method,downlink_bytes,uplink_bytes,total_bytes,cumulative_bytes,validation_accuracy,validation_macro_f1
+1,FedTROS-PR,0,0,0,3094591.045632,0.6287212275196777,

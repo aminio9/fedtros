@@ -13,13 +13,11 @@ from src.utils.config import resolve_path
 
 logger = logging.getLogger(__name__)
 
+# Transmitted model parameter keys
 MODEL_KEY_ORDER = (
     "student_model",
-    "prior_net",
-    "recognition_net",
-    "value_net_main",
-    "value_net_target",
-    "generation_net",
+    "teacher",
+    "teacher_to_student_aligner",
 )
 
 
@@ -34,7 +32,16 @@ def _tensor_nbytes(value: Any) -> int:
 
 
 def estimate_checkpoint_parameter_bytes(checkpoint: dict[str, Any]) -> int:
-    total = sum(_tensor_nbytes(checkpoint.get(key)) for key in MODEL_KEY_ORDER)
+    """Calculate the byte size of transmitted model parameters.
+
+    In FedTROS-PR, only the compact student_model is transmitted to/from the server.
+    Private teachers and aligners are strictly local and never communicated.
+    """
+    if isinstance(checkpoint, dict) and "student_model" in checkpoint:
+        return _tensor_nbytes(checkpoint["student_model"])
+    if isinstance(checkpoint, dict) and "model" in checkpoint:
+        return _tensor_nbytes(checkpoint["model"])
+    total = sum(_tensor_nbytes(checkpoint.get(key)) for key in MODEL_KEY_ORDER if isinstance(checkpoint, dict) and checkpoint.get(key) is not None)
     return total if total > 0 else _tensor_nbytes(checkpoint)
 
 
@@ -61,7 +68,11 @@ def _load_resolved_config(run_dir: Path) -> Any:
 
 def _load_monitoring_records(run_dir: Path) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
-    for path in (run_dir / "fmrl_ava_monitoring.jsonl", run_dir / "dkd_fedos_monitoring.jsonl"):
+    candidates = (
+        run_dir / "fedtros_monitoring.jsonl",
+        run_dir / "dkd_fedos_monitoring.jsonl",
+    )
+    for path in candidates:
         if not path.exists():
             continue
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -174,6 +185,8 @@ def build_communication_metrics(
         resolve_path(project_root, run_dir / "best_model.pt"),
         resolve_path(project_root, run_dir / "latest_checkpoint.pt"),
         resolve_path(project_root, run_dir / "global_model_latest.pt"),
+        resolve_path(project_root, run_dir / "fedtros_student_latest.pt"),
+        resolve_path(project_root, run_dir / "checkpoints" / "fedtros_student_latest.pt"),
         resolve_path(project_root, run_dir / "dkd_fedos_student_latest.pt"),
         resolve_path(project_root, run_dir / "checkpoints" / "dkd_fedos_student_latest.pt"),
     ]
@@ -181,7 +194,7 @@ def build_communication_metrics(
     if checkpoint_path is None:
         checkpoint_dir = OmegaConf.select(cfg, "checkpointing.dir", default=None)
         if checkpoint_dir:
-            for candidate_name in ("best_model.pt", "latest_checkpoint.pt", "global_model_latest.pt", "dkd_fedos_student_latest.pt"):
+            for candidate_name in ("best_model.pt", "latest_checkpoint.pt", "global_model_latest.pt", "fedtros_student_latest.pt", "dkd_fedos_student_latest.pt"):
                 candidate = resolve_path(project_root, Path(checkpoint_dir) / candidate_name)
                 if candidate.exists():
                     checkpoint_path = candidate

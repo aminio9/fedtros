@@ -1,3 +1,5 @@
+"""Project and export latent embeddings for visual inspection."""
+
 from __future__ import annotations
 
 import json
@@ -40,7 +42,7 @@ def _project_embeddings(embeddings: np.ndarray) -> np.ndarray:
 
 def export_latent_embeddings(
     *,
-    prior_net: torch.nn.Module,
+    model: torch.nn.Module,
     features: torch.Tensor,
     labels: torch.Tensor,
     class_names: dict[int, str],
@@ -50,20 +52,34 @@ def export_latent_embeddings(
     source: str | None = None,
 ) -> pd.DataFrame:
     """Project latent representations to 2D and persist them as a plotting CSV."""
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    target_module = model
+    if target_module is None:
+        raise ValueError("model must be provided.")
 
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     dataset = TensorDataset(features.float(), labels.long())
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
-    device = _module_device(prior_net)
+    device = _module_device(target_module)
     latent_batches: list[np.ndarray] = []
     label_batches: list[np.ndarray] = []
 
     with torch.no_grad():
-        prior_net.eval()
+        target_module.eval()
         for batch_features, batch_labels in loader:
             batch_features = batch_features.to(device)
-            mu, _ = prior_net(batch_features)
-            latent_batches.append(mu.detach().cpu().numpy())
+            if hasattr(target_module, "distill_forward"):
+                # VariationalClassifierTeacher
+                _, mu, _ = target_module.distill_forward(batch_features)
+                rep = mu
+            elif hasattr(target_module, "classifier_features"):
+                # StudentIDSModel
+                rep = target_module.classifier_features(batch_features)
+            elif callable(target_module):
+                out = target_module(batch_features)
+                rep = out[0] if isinstance(out, (tuple, list)) else out
+            else:
+                rep = batch_features
+            latent_batches.append(rep.detach().cpu().numpy())
             label_batches.append(batch_labels.cpu().numpy())
 
     if latent_batches:

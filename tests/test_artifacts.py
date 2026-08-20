@@ -159,7 +159,7 @@ def _write_run(
 def test_export_latent_embeddings_writes_projection_csv(tmp_path):
     output_path = tmp_path / "latent_embeddings.csv"
     frame = export_latent_embeddings(
-        prior_net=SelectFirstTwo(),
+        model=SelectFirstTwo(),
         features=torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]),
         labels=torch.tensor([0, 1, -1]),
         class_names={0: "Normal", 1: "DoS"},
@@ -184,20 +184,18 @@ def test_build_communication_metrics_uses_logical_rounds(tmp_path):
         dataset="B-NAT",
         source_labels=["Normal", "BP", "DoS", "MitM", "FoT"],
         known_labels=["Normal", "BP", "DoS", "MitM"],
-        method="FMRL_AVA",
+        method="FedTROS",
         num_clients=2,
         seed=42,
         alpha=0.1,
     )
     checkpoint = {
-        "prior_net": {"w": torch.ones(4, 4)},
-        "recognition_net": {"w": torch.ones(4, 4)},
-        "value_net_main": {"w": torch.ones(4, 4)},
-        "value_net_target": {"w": torch.ones(4, 4)},
-        "generation_net": {"w": torch.ones(4, 4)},
+        "student_model": {"w": torch.ones(4, 4)},
+        "teacher": {"w": torch.ones(4, 4)},
+        "teacher_to_student_aligner": {"w": torch.ones(4, 4)},
     }
     torch.save(checkpoint, run_dir / "best_model.pt")
-    (run_dir / "fmrl_ava_monitoring.jsonl").write_text(
+    (run_dir / "fedtros_monitoring.jsonl").write_text(
         "\n".join(
             [
                 json.dumps(
@@ -234,7 +232,7 @@ def test_build_communication_metrics_uses_logical_rounds(tmp_path):
     )
     history = pd.DataFrame(
         {
-            "round": [1, 3],
+            "round": [1, 2],
             "metric_name": ["accuracy", "accuracy"],
             "metric_value": [0.7, 0.8],
         }
@@ -254,7 +252,7 @@ def test_build_suite_artifacts_generates_suite_csvs(tmp_path):
         dataset="B-NAT",
         source_labels=["Normal", "BP", "DoS", "MitM", "FoT"],
         known_labels=["Normal", "BP", "DoS", "MitM"],
-        method="FMRL_AVA",
+        method="FedTROS",
         num_clients=3,
         seed=42,
         alpha=0.1,
@@ -269,7 +267,7 @@ def test_build_suite_artifacts_generates_suite_csvs(tmp_path):
         dataset="B-NAT",
         source_labels=["Normal", "BP", "DoS", "MitM", "FoT"],
         known_labels=["Normal", "BP", "DoS", "MitM"],
-        method="FMRL_AVA",
+        method="FedTROS",
         num_clients=10,
         seed=43,
         alpha=0.1,
@@ -283,7 +281,7 @@ def test_build_suite_artifacts_generates_suite_csvs(tmp_path):
         dataset="ToN-IoT",
         source_labels=["Normal", "BP", "DoS", "MitM", "UnknownA", "UnknownB"],
         known_labels=["Normal", "BP", "DoS", "MitM"],
-        method="FMRL_AVA",
+        method="FedTROS",
         num_clients=20,
         seed=44,
         alpha=0.5,
@@ -297,7 +295,7 @@ def test_build_suite_artifacts_generates_suite_csvs(tmp_path):
         dataset="B-NAT",
         source_labels=["Normal", "BP", "DoS", "MitM", "FoT"],
         known_labels=["Normal", "BP", "DoS", "MitM"],
-        method="FMRL_AVA",
+        method="FedTROS",
         num_clients=3,
         seed=45,
         alpha=0.1,

@@ -7,10 +7,6 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import pandas as pd
 from omegaconf import OmegaConf
 
@@ -213,59 +209,6 @@ def _run_summary(run_dir: Path) -> dict[str, Any]:
     }
 
 
-def _percent_series(series: pd.Series) -> pd.Series:
-    numeric = pd.to_numeric(series, errors="coerce")
-    if numeric.dropna().empty:
-        return numeric
-    if numeric.max(skipna=True) <= 1.0 + 1e-9 and numeric.min(skipna=True) >= -1e-9:
-        return numeric * 100.0
-    return numeric
-
-
-def _save_line_plot(frame: pd.DataFrame, output_dir: Path, y: str, title: str, ylabel: str, filename: str) -> Path | None:
-    if frame.empty or y not in frame.columns:
-        return None
-    plot_df = frame[["round", "num_clients", y]].dropna().copy()
-    if plot_df.empty:
-        return None
-    plot_df[y] = _percent_series(plot_df[y])
-    fig, ax = plt.subplots(figsize=(8.6, 5.0), dpi=300)
-    for clients, group in plot_df.groupby("num_clients"):
-        group = group.sort_values("round")
-        ax.plot(group["round"], group[y], marker="o", linewidth=2.0, markersize=3.5, label=f"{int(clients)} clients")
-    ax.set_title(title)
-    ax.set_xlabel("Communication round")
-    ax.set_ylabel(ylabel)
-    ax.grid(alpha=0.25)
-    ax.legend(frameon=False)
-    fig.tight_layout()
-    path = output_dir / filename
-    fig.savefig(path, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-    return path
-
-
-def _save_bar_plot(summary: pd.DataFrame, output_dir: Path, y: str, title: str, ylabel: str, filename: str) -> Path | None:
-    if summary.empty or y not in summary.columns:
-        return None
-    plot_df = summary[["num_clients", y]].dropna().sort_values("num_clients")
-    if plot_df.empty:
-        return None
-    fig, ax = plt.subplots(figsize=(7.2, 4.8), dpi=300)
-    ax.bar(plot_df["num_clients"].astype(str), plot_df[y])
-    ax.set_title(title)
-    ax.set_xlabel("Number of clients")
-    ax.set_ylabel(ylabel)
-    ax.grid(axis="y", alpha=0.25)
-    for idx, value in enumerate(plot_df[y]):
-        ax.text(idx, value, f"{value:.2f}", ha="center", va="bottom", fontsize=9)
-    fig.tight_layout()
-    path = output_dir / filename
-    fig.savefig(path, bbox_inches="tight", facecolor="white")
-    plt.close(fig)
-    return path
-
-
 def _retention(summary: pd.DataFrame) -> dict[str, Any]:
     if summary.empty or not {50, 100}.issubset(set(summary["num_clients"].astype(int))):
         return {}
@@ -313,19 +256,6 @@ def build_report(run_dirs: list[Path], output_dir: Path) -> dict[str, Any]:
     generated: list[str] = [str(summary_path), str(retention_path)]
     if not round_df.empty:
         generated.append(str(round_path))
-        for path in (
-            _save_line_plot(round_df, output_dir, "openset_f1_macro", "Macro-F1 convergence", "Macro-F1 (%)", "01_macro_f1_convergence.png"),
-            _save_line_plot(round_df, output_dir, "openset_auroc", "Open-set AUROC convergence", "AUROC (%)", "02_auroc_convergence.png"),
-        ):
-            if path is not None:
-                generated.append(str(path))
-    for path in (
-        _save_bar_plot(summary_df, output_dir, "avg_round_time_sec", "Average round time scalability", "Seconds", "03_avg_round_time.png"),
-        _save_bar_plot(summary_df, output_dir, "total_communication_mb", "Total communication scalability", "MB", "04_total_communication.png"),
-        _save_bar_plot(summary_df, output_dir, "worst_client_macro_f1", "Worst-client Macro-F1", "Macro-F1", "05_worst_client_macro_f1.png"),
-    ):
-        if path is not None:
-            generated.append(str(path))
 
     manifest = {"runs": [str(run_dir) for run_dir in run_dirs], "generated_files": generated}
     manifest_path = output_dir / "scalability_report_manifest.json"
@@ -334,7 +264,7 @@ def build_report(run_dirs: list[Path], output_dir: Path) -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build 50/100-client scalability summary and plots.")
+    parser = argparse.ArgumentParser(description="Build data-only 50/100-client scalability summaries.")
     parser.add_argument("--runs", nargs="+", required=True, help="Run directories to compare.")
     parser.add_argument("--output", required=True, help="Output report directory.")
     args = parser.parse_args()
