@@ -1,0 +1,82 @@
+# @package _global_
+# FedTROS-PR Canonical Method Configuration
+# Teacher-Regularized Federated Open-Set Intrusion Detection with Prototype-Rank Rejection
+experiment:
+  method: FedTROS-PR
+
+federated:
+  strategy:
+    name: fedtros_pr
+    aggregation_strategy: fedtros_pr
+    # Support-weighted server aggregation. Only the compact student is shared.
+    student_aggregation_mode: support_weighted_average
+    support_min_weight: 0.01
+    monitor_path: ${tracking.run_dir}/fedtros_pr_monitoring.jsonl
+  server:
+    proximal_mu: 0.0
+
+training:
+  # Private Variational Classifier Teacher (VCT)
+  teacher_enabled: true
+  teacher_stochastic_training: true
+  kd_enabled: true
+  kd_gating_enabled: true
+  alignment_enabled: true
+  teacher_hidden_dims: [512, 256]
+  teacher_latent_dim: 64
+  teacher_lr: 0.001
+  teacher_weight_decay: 0.0001
+  teacher_beta_kl: 0.01
+  teacher_epochs: 2
+  teacher_grad_clip_norm: 1.0
+  teacher_dropout: 0.0
+
+  # Federated Student Architecture
+  fedtros_student_hidden_dims: [512, 256, 128]
+  fedtros_student_activation: gelu
+  fedtros_student_norm: layernorm
+  fedtros_student_dropout: 0.05
+  student_lr: 0.001
+  student_weight_decay: 0.0001
+  student_epochs: 2
+  grad_clip_norm: 1.0
+  batch_size: 64
+  label_smoothing: 0.02
+
+  # Optional dedicated student OSR latent branch (8-D; retained only if A5 validates it)
+  student_osr_enabled: false
+  student_osr_latent_dim: 8
+  student_osr_hidden_dims: [128, 64]
+  student_osr_decoder_hidden_dims: [64, 128]
+  student_osr_dropout: 0.05
+  student_osr_norm: layernorm
+  student_osr_activation: gelu
+  student_osr_detach_features: true
+  student_osr_lr: 0.001
+  student_osr_weight_decay: 0.0001
+  student_open_set_enabled: false
+
+  # Coverage-adaptive global-student anchoring
+  fedtros_global_anchor_weight: 2.0
+  fedtros_global_anchor_min_weight: 0.0
+  fedtros_global_anchor_coverage_power: 1.0
+  student_task_weight: 1.0
+
+  # Disagreement-gated teacher-to-student distillation & feature alignment
+  kd_base_temperature: 3.0
+  kd_min_temperature: 1.0
+  kd_decay: 0.95
+  fedtros_teacher_to_student_start_round: 1
+  fedtros_alignment_start_round: 1
+  lambda_kd: 0.20
+  lambda_align: 0.08
+  adaptive_transfer_weights: false
+  lambda_kd_min: 0.03
+  lambda_kd_max: 0.35
+  lambda_align_min: 0.01
+  lambda_align_max: 0.12
+  align_mse_weight: 1.0
+  align_cos_weight: 0.5
+  class_balance_beta: 0.999
+  class_weight_min: 0.2
+  class_weight_max: 5.0

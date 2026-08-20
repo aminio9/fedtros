@@ -15,8 +15,8 @@ source_labels:
   - DoS
   - MitM
   - FoT
-closed_set_num_actions: 5
-open_set_num_actions: 4
+closed_set_num_classes: 5
+open_set_num_classes: 4
 known_labels:
   - Normal
   - BP
@@ -28,20 +28,21 @@ external_datasets:
   - B-TAT
   - ToN-IoT
   - CIC-IDS2017
+partition_file: null
 preprocessing:
   mode: single_source
+  protocol: open_set
   output_dir: data/processed
   raw_file: ${dataset.raw_path}
   label_column: ${dataset.label_column}
+  source_labels: ${dataset.source_labels}
   known_labels: ${dataset.known_labels}
+  unknown_labels: ${dataset.unknown_labels}
   numerical_cols: null
   categorical_cols: null
   numeric_threshold: 0.9
-  # Use a stable label-free categorical vocabulary from the source CSV.
-  # This prevents Exp8 label-wise open-set runs from dropping one-hot columns
-  # when the held-out unknown label removes a categorical value from known_train.
-  categorical_schema_scope: source
-  expected_state_dim: 31
+  categorical_schema_scope: known_train
+  expected_feature_dim: null
   train_split: 0.8
   validation_split: 0.1
   test_split: 0.1
@@ -50,3 +51,4 @@ preprocessing:
   alpha: 100.0
   iid: false
   unknown_label_id: -1
+  smoke: false

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -18,6 +20,17 @@ from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
 from src.utils.config import resolve_path
 
 logger = logging.getLogger(__name__)
+
+
+def _effective_max_samples_per_class(cfg: DictConfig) -> int | None:
+    configured = getattr(cfg, "max_samples_per_class", None)
+    cap = int(configured) if configured is not None else None
+    if bool(getattr(cfg, "smoke", False)):
+        smoke_cap = int(getattr(cfg, "smoke_max_samples_per_class", 96))
+        if smoke_cap <= 0:
+            raise ValueError("smoke_max_samples_per_class must be positive")
+        cap = smoke_cap if cap is None else min(cap, smoke_cap)
+    return cap
 
 
 def infer_feature_columns(
@@ -235,6 +248,141 @@ def dirichlet_split(
     )
 
 
+def _label_vector_sha256(labels: np.ndarray) -> str:
+    values = np.asarray(labels, dtype=np.int64).reshape(-1)
+    return hashlib.sha256(values.tobytes(order="C")).hexdigest()
+
+
+def _validate_paired_partition_payload(
+    payload: dict[str, Any],
+    *,
+    labels: np.ndarray,
+    num_clients: int,
+    alpha: float,
+    iid: bool,
+    seed: int,
+    known_labels: list[str],
+    unknown_labels: list[str],
+) -> dict[int, list[int]]:
+    """Validate an immutable paired partition before reusing it across methods."""
+    if payload.get("schema_name") != "fedtros_paired_partition" or int(payload.get("schema_version", -1)) != 1:
+        raise ValueError("Unsupported paired-partition schema")
+    expected = {
+        "num_clients": int(num_clients),
+        "seed": int(seed),
+        "iid": bool(iid),
+        "train_size": int(len(labels)),
+        "train_labels_sha256": _label_vector_sha256(labels),
+        "known_labels": [str(x) for x in known_labels],
+        "unknown_labels": [str(x) for x in unknown_labels],
+    }
+    for key, value in expected.items():
+        if payload.get(key) != value:
+            raise ValueError(
+                f"Paired partition mismatch for {key}: stored={payload.get(key)!r}, expected={value!r}"
+            )
+    if not iid and abs(float(payload.get("alpha", -1.0)) - float(alpha)) > 1e-12:
+        raise ValueError(
+            f"Paired partition alpha mismatch: stored={payload.get('alpha')}, expected={alpha}"
+        )
+    raw_clients = payload.get("client_indices")
+    if not isinstance(raw_clients, dict):
+        raise ValueError("Paired partition has no client_indices mapping")
+    clients: dict[int, list[int]] = {}
+    flattened: list[int] = []
+    for cid in range(num_clients):
+        raw = raw_clients.get(str(cid), raw_clients.get(cid))
+        if raw is None:
+            raise ValueError(f"Paired partition missing client {cid}")
+        indices = [int(x) for x in raw]
+        if not indices:
+            raise ValueError(f"Paired partition client {cid} is empty")
+        if min(indices) < 0 or max(indices) >= len(labels):
+            raise ValueError(f"Paired partition client {cid} contains out-of-range indices")
+        clients[cid] = indices
+        flattened.extend(indices)
+    if len(flattened) != len(labels) or len(set(flattened)) != len(labels):
+        raise ValueError(
+            "Paired partition must assign every known-training sample exactly once "
+            f"(assigned={len(flattened)}, unique={len(set(flattened))}, expected={len(labels)})"
+        )
+    return clients
+
+
+def load_or_create_paired_partition(
+    *,
+    partition_path: Path | None,
+    labels: np.ndarray,
+    num_clients: int,
+    alpha: float,
+    num_classes: int,
+    rng: np.random.Generator,
+    iid: bool,
+    min_samples_per_client: int,
+    max_attempts: int,
+    seed: int,
+    known_labels: list[str],
+    unknown_labels: list[str],
+) -> dict[int, list[int]]:
+    """Reuse one seed/condition partition across all matched methods.
+
+    The persisted relative indices refer to the deterministic known-training split.
+    A label-vector hash and the full known/unknown protocol prevent accidental reuse
+    across E3/E4/E8 populations that happen to share dataset/alpha/seed values.
+    """
+    if partition_path is not None and partition_path.exists():
+        payload = json.loads(partition_path.read_text(encoding="utf-8"))
+        clients = _validate_paired_partition_payload(
+            payload,
+            labels=labels,
+            num_clients=num_clients,
+            alpha=alpha,
+            iid=iid,
+            seed=seed,
+            known_labels=known_labels,
+            unknown_labels=unknown_labels,
+        )
+        logger.info("Reusing paired client partition: %s", partition_path)
+        return clients
+
+    clients = dirichlet_split(
+        labels,
+        num_clients=num_clients,
+        alpha=alpha,
+        num_classes=num_classes,
+        rng=rng,
+        iid=iid,
+        min_samples_per_client=min_samples_per_client,
+        max_attempts=max_attempts,
+    )
+    if partition_path is None:
+        return clients
+
+    partition_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema_name": "fedtros_paired_partition",
+        "schema_version": 1,
+        "dataset_protocol": {
+            "known_labels": [str(x) for x in known_labels],
+            "unknown_labels": [str(x) for x in unknown_labels],
+        },
+        "known_labels": [str(x) for x in known_labels],
+        "unknown_labels": [str(x) for x in unknown_labels],
+        "seed": int(seed),
+        "alpha": float(alpha),
+        "iid": bool(iid),
+        "num_clients": int(num_clients),
+        "train_size": int(len(labels)),
+        "train_labels_sha256": _label_vector_sha256(labels),
+        "client_indices": {str(cid): [int(x) for x in indices] for cid, indices in clients.items()},
+    }
+    tmp = partition_path.with_name(f".{partition_path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, partition_path)
+    logger.info("Created paired client partition: %s", partition_path)
+    return clients
+
+
 def _ensure_non_empty_clients(
     client_indices: dict[int, list[int]], *, rng: np.random.Generator
 ) -> dict[int, list[int]]:
@@ -343,7 +491,7 @@ def _prepare_raw_frame(
         if missing and bool(getattr(cfg, "require_all_source_labels", False)):
             raise ValueError(f"Raw data is missing configured source labels: {missing}")
 
-    max_per_class = getattr(cfg, "max_samples_per_class", None)
+    max_per_class = _effective_max_samples_per_class(cfg)
     if max_per_class is not None and int(max_per_class) > 0:
         capped_parts: list[pd.DataFrame] = []
         for _, group in df.groupby(label_col, sort=True):
@@ -378,7 +526,7 @@ def _read_raw_csv(
 ) -> tuple[pd.DataFrame, dict[str, int] | None]:
     """Read normally or keep deterministic bottom-k rows per class in streaming mode."""
     chunksize = getattr(cfg, "read_chunksize", None)
-    max_per_class = getattr(cfg, "max_samples_per_class", None)
+    max_per_class = _effective_max_samples_per_class(cfg)
     if chunksize is None or max_per_class is None or int(max_per_class) <= 0:
         return pd.read_csv(path, low_memory=False), None
 
@@ -451,8 +599,8 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
             )
     label_map = {label: idx for idx, label in enumerate(known_labels)}
     idx_to_label = {idx: label for label, idx in label_map.items()}
-    num_actions = len(label_map)
-    if num_actions == 0:
+    num_classes = len(label_map)
+    if num_classes == 0:
         raise ValueError("dataset.preprocessing.known_labels must not be empty.")
 
     df_known = df[df[label_col].isin(known_labels)].copy()
@@ -521,15 +669,29 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
     _save_tensor_dataset(X_test, test_y, output_dir / "shared_closed_set_test.pt")
 
     num_clients = int(p_cfg.num_clients)
-    client_indices = dirichlet_split(
-        train_y,
+    partition_value = OmegaConf.select(cfg, "dataset.partition_file", default=None)
+    partition_path: Path | None = None
+    if partition_value:
+        partition_path = Path(str(partition_value))
+        if not partition_path.is_absolute():
+            partition_path = project_root / partition_path
+    client_indices = load_or_create_paired_partition(
+        partition_path=partition_path,
+        labels=train_y,
         num_clients=num_clients,
         alpha=float(p_cfg.alpha),
-        num_classes=num_actions,
+        num_classes=num_classes,
         rng=rng,
         iid=bool(p_cfg.iid),
-        min_samples_per_client=int(getattr(p_cfg, "min_samples_per_client", 1)),
+        min_samples_per_client=(
+            int(getattr(p_cfg, "smoke_min_samples_per_client", 8))
+            if bool(getattr(p_cfg, "smoke", False))
+            else int(getattr(p_cfg, "min_samples_per_client", 1))
+        ),
         max_attempts=int(getattr(p_cfg, "partition_max_attempts", 100)),
+        seed=seed,
+        known_labels=known_labels,
+        unknown_labels=configured_unknown_labels,
     )
     partition_records: list[dict[str, Any]] = []
     class_distribution_rows: list[dict[str, Any]] = []
@@ -543,12 +705,12 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
             y_client,
             output_dir / f"client_{client_id}_train.pt",
         )
-        counts = np.bincount(y_client, minlength=num_actions)[:num_actions]
+        counts = np.bincount(y_client, minlength=num_classes)[:num_classes]
         class_distribution_rows.append(
             {
                 "client_id": client_id,
                 **{
-                    idx_to_label[class_id]: int(counts[class_id]) for class_id in range(num_actions)
+                    idx_to_label[class_id]: int(counts[class_id]) for class_id in range(num_classes)
                 },
             }
         )
@@ -653,7 +815,7 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
     (output_dir / "feature_schema.json").write_text(
         json.dumps(
             {
-                "state_dim": len(feature_names),
+                "feature_dim": len(feature_names),
                 "feature_names": feature_names,
                 "numerical_columns": numerical,
                 "categorical_columns": categorical,
@@ -670,7 +832,7 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
     if encoder:
         joblib.dump(encoder, output_dir / "encoder.joblib")
 
-    state_dim = int(X_train.shape[1])
+    feature_dim = int(X_train.shape[1])
     for split_name, features in (
         ("known_train", X_train),
         ("validation", X_val),
@@ -679,14 +841,14 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
     ):
         if not np.isfinite(features).all():
             raise RuntimeError(f"Non-finite feature values remain in {split_name} after preprocessing.")
-    expected_state_dim = getattr(p_cfg, "expected_state_dim", None)
-    if expected_state_dim is not None and int(expected_state_dim) != state_dim:
+    expected_feature_dim = getattr(p_cfg, "expected_feature_dim", None)
+    if expected_feature_dim is not None and int(expected_feature_dim) != feature_dim:
         raise RuntimeError(
-            f"Preprocessed state_dim={state_dim}, but "
-            f"dataset.preprocessing.expected_state_dim={int(expected_state_dim)}. "
+            f"Preprocessed feature_dim={feature_dim}, but "
+            f"dataset.preprocessing.expected_feature_dim={int(expected_feature_dim)}. "
             "This usually means the categorical schema changed. Use "
             "categorical_schema_scope=source for the fixed BNaT schema, or update "
-            "the expected_state_dim if the raw feature schema intentionally changed."
+            "the expected_feature_dim if the raw feature schema intentionally changed."
         )
     metadata = {
         "dataset": str(cfg.dataset.name),
@@ -703,8 +865,8 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
             for label, count in df_unknown[label_col].value_counts().sort_index().items()
         },
         "unknown_label_id": int(p_cfg.unknown_label_id),
-        "num_actions": num_actions,
-        "state_dim": state_dim,
+        "num_classes": num_classes,
+        "feature_dim": feature_dim,
         "numerical_columns": numerical,
         "categorical_columns": categorical,
         "categorical_schema_scope": str(getattr(p_cfg, "categorical_schema_scope", "known_train")),
@@ -723,7 +885,11 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
         "num_closed_test_samples": len(test_y),
         "num_open_test_samples": len(open_labels),
         "num_clients": num_clients,
-        "min_samples_per_client": int(getattr(p_cfg, "min_samples_per_client", 1)),
+        "min_samples_per_client": (
+            int(getattr(p_cfg, "smoke_min_samples_per_client", 8))
+            if bool(getattr(p_cfg, "smoke", False))
+            else int(getattr(p_cfg, "min_samples_per_client", 1))
+        ),
         "alpha": float(p_cfg.alpha),
         "iid": bool(p_cfg.iid),
         "config_snapshot": OmegaConf.to_container(cfg.dataset, resolve=True),
@@ -732,9 +898,9 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
 
     logger.info(
-        "Preprocessing complete | state_dim=%d | num_actions=%d | output=%s",
-        state_dim,
-        num_actions,
+        "Preprocessing complete | feature_dim=%d | num_classes=%d | output=%s",
+        feature_dim,
+        num_classes,
         output_dir,
     )
     return metadata

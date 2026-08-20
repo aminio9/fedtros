@@ -5,6 +5,7 @@ closed_set_data: ${paths.closed_set_test_data}
 open_set_data: ${paths.open_set_test_data}
 class_names: ${paths.class_names}
 output_dir: ${tracking.run_dir}
+mode: open_set
 metrics:
   primary_closed_set:
     - accuracy

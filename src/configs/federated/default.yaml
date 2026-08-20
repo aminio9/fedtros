@@ -1,11 +1,11 @@
 num_clients: 3
 num_rounds: 100
 resume_from: null
-# Add this when resuming a DKD-FedOS/Fed-DiGOS student checkpoint so
+# Add this when resuming a FedTROS student checkpoint so
 # saved checkpoints continue from the previous round number. Example: 52
 # means the next saved checkpoint will be round_0053.
 resume_round_offset: 0
-local_client_epochs: ${training.local_episodes_per_round}
+local_client_epochs: ${training.local_epochs}
 evaluation_frequency: 1
 client_resources:
   num_cpus: ${runtime.client_num_cpus}
@@ -26,38 +26,8 @@ server:
   min_available_clients: ${federated.num_clients}
   proximal_mu: 0.0
 strategy:
-  name: fmrl_ava
-  aggregation_strategy: fmrl_ava
-  fmrl_lr: 0.01
-  utility_threshold: 0.1
-  utility_temperature: 1.0
-  utility_strength: 0.75
-  critic_blend: 0.15
-  alignment_strength: 0.50
-  min_alignment_multiplier: 0.50
-  max_alignment_multiplier: 2.00
-  validation_reward_blend: 0.85
-  validation_reward_ema_decay: 0.80
-  aggregation_lr: 1.0
-  min_selected_clients: 1
-  max_selected_fraction: 1.0
-  min_utility: 0.25
-  max_utility: 2.0
-  critic_hidden_dim: 64
-  mixer_hidden_dim: 64
-  monitor_path: ${tracking.run_dir}/fmrl_ava_monitoring.jsonl
-  max_agents: ${federated.num_clients}
-  warmup_rounds: 2
-  team_reward_weights:
-    closed_set_f1: 0.30
-    balanced_accuracy: 0.20
-    open_set_auroc: 0.20
-    open_set_unknown_f1: 0.15
-    open_set_rejection: 0.15
-  support_reward_weights:
-    local_f1_macro: 0.35
-    balanced_accuracy: 0.15
-    td_stability: 0.20
-    coverage_quality: 0.15
-    generator_correct_frac: 0.10
-    communication: 0.05
+  name: fedtros_pr
+  aggregation_strategy: fedtros_pr
+  monitor_path: ${tracking.run_dir}/fedtros_pr_monitoring.jsonl
+  student_aggregation_mode: support_weighted_average
+  support_min_weight: 0.01

@@ -1,4 +1,4 @@
-"""Lightweight federated student models for DKD-FedOS / Fed-DiGOS."""
+"""Compact federated student model for FedTROS-PR and architecture-matched baselines."""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def _mlp(
 class StudentIDSModel(nn.Module):
     """Federated student classifier with an optional disentangled OSR generator.
 
-    The closed-set path is the normal DKD-FedOS student classifier.  When
+    The closed-set path is the compact FedTROS-PR student classifier.  When
     ``osr_enabled`` is true, the same federated student also owns an open-set
     generative branch inspired by classification-reconstruction OSR.  The OSR
     branch reuses the teacher generator idea (recognition/generation with class
@@ -219,7 +219,7 @@ class StudentIDSModel(nn.Module):
         sample: bool = True,
     ) -> dict[str, torch.Tensor]:
         if not self.osr_enabled:
-            raise RuntimeError("Student OSR branch is disabled. Set training.dkd_student_osr_enabled=true.")
+            raise RuntimeError("Student OSR branch is disabled. Set training.student_osr_enabled=true.")
         features, logits = self.forward(x)
         should_detach = self.osr_detach_features if detach_features is None else bool(detach_features)
         osr_features = features.detach() if should_detach else features
@@ -255,6 +255,6 @@ class StudentIDSModel(nn.Module):
     def energy_score(logits: torch.Tensor, temperature: float = 1.0) -> torch.Tensor:
         t = max(float(temperature), 1.0e-6)
         # Raw energy.  Some tabular IDS splits show unknowns on the low-energy
-        # side, so Fed-DiGOS evaluation calibrates energy direction instead of
+        # side, so Prototype-Rank evaluation can calibrate energy direction instead of
         # assuming that only high energy means unknown.
         return -t * torch.logsumexp(logits / t, dim=1)

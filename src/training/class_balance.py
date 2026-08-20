@@ -44,10 +44,37 @@ def effective_number_class_weights(
     return raw.to(target_device)
 
 
+class EffectiveNumberClassBalance:
+    """Class balance utility wrapper."""
+
+    def __init__(
+        self,
+        num_classes: int,
+        beta: float = 0.999,
+        min_weight: float = 0.2,
+        max_weight: float = 5.0,
+    ):
+        self.num_classes = num_classes
+        self.beta = beta
+        self.min_weight = min_weight
+        self.max_weight = max_weight
+
+    def get_weights(self, labels: torch.Tensor, device: torch.device | str | None = None) -> torch.Tensor:
+        return effective_number_class_weights(
+            labels,
+            self.num_classes,
+            beta=self.beta,
+            min_weight=self.min_weight,
+            max_weight=self.max_weight,
+            normalize=True,
+            device=device,
+        )
+
+
 def class_balanced_cross_entropy(
     logits: torch.Tensor,
     labels: torch.Tensor,
-    weights: torch.Tensor | None,
+    weights: torch.Tensor | None = None,
     *,
     label_smoothing: float = 0.0,
 ) -> torch.Tensor:

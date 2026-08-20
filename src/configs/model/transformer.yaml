@@ -1,7 +1,6 @@
 name: tabular_transformer
-state_dim: 31
+feature_dim: 31
 latent_dim: 64
-num_actions: 4
 hidden_dim: 256
 projection_dim: 128
 dueling_hidden_dim: 128
@@ -11,7 +10,7 @@ use_generation_network: true
 generation_hidden_dim: 64
 transformer:
   enabled: true
-  input_dim: ${model.state_dim}
+  input_dim: ${model.feature_dim}
   d_model: 128
   nhead: 4
   num_layers: 2

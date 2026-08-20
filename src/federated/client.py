@@ -1,41 +1,22 @@
 import json
 import logging
+import random
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 import flwr as fl
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
 from flwr.common import Parameters, parameters_to_ndarrays
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from sklearn.metrics import balanced_accuracy_score, classification_report, confusion_matrix, f1_score
 from torch.utils.data import DataLoader, TensorDataset
 
-from src.agents.agent import Agent
-from src.agents.policy import EpsilonGreedyPolicy, EpsilonScheduler
-from src.evaluation.openset_eval import (
-    calibrate_evt_thresholds,
-    evaluate_open_set,
-    fit_evt_models,
-)
-from src.models.models import OpenSetQChainModelFactory
-from src.openset.evt import save_evt_collection, save_evt_meta
-from src.openset.feature_evt import (
-    evaluate_feature_evt_open_set,
-    fit_local_generator_evt_models,
-    fit_student_feature_evt_models,
-    save_feature_evt_collection,
-    save_local_generator_evt_collection,
-)
-from src.rl.environment import BlockchainIntrusionEnv
-from src.rl.local_training import run_local_training_round
-from src.rl.replay_buffer import ExperienceReplayBuffer
+from src.models.bundle import FedTROSModelBundle as Agent
+from src.models.models import ModelFactory
+from src.training.local_training import run_local_training_round
 from src.utils.utils import get_device, project_root
 
 PROJECT_ROOT = project_root()
@@ -46,17 +27,8 @@ def _resolve_project_path(path_like: str | Path) -> Path:
     return path if path.is_absolute() else PROJECT_ROOT / path
 
 
-def _dkd_fedos_final_eval_backend(evt_cfg: Any) -> bool:
-    backend = str(getattr(evt_cfg, "backend", "teacher_generator")).lower()
-    return bool(getattr(evt_cfg, "enabled", False)) and backend in {
-        "fed_digos",
-        "digos",
-        "student_digos",
-    }
-
-
 class FlowerClient(fl.client.NumPyClient):
-    """Flower NumPyClient implementing Fed-Per/FedAvg with hybrid logic."""
+    """Flower NumPyClient implementing FedTROS-PR and Student-based Federated Baselines."""
 
     def __init__(
         self,
@@ -82,117 +54,128 @@ class FlowerClient(fl.client.NumPyClient):
         self._simulation_rest_device = (
             torch.device("cpu") if self._simulation_gpu_batching else self.device
         )
-
         self._move_data_to_device = bool(cfg.device.move_data_to_device)
 
         self.logger.info("Client %s: Initializing...", cid)
-        self.logger.info(
-            "Client %s device context | init_device=%s | execution_device=%s | rest_device=%s | batching=%s",
-            cid,
-            self.device,
-            self._simulation_execution_device,
-            self._simulation_rest_device,
-            self._simulation_gpu_batching,
-        )
-        self.model_factory = OpenSetQChainModelFactory(cfg.model)
 
-        # NON-IID FIX: Pass global number of actions to Environment
-        self.env = BlockchainIntrusionEnv(
-            processed_data_path=self.data_path,
-            steps_per_episode=cfg.training.steps_per_episode,
-            device=self.device,
-            logger=self.logger,
-            move_data_to_device=self._move_data_to_device,
-            global_num_actions=cfg.model.num_actions,
-            reward_mode=str(getattr(cfg.training, "reward_mode", "symmetric")),
-            reward_correct=float(getattr(cfg.training, "reward_correct", 1.0)),
-            reward_wrong=float(getattr(cfg.training, "reward_wrong", -1.0)),
-            reward_weight_power=float(getattr(cfg.training, "reward_weight_power", 0.5)),
-            reward_min_weight=float(getattr(cfg.training, "reward_min_weight", 0.5)),
-            reward_max_weight=float(getattr(cfg.training, "reward_max_weight", 3.0)),
-            reward_normalize_mean=bool(getattr(cfg.training, "reward_normalize_mean", True)),
-        )
+        # Load client-local training dataset
+        resolved_data_path = _resolve_project_path(data_path)
+        data = torch.load(resolved_data_path, map_location="cpu", weights_only=True)
+        if isinstance(data, dict):
+            raw_features = data["features"] if "features" in data else data["X"]
+            raw_labels = data["labels"] if "labels" in data else data["y"]
+        elif isinstance(data, (tuple, list)) and len(data) >= 2:
+            raw_features, raw_labels = data[0], data[1]
+        else:
+            raise ValueError(f"Unsupported data format in {data_path}")
 
-        # -----------------------------------------------------------
-        # VALIDATION: Relaxed for Non-IID
-        # -----------------------------------------------------------
-        if cfg.model.state_dim != self.env.feature_dim:
-            raise ValueError(
-                f"State Dim mismatch on client {cid}: "
-                f"Config({cfg.model.state_dim}) != Env({self.env.feature_dim})"
-            )
+        data_dev = self.device if self._move_data_to_device else torch.device("cpu")
+        self.features = raw_features.to(data_dev).float()
+        self.labels = raw_labels.to(data_dev).long()
 
-        # It is CRITICAL if env has MORE actions than the model can predict
-        if self.env.num_actions_nt > cfg.model.num_actions:
-            raise ValueError(
-                f"CRITICAL: Environment has more classes ({self.env.num_actions_nt}) "
-                f"than Model output nodes ({cfg.model.num_actions}). Increase config.model.num_actions!"
-            )
-
-        # It is OKAY (Non-IID) if env has FEWER actions. Just warn.
-        if self.env.num_actions_nt < cfg.model.num_actions:
-            self.logger.warning(
-                f"Client {cid} Non-IID: Env has {self.env.num_actions_nt} classes, "
-                f"Model has {cfg.model.num_actions}. Missing classes will have 0 reward locally."
-            )
-
+        self.model_factory = ModelFactory(cfg.model)
         self.agent = Agent(self.model_factory, cfg.training, self.device, logger=self.logger)
-        self.buffer = ExperienceReplayBuffer(cfg.training.replay_buffer_size)
-        self.policy = EpsilonGreedyPolicy(
-            self.agent.prior_net,
-            self.agent.value_net_main,
-            cfg.model.num_actions,
-            self.device,
-        )
-        self.epsilon_scheduler = EpsilonScheduler(cfg.training)
+        self._private_state_restored = False
+        self._maybe_restore_private_state()
 
-        # Cache
         self.cached_weights: list[np.ndarray] = []
         self.cached_metrics: dict[str, Any] = {}
-        self.lifetime_reward = 0.0
         self.local_data_profile = self._build_local_data_profile()
-        if str(cfg.federated.strategy.name).lower() == "dkd_fedos":
-            self.logger.info(
-                "Client %s DKD-FedOS setup | teacher=CVAE-DQN(local) student=StudentIDSModel(shared) "
-                "teacher_uploaded=false student_uploaded=true student_uploaded_metrics=privacy_sanitized samples=%s",
-                self.cid,
-                self.local_data_profile["local_num_examples"],
-            )
 
-        # Directories
-        figures_root = _resolve_project_path(cfg.paths.figures_dir)
-        self.client_figure_dir: Path = figures_root / "clients" / f"client_{cid}"
-        self.client_figure_dir.mkdir(parents=True, exist_ok=True)
+        # Closed-set evaluation is numeric-only. Publication figures live in the separate
+        # plotting repository and are generated from exported scientific artifacts.
+        # Client evaluation therefore has no figure/output image directory.
 
-        evt_root = _resolve_project_path(cfg.paths.evt_dir)
-        self.evt_output_dir: Path = evt_root / f"client_{cid}"
-        self.evt_output_dir.mkdir(parents=True, exist_ok=True)
-        self.openset_output_dir: Path = self.client_figure_dir / "openset"
-        self.openset_output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Closed-set init
+        # Closed-set evaluation initialization
         self.eval_enabled: bool = False
         self.eval_loader: DataLoader | None = None
         self.eval_class_names: list[str] = []
-        self.eval_output_dir: Path | None = self.client_figure_dir
+        self.eval_output_dir: Path | None = None
         self.closed_set_data_path: Path | None = None
-        self.open_set_data_path: Path | None = None
         self._init_closed_set_evaluation()
 
-        self.logger.info("Client %s: Initialization complete.", cid)
+        self.logger.info(
+            "Client %s: Initialization complete | samples=%d | classes=%d",
+            cid,
+            int(self.local_data_profile["local_num_examples"]),
+            int(cfg.model.num_classes),
+        )
+
+    def _private_checkpoint_path(self) -> Path:
+        run_dir = Path(str(OmegaConf.select(self.cfg, "tracking.run_dir", default="outputs/current")))
+        if not run_dir.is_absolute():
+            run_dir = PROJECT_ROOT / run_dir
+        path = run_dir / "checkpoints" / "private" / f"client_{self.cid}_latest.pt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _resume_requested(self) -> bool:
+        return bool(
+            OmegaConf.select(self.cfg, "federated.resume_from", default=None)
+            or int(OmegaConf.select(self.cfg, "federated.resume_round_offset", default=0) or 0) > 0
+        )
+
+    def _maybe_restore_private_state(self) -> None:
+        if not self._resume_requested():
+            return
+        path = self._private_checkpoint_path()
+        if not path.exists():
+            raise RuntimeError(
+                f"Exact VCT resume requested but private client checkpoint is missing: {path}. "
+                "Do not claim exact continuation from a student-only checkpoint."
+            )
+        payload = torch.load(path, map_location=self.device, weights_only=False)
+        if payload.get("schema_version") != 2 or str(payload.get("teacher_type", "")) != "variational_classifier":
+            raise RuntimeError(f"Incompatible private teacher checkpoint: {path}")
+        expected_hash = str(OmegaConf.select(self.cfg, "experiment.config_hash", default="") or "")
+        checkpoint_hash = str(payload.get("config_hash", "") or "")
+        if expected_hash and checkpoint_hash and expected_hash != checkpoint_hash:
+            raise RuntimeError(
+                f"Private checkpoint/config mismatch for client {self.cid}: "
+                f"checkpoint={checkpoint_hash[:12]} current={expected_hash[:12]}"
+            )
+        self.agent.load_private_state_dict(payload["private_state"], strict=True)
+        rng_state = payload.get("rng_state") or {}
+        if rng_state:
+            if rng_state.get("python") is not None:
+                random.setstate(rng_state["python"])
+            if rng_state.get("numpy") is not None:
+                np.random.set_state(rng_state["numpy"])
+            if rng_state.get("torch_cpu") is not None:
+                torch.set_rng_state(rng_state["torch_cpu"])
+            if torch.cuda.is_available() and rng_state.get("torch_cuda"):
+                torch.cuda.set_rng_state_all(rng_state["torch_cuda"])
+        self._private_state_restored = True
+        self.logger.info("Restored private VCT state for client %s from %s", self.cid, path)
+
+    def _save_private_state(self, round_num: int) -> None:
+        path = self._private_checkpoint_path()
+        payload = {
+            "schema_version": 2,
+            "method": "FedTROS-PR",
+            "method_id": "fedtros_pr",
+            "teacher_type": "variational_classifier",
+            "client_id": str(self.cid),
+            "round": int(round_num),
+            "config_hash": str(OmegaConf.select(self.cfg, "experiment.config_hash", default="") or ""),
+            "code_commit": str(OmegaConf.select(self.cfg, "experiment.git_commit", default="unknown_commit")),
+            "private_state": self.agent.private_state_dict(),
+            "rng_state": {
+                "python": random.getstate(),
+                "numpy": np.random.get_state(),
+                "torch_cpu": torch.get_rng_state(),
+                "torch_cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
+            },
+        }
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        torch.save(payload, tmp)
+        tmp.replace(path)
 
     def _switch_runtime_device(self, device: torch.device | str) -> None:
         target_device = torch.device(device)
         if target_device == self.device:
             return
-        self.logger.info(
-            "Client %s device switch | from=%s | to=%s",
-            self.cid,
-            self.device,
-            target_device,
-        )
         self.agent.to(target_device)
-        self.policy.device = target_device
         self.device = target_device
 
     def _enter_execution_device(self) -> tuple[torch.device, bool]:
@@ -202,7 +185,6 @@ class FlowerClient(fl.client.NumPyClient):
         switched = target_device != self.device
         if switched:
             self._switch_runtime_device(target_device)
-        self.logger.info("Client %s active execution device: %s", self.cid, target_device)
         return target_device, switched
 
     def _exit_execution_device(self, target_device: torch.device, switched: bool) -> None:
@@ -211,18 +193,13 @@ class FlowerClient(fl.client.NumPyClient):
         self._switch_runtime_device(self._simulation_rest_device)
         if target_device.type == "cuda" and torch.cuda.is_available():
             torch.cuda.empty_cache()
-        self.logger.info(
-            "Client %s released execution device | restored_device=%s",
-            self.cid,
-            self._simulation_rest_device,
-        )
 
     def get_parameters(self, config: dict[str, Any]) -> list[np.ndarray]:
         _ = config
-        return self.agent.get_federated_parameters()
+        return self.agent.get_student_parameters()
 
     def set_parameters(self, parameters: list[np.ndarray]) -> None:
-        self.agent.set_federated_parameters(parameters, hard_target_update=True)
+        self.agent.set_student_parameters(parameters)
 
     @staticmethod
     def _param_list_norm(parameters: list[np.ndarray]) -> float:
@@ -245,820 +222,213 @@ class FlowerClient(fl.client.NumPyClient):
     ) -> tuple[list[np.ndarray], int, dict[str, Any]]:
         phase = config.get("phase", "standard")
         round_num = config.get("server_round", "?")
+        round_index = int(round_num) if str(round_num).isdigit() else 0
         strategy_name = str(self.cfg.strategy.name).lower()
         proximal_mu = float(self.cfg.server.proximal_mu) if strategy_name == "fedprox" else 0.0
-
-        execution_device, switched = self._enter_execution_device()
-        try:
-            # =========================================================
-            # DKD-FedOS: Sentinel-style dynamic KD.  The client receives only
-            # the global lightweight student, trains its local CVAE-DQN teacher
-            # with student/teacher KD, then uploads only the student.
-            # =========================================================
-            if phase == "dkd_fedos":
-                self.logger.info(f"Client {self.cid} [DKD-FedOS]: Round {round_num}")
-                param_list = (
-                    parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
-                )
-                student_before_load = self.agent.get_student_parameters()
-                student_norm_before_load = self._param_list_norm(student_before_load)
-                if param_list:
-                    self.agent.set_student_parameters(param_list)
-                student_after_load = self.agent.get_student_parameters()
-                student_norm_after_load = self._param_list_norm(student_after_load)
-                loaded_delta = self._param_list_distance(student_before_load, student_after_load)
-
-                before_local_eval_metrics: dict[str, float] = {}
-                if bool(getattr(self.cfg.training, "dkd_eval_student_before_local", False)) and self.eval_enabled:
-                    try:
-                        round_index = int(round_num) if str(round_num).isdigit() else 0
-                        _, _, before_metrics = self._evaluate_closed_set(
-                            round_index,
-                            prefix="STUDENT_BEFORE_LOCAL_TRAIN",
-                            model_kind="student",
-                        )
-                        before_local_eval_metrics = {
-                            f"student_before_local_{k}": v for k, v in before_metrics.items()
-                        }
-                    except Exception:
-                        self.logger.exception("Client %s: student-before-local eval failed", self.cid)
-
-                num_steps_trained, metrics = self._perform_training_loop(
-                    proximal_mu=0.0,
-                    dkd_enabled=True,
-                    dkd_round=int(round_num) if str(round_num).isdigit() else 0,
-                )
-                student_after_train = self.agent.get_student_parameters()
-                student_norm_after_train = self._param_list_norm(student_after_train)
-                train_delta = self._param_list_distance(student_after_load, student_after_train)
-                metrics.update(before_local_eval_metrics)
-                metrics.setdefault("total_steps", float(num_steps_trained))
-                metrics.update(
-                    {
-                        "dkd_student_num_parameters": float(
-                            sum(p.size for p in self.agent.get_student_parameters())
-                        ),
-                        "dkd_student_norm_before_load": float(student_norm_before_load),
-                        "dkd_student_norm_after_load": float(student_norm_after_load),
-                        "dkd_student_norm_after_train": float(student_norm_after_train),
-                        "dkd_student_load_delta_norm": float(loaded_delta),
-                        "dkd_student_train_delta_norm": float(train_delta),
-                        "local_num_examples": self.local_data_profile["local_num_examples"],
-                        "privacy_strict_metrics": 1.0,
-                    }
-                )
-                updated_student = self.agent.get_student_parameters()
-                num_examples = int(self.local_data_profile["local_num_examples"])
-                return updated_student, num_examples, self._sanitize_server_metrics(metrics)
-
-            # =========================================================
-            # FedGPA: personalized model + prototype alignment
-            # =========================================================
-            if phase == "fedgpa":
-                self.logger.info(f"Client {self.cid} [FedGPA]: Round {round_num}")
-
-                param_list = (
-                    parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
-                )
-                self.set_parameters(param_list)
-                proto_tensor, proto_mask = self._parse_fedgpa_global_prototypes(config)
-                proto_lambda = float(config.get("fedgpa_lambda", 0.0))
-                proto_feature = str(config.get("fedgpa_feature", "latent_q"))
-                num_steps_trained, metrics = self._perform_training_loop(
-                    proximal_mu=0.0,
-                    global_prototypes=proto_tensor,
-                    global_prototype_mask=proto_mask,
-                    prototype_lambda=proto_lambda,
-                    prototype_feature=proto_feature,
-                )
-                metrics.setdefault("total_steps", float(num_steps_trained))
-                metrics.update(self._build_fedgpa_prototypes(prototype_feature=proto_feature))
-                updated_params = self.agent.get_federated_parameters()
-                num_examples = int(self.local_data_profile["local_num_examples"])
-                return updated_params, num_examples, metrics
-
-            # =========================================================
-            # STANDARD FIT (FedAvg / FedProx)
-            # =========================================================
-            if phase == "standard":
-                phase_name = "FedProx" if proximal_mu > 0.0 else "FedAvg"
-                self.logger.info(f"Client {self.cid} [{phase_name}]: Round {round_num}")
-
-                param_list = (
-                    parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
-                )
-                self.set_parameters(param_list)
-                round_index = int(round_num) if str(round_num).isdigit() else 0
-
-                metrics: dict[str, Any] = {}
-
-                reset_metrics = self._prepare_clean_federated_baseline_round(round_num)
-                num_steps_trained, train_metrics = self._perform_training_loop(
-                    proximal_mu=proximal_mu,
-                    round_num=round_index,
-                )
-                metrics.update(train_metrics)
-                metrics.update(reset_metrics)
-                metrics.setdefault("total_steps", float(num_steps_trained))
-                updated_params = self.agent.get_federated_parameters()
-                num_examples = int(self.local_data_profile["local_num_examples"])
-                return updated_params, num_examples, metrics
-
-            # =========================================================
-            # FMRL PHASE A: TRAIN & AUDIT (Calculate H_i and W_i)
-            # =========================================================
-            if phase == "train":
-                self.logger.info(f"Client {self.cid} [FMRL Phase A]: Round {round_num}")
-
-                # A. Update Global Model
-                param_list = (
-                    parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
-                )
-                self.set_parameters(param_list)
-
-                # B. Train
-                num_steps_trained, metrics = self._perform_training_loop()
-
-                # C. Generate Audit Metadata
-                self.lifetime_reward += metrics.get("total_reward", 0.0)
-
-                # Stage-one metadata: hidden state plus local utility diagnostics.
-                audit_signals = self._calculate_audit_signals()
-
-                # D. Cache Everything
-                self.cached_weights = self.agent.get_federated_parameters()
-                self.cached_metrics = metrics.copy()
-
-                # Prepare the payload for the server critic
-                self.cached_metrics.update(
-                    {
-                        "cid": self.cid,
-                        "total_steps": float(num_steps_trained),
-                        "local_num_examples": self.local_data_profile["local_num_examples"],
-                        "privacy_strict_metrics": 1.0,
-                        "hidden_info": json.dumps(audit_signals["mu_vector"]),
-                        "recent_reward": metrics.get("avg_reward_per_episode", 0.0),
-                        "history_reward": self.lifetime_reward,
-                        "audit_f1": audit_signals["audit_f1"],
-                        "utility_loss": audit_signals["audit_f1"],
-                        "td_error": audit_signals["td_error"],
-                        "kl_div": audit_signals["kl_div"],
-                        "audit_batch_size": float(audit_signals["audit_batch_size"]),
-                    }
-                )
-
-                self.logger.info(
-                    f"   > Client {self.cid}: Caching weights. Signals -> "
-                    f"Reward: {metrics.get('avg_reward_per_episode', 0):.2f}, "
-                    f"TD: {audit_signals['td_error']:.4f}, "
-                    f"KL: {audit_signals['kl_div']:.4f}"
-                )
-
-                # E. Return EMPTY weights (Server decides if it wants them later)
-                num_examples = int(self.local_data_profile["local_num_examples"])
-                return [], num_examples, self.cached_metrics
-
-            # =========================================================
-            # FMRL PHASE B: UPLOAD (If selected by Critic)
-            # =========================================================
-            if phase == "upload":
-                self.logger.info(f"Client {self.cid} [FMRL Phase B]: Selected! Uploading.")
-
-                if not self.cached_weights:
-                    self.logger.error("   > Error: No cached weights found!")
-                    return self.agent.get_federated_parameters(), 0, {"error": 1.0}
-
-                # Return the weights we cached in Phase A
-                num_examples = int(self.local_data_profile["local_num_examples"])
-                return self.cached_weights, num_examples, self._sanitize_server_metrics(self.cached_metrics)
-
-            self.logger.warning(f"Unknown Phase: {phase}")
-            return [], 0, {}
-        finally:
-            self._exit_execution_device(execution_device, switched)
-
-    # --- INTERNAL TRAINING HELPER ---
-    _SERVER_PRIVATE_METRIC_KEYS = {
-        "label_histogram",
-        "true_label_histogram",
-        "action_histogram",
-        "per_class_policy_accuracy",
-        "class_entropy",
-        "label_coverage",
-        "digos_class_entropy",
-        "digos_label_coverage",
-        "missing_classes",
-        "present_classes",
-        "imbalance_ratio",
-        "min_class_count",
-        "max_class_count",
-        "coverage_quality",
-    }
-
-    def _sanitize_server_metrics(self, metrics: dict[str, Any]) -> dict[str, Any]:
-        """Remove class-distribution metadata before sending metrics to the server.
-
-        The client may compute label histograms, class coverage, entropy, and
-        present/missing-class masks locally for class-balanced training and
-        global-anchor protection.  Those values are client-private and must not
-        be uploaded in strict-FL runs.  The server still receives the model
-        update, num_examples, and label-free training/quality losses.
-        """
-        sanitized = {
-            key: value
-            for key, value in (metrics or {}).items()
-            if key not in self._SERVER_PRIVATE_METRIC_KEYS
-        }
-        sanitized["privacy_strict_metrics"] = 1.0
-        return sanitized
-
-    def _build_local_data_profile(self) -> dict[str, Any]:
-        labels = self.env.all_labels_a_t.detach().cpu().long()
-        num_actions = int(self.cfg.model.num_actions)
-        counts = torch.bincount(labels.clamp(min=0), minlength=num_actions)[:num_actions]
-        total = int(labels.numel())
-        probs = counts.float() / max(total, 1)
-        nonzero = probs[probs > 0]
-        entropy = (
-            float((-(nonzero * torch.log(nonzero))).sum().item() / np.log(num_actions))
-            if num_actions > 1 and nonzero.numel() > 0
-            else 0.0
-        )
-        coverage = float((counts > 0).sum().item() / max(num_actions, 1))
-        missing = [int(i) for i in range(num_actions) if int(counts[i].item()) == 0]
-        present = [int(i) for i in range(num_actions) if int(counts[i].item()) > 0]
-        nonzero_counts = counts[counts > 0]
-        imbalance_ratio = (
-            float(nonzero_counts.max().item() / max(float(nonzero_counts.min().item()), 1.0))
-            if nonzero_counts.numel() > 0
-            else 0.0
-        )
-        return {
-            "local_num_examples": float(total),
-            "class_entropy": entropy,
-            "label_coverage": coverage,
-            "missing_classes": json.dumps(missing),
-            "present_classes": json.dumps(present),
-            "min_class_count": float(nonzero_counts.min().item()) if nonzero_counts.numel() else 0.0,
-            "max_class_count": float(nonzero_counts.max().item()) if nonzero_counts.numel() else 0.0,
-            "imbalance_ratio": imbalance_ratio,
-            "label_histogram": json.dumps(
-                {str(i): int(counts[i].item()) for i in range(num_actions)},
-                sort_keys=True,
-            ),
-        }
-
-    def _parse_fedgpa_global_prototypes(
-        self, config: dict[str, Any]
-    ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-        raw = config.get("fedgpa_global_prototypes", "{}")
-        try:
-            parsed = json.loads(str(raw))
-        except json.JSONDecodeError:
-            self.logger.warning("Client %s: invalid FedGPA global prototype payload", self.cid)
-            return None, None
-        if not isinstance(parsed, dict) or not parsed:
-            return None, None
-
-        num_actions = int(self.cfg.model.num_actions)
-        first_vec = next((v for v in parsed.values() if isinstance(v, list) and v), None)
-        if first_vec is None:
-            return None, None
-        proto_dim = len(first_vec)
-        prototypes = torch.zeros(num_actions, proto_dim, device=self.device, dtype=torch.float32)
-        mask = torch.zeros(num_actions, device=self.device, dtype=torch.bool)
-        for key, value in parsed.items():
-            try:
-                class_idx = int(key)
-            except (TypeError, ValueError):
-                continue
-            if class_idx < 0 or class_idx >= num_actions:
-                continue
-            vector = torch.tensor(value, device=self.device, dtype=torch.float32).view(-1)
-            if vector.numel() != proto_dim:
-                continue
-            prototypes[class_idx] = vector
-            mask[class_idx] = True
-        if not bool(mask.any().item()):
-            return None, None
-        return prototypes, mask
-
-    def _build_fedgpa_prototypes(self, *, prototype_feature: str = "latent_q") -> dict[str, Any]:
-        # Keep the full local dataset on its current storage device and move only
-        # mini-batches to the execution device.
-        features = self.env.all_features_s.detach().float()
-        labels = self.env.all_labels_a_t.detach().long()
-        if features.numel() == 0 or labels.numel() == 0:
-            return {}
-
-        batch_size = max(1, int(self.cfg.training.batch_size))
-        loader = DataLoader(TensorDataset(features, labels), batch_size=batch_size, shuffle=False)
-        feature_parts: list[torch.Tensor] = []
-        label_parts: list[torch.Tensor] = []
-
-        self.agent.prior_net.eval()
-        self.agent.value_net_main.eval()
-        with torch.no_grad():
-            for batch_features, batch_labels in loader:
-                batch_features = batch_features.to(self.device)
-                batch_labels = batch_labels.to(self.device)
-                mu_p, _ = self.agent.prior_net(batch_features)
-                q_values = self.agent.value_net_main(mu_p, batch_features)
-                proto_features = self.agent._build_prototype_features(
-                    mu_p, q_values, prototype_feature=prototype_feature
-                )
-                feature_parts.append(proto_features.detach().cpu())
-                label_parts.append(batch_labels.detach().cpu())
-
-        if not feature_parts:
-            return {}
-
-        all_proto_features = torch.cat(feature_parts, dim=0).float()
-        all_labels = torch.cat(label_parts, dim=0).long()
-        num_actions = int(self.cfg.model.num_actions)
-        prototypes: dict[str, list[float]] = {}
-        counts: dict[str, int] = {}
-        variance_weighted_sum = 0.0
-        total_count = int(all_labels.numel())
-
-        for class_idx in range(num_actions):
-            class_mask = all_labels == class_idx
-            count = int(class_mask.sum().item())
-            if count <= 0:
-                continue
-            class_features = all_proto_features[class_mask]
-            proto = class_features.mean(dim=0)
-            prototypes[str(class_idx)] = [float(x) for x in proto.tolist()]
-            counts[str(class_idx)] = count
-            class_var = float(((class_features - proto).pow(2).sum(dim=1)).mean().item())
-            variance_weighted_sum += class_var * count
-
-        if not prototypes:
-            return {}
-        variance = variance_weighted_sum / max(total_count, 1)
-        return {
-            "fedgpa_prototypes": json.dumps(prototypes, sort_keys=True),
-            "fedgpa_counts": json.dumps(counts, sort_keys=True),
-            "fedgpa_variance": float(variance),
-            "fedgpa_proto_dim": float(len(next(iter(prototypes.values())))),
-            "fedgpa_num_classes": float(len(prototypes)),
-        }
-
-    def _prepare_clean_federated_baseline_round(self, round_num: Any) -> dict[str, float]:
-        """Reset state that must not leak across clean FedAvg/FedProx rounds."""
-        strategy_name = str(self.cfg.strategy.name).lower()
-        if strategy_name not in {"fedavg", "fedprox"}:
-            return {}
-
-        training_cfg = self.cfg.training
-        reset_optimizer = bool(getattr(training_cfg, "reset_optimizer_each_round", False))
-        reset_buffer = bool(getattr(training_cfg, "reset_replay_buffer_each_round", False))
-        reset_epsilon = bool(getattr(training_cfg, "reset_epsilon_each_round", False))
-        old_buffer_size = len(self.buffer)
-
-        if reset_optimizer:
-            self.agent.reset_federated_optimizers()
-        if reset_buffer:
-            self.buffer = ExperienceReplayBuffer(int(training_cfg.replay_buffer_size))
-        if reset_epsilon:
-            self.epsilon_scheduler = EpsilonScheduler(training_cfg)
-
-        self.logger.info(
-            "Client %s clean %s round %s reset policy | optimizer=%s | replay_buffer=%s "
-            "old_buffer=%d new_buffer=%d | epsilon=%s start=%.4f",
-            self.cid,
-            strategy_name,
-            round_num,
-            reset_optimizer,
-            reset_buffer,
-            old_buffer_size,
-            len(self.buffer),
-            reset_epsilon,
-            float(self.epsilon_scheduler.get_epsilon()),
-        )
-        return {
-            "clean_baseline": 1.0,
-            "optimizer_reset_each_round": float(reset_optimizer),
-            "replay_buffer_reset_each_round": float(reset_buffer),
-            "epsilon_reset_each_round": float(reset_epsilon),
-            "replay_buffer_size_before_reset": float(old_buffer_size),
-            "replay_buffer_size_after_reset": float(len(self.buffer)),
-        }
-
-    def _perform_training_loop(
-        self,
-        proximal_mu: float = 0.0,
-        global_prototypes: torch.Tensor | None = None,
-        global_prototype_mask: torch.Tensor | None = None,
-        prototype_lambda: float = 0.0,
-        prototype_feature: str = "latent_q",
-        dkd_enabled: bool = False,
-        dkd_round: int = 0,
-        round_num: int = 0,
-    ) -> tuple[int, dict[str, Any]]:
-        """Shared training logic for Standard, FMRL, and FedGPA modes."""
-        num_steps_trained, metrics = run_local_training_round(
-            agent=self.agent,
-            env=self.env,
-            buffer=self.buffer,
-            policy=self.policy,
-            epsilon_scheduler=self.epsilon_scheduler,
-            cfg_training=self.cfg.training,
-            device=self.device,
-            proximal_mu=proximal_mu,
-            global_prototypes=global_prototypes,
-            global_prototype_mask=global_prototype_mask,
-            prototype_lambda=prototype_lambda,
-            prototype_feature=prototype_feature,
-            dkd_enabled=dkd_enabled,
-            dkd_round=dkd_round,
-            round_num=round_num,
-            client_id=self.cid,
-            logger=self.logger,
-        )
-
-        # Local RL teacher generator training is disabled for Fed-DiGOS.  The
-        # teacher remains local/private, while the student-owned OSR generator
-        # branch is the federated open-set component.  Two generators with two
-        # jobs; shocking that this needed spelling out, but logs are cheaper
-        # than another ruined AUROC.
-        generator_cfg = self.cfg.generator_training
-        if bool(generator_cfg.enabled):
-            try:
-                features = self.env.all_features_s.clone()
-                labels = self.env.all_labels_a_t.clone()
-                gen_metrics = self.agent.train_generation_network(
-                    features,
-                    labels,
-                    generator_cfg,
-                    proximal_mu=proximal_mu,
-                    logger=self.logger,
-                )
-                metrics.update(gen_metrics)
-            except Exception as exc:
-                self.logger.warning(f"Generator training failed: {exc}")
-        else:
-            metrics["local_teacher_generator_training_enabled"] = 0.0
-
-        fed_digos_cfg = getattr(getattr(self.cfg, "open_set", None), "fed_digos", None)
-        fed_digos_enabled = bool(getattr(fed_digos_cfg, "enabled", False)) if fed_digos_cfg is not None else False
-        if fed_digos_enabled:
-            try:
-                features = self.env.all_features_s.clone()
-                labels = self.env.all_labels_a_t.clone()
-                digos_metrics = self.agent.train_student_osr_on_dataset(
-                    features,
-                    labels,
-                    fed_digos_cfg,
-                    logger=self.logger,
-                )
-                metrics.update(digos_metrics)
-            except Exception:
-                self.logger.exception("Client %s: Fed-DiGOS OSR branch training failed.", self.cid)
-                metrics["digos_osr_training_failed"] = 1.0
-
-        # Local evaluation is pure bookkeeping; run it on the rest device when
-        # simulation batching is sharing a GPU across several clients.
-        if self._simulation_gpu_batching and self.device.type == "cuda":
-            self._switch_runtime_device(self._simulation_rest_device)
-
-        # Optional local evaluation after local training, before server aggregation.
-        # FedAvg/FedProx intentionally evaluate on the shared closed-set test set,
-        # matching the existing DKD-FedOS-style reporting flow.
-        if bool(getattr(self.cfg.training, "evaluate_after_local_fit", True)):
-            if str(self.cfg.federated.strategy.name).lower() in {"fedavg", "fedprox"}:
-                self._run_standard_eval_logic(
-                    metrics,
-                    round_index=int(round_num or 0),
-                    report_prefix="LOCAL_AFTER_TRAIN_PRE_AGG",
-                    metric_namespace="local_after",
-                )
-            else:
-                self._run_local_eval_logic(metrics, "LOCAL")
-        else:
-            metrics["local_fit_eval_enabled"] = 0.0
-        return num_steps_trained, metrics
-
-    def _calculate_audit_signals(self) -> dict[str, Any]:
-        """
-        Calculates audit signals including TD Error (Surprise), F1 (Competence),
-        and KL Divergence (Novelty).
-        """
-        # 1. Sample Batch. Use smaller audit batches early instead of returning
-        # zeros until the replay buffer reaches the training batch size.
-        audit_batch_size = min(len(self.buffer), int(self.cfg.training.batch_size))
-        if audit_batch_size <= 0:
-            return {
-                "mu_vector": [0.0] * self.cfg.model.latent_dim,
-                "td_error": 0.0,
-                "audit_f1": 0.0,
-                "kl_div": 0.0,
-                "audit_batch_size": 0,
-            }
-
-        # 2. Unpack the 6 items from your buffer
-        batch = self.buffer.sample(audit_batch_size, self.device)
-        states, actions, rewards, next_states, dones, true_actions = batch
-
-        # Prepare Networks
-        self.agent.prior_net.eval()
-        self.agent.recognition_net.eval()
-        self.agent.value_net_main.eval()
-        self.agent.value_net_target.eval()
-
-        with torch.no_grad():
-            # ---------------------------------------------------------
-            # 1. Hidden State (Context) & KL Divergence (Novelty)
-            # ---------------------------------------------------------
-            # Prior P(z|s)
-            mu_prior, logvar_prior = self.agent.prior_net(states)
-
-            # Posterior Q(z|s, a_true) (Using true actions for best context estimation)
-            mu_post, logvar_post = self.agent.recognition_net(states, true_actions)
-
-            # Calculate KL(Q || P) - Manually to avoid import dependency issues
-            # KL = 0.5 * sum(exp(var_q - var_p) + (mu_p - mu_q)^2 / exp(var_p) - 1 + var_p - var_q)
-            # We use the simplified version for diagonal Gaussians:
-            # KL = -0.5 * sum(1 + log_var_q - log_var_p - (var_q + (mu_q - mu_p)^2) / var_p)
-            var_p = torch.exp(logvar_prior)
-            var_q = torch.exp(logvar_post)
-            kl_element = -0.5 * (
-                1 + logvar_post - logvar_prior - (var_q + (mu_post - mu_prior).pow(2)) / var_p
-            )
-            kl_div = kl_element.sum(dim=1).mean().item()
-
-            avg_mu_vector = mu_prior.mean(dim=0).cpu().numpy().tolist()
-
-            # ---------------------------------------------------------
-            # 2. TD-Error (RL Surprise)
-            # ---------------------------------------------------------
-            # Current Q(s, a)
-            q_values = self.agent.value_net_main(mu_prior, states)
-            current_q = q_values.gather(1, actions)
-
-            # Target Q(s', a')
-            next_mu, _ = self.agent.prior_net(next_states)
-            next_q_values = self.agent.value_net_target(next_mu, next_states)
-            max_next_q = next_q_values.max(1)[0].unsqueeze(1)
-
-            # Bellman Target
-            target_q = rewards + (self.cfg.training.gamma * max_next_q * (1 - dones))
-
-            # Calculate TD Error
-            td_error = F.l1_loss(current_q, target_q).item()
-
-            # ---------------------------------------------------------
-            # 3. COMPETENCE SIGNAL: Batch F1 Score
-            # ---------------------------------------------------------
-            fresh_preds = q_values.argmax(dim=1)
-
-            # Move to CPU for sklearn
-            y_true = true_actions.cpu().numpy().flatten()
-            y_pred = fresh_preds.cpu().numpy().flatten()
-
-            # Calculate Macro F1
-            batch_f1 = f1_score(y_true, y_pred, average="macro", zero_division=0.0)
-
-        # Restore Training Mode
-        self.agent.prior_net.train()
-        self.agent.recognition_net.train()
-        self.agent.value_net_main.train()
-        self.agent.value_net_target.train()
-
-        return {
-            "mu_vector": avg_mu_vector,
-            "td_error": td_error,
-            "audit_f1": float(batch_f1),
-            "kl_div": float(kl_div),
-            "audit_batch_size": int(audit_batch_size),
-        }
-
-    def _run_standard_eval_logic(
-        self,
-        metrics: dict[str, Any],
-        *,
-        round_index: int,
-        report_prefix: str,
-        metric_namespace: str,
-    ) -> None:
-        """Evaluate a FedAvg/FedProx model on the shared closed-set test set."""
-        if not self.eval_enabled or self.eval_loader is None:
-            metrics[f"{metric_namespace}_eval_enabled"] = 0.0
-            return
-        try:
-            _, _, local_metrics = self._evaluate_closed_set(round_index, prefix=report_prefix)
-            metrics.update({f"{metric_namespace}_{k}": v for k, v in local_metrics.items()})
-            metrics[f"{metric_namespace}_eval_enabled"] = 1.0
-        except Exception:
-            self.logger.exception(
-                "Client %s: %s closed-set evaluation failed; keeping training result.",
-                self.cid,
-                report_prefix,
-            )
-            metrics[f"{metric_namespace}_eval_enabled"] = 0.0
-
-    def _run_local_eval_logic(self, metrics: dict[str, Any], _prefix: str):
-        if not self.eval_enabled:
-            return
-        try:
-            if str(self.cfg.federated.strategy.name).lower() == "dkd_fedos":
-                _, _, teacher_metrics = self._evaluate_closed_set(
-                    0, prefix="TEACHER_AFTER_LOCAL_TRAIN", model_kind="teacher"
-                )
-                _, _, student_metrics = self._evaluate_closed_set(
-                    0, prefix="LOCAL_STUDENT_AFTER_LOCAL_TRAIN", model_kind="student"
-                )
-                metrics.update({f"local_teacher_{k}": v for k, v in teacher_metrics.items()})
-                metrics.update({f"local_student_{k}": v for k, v in student_metrics.items()})
-            else:
-                self._run_standard_eval_logic(
-                    metrics,
-                    round_index=0,
-                    report_prefix="LOCAL_AFTER_TRAIN_PRE_AGG",
-                    metric_namespace="local_after",
-                )
-        except Exception:
-            self.logger.exception(
-                "Client %s: local closed-set evaluation failed; keeping training result.",
-                self.cid,
-            )
-            return
-
-    def evaluate(
-        self, parameters: list[np.ndarray] | Parameters, config: dict[str, Any]
-    ) -> tuple[float, int, dict[str, float]]:
-        round_num = config.get("server_round", "?")
-        self.logger.info("Client %s: evaluate() called for round %s", self.cid, round_num)
 
         execution_device, switched = self._enter_execution_device()
         try:
             param_list = (
                 parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
             )
-            if str(config.get("phase", "")).lower() == "dkd_fedos":
+
+            # =========================================================
+            # FedTROS-PR: Private VCT teacher + Guided Federated Student
+            # =========================================================
+            if phase in {"fedtros_pr", "fedtros"}:
+                self.logger.info(f"Client {self.cid} [FedTROS-PR]: Round {round_num}")
+                student_before = self.agent.get_student_parameters()
                 if param_list:
                     self.agent.set_student_parameters(param_list)
-            else:
-                self.set_parameters(param_list)
+                student_after_load = self.agent.get_student_parameters()
+                loaded_delta = self._param_list_distance(student_before, student_after_load)
 
-            if self._simulation_gpu_batching and self.device.type == "cuda":
-                self._switch_runtime_device(self._simulation_rest_device)
+                num_steps_trained, metrics = run_local_training_round(
+                    agent=self.agent,
+                    features=self.features,
+                    labels=self.labels,
+                    cfg_training=self.cfg.training,
+                    device=self.device,
+                    proximal_mu=0.0,
+                    round_num=round_index,
+                    client_id=self.cid,
+                    is_fedtros=True,
+                    logger=self.logger,
+                )
 
-            try:
-                round_index = int(round_num)
-            except (TypeError, ValueError):
-                round_index = 0
+                # Train Student OSR Branch if enabled
+                prototype_rank_cfg = getattr(getattr(self.cfg, "open_set", None), "prototype_rank", None)
+                if prototype_rank_cfg is not None and bool(getattr(prototype_rank_cfg, "enabled", False)):
+                    try:
+                        osr_metrics = self.agent.train_student_osr_on_dataset(
+                            self.features, self.labels, prototype_rank_cfg, logger=self.logger
+                        )
+                        metrics.update(osr_metrics)
+                    except Exception:
+                        self.logger.exception("Client %s: Student OSR branch training failed", self.cid)
 
-            metrics: dict[str, float] = {}
+                student_after_train = self.agent.get_student_parameters()
+                train_delta = self._param_list_distance(student_after_load, student_after_train)
+                metrics.update(
+                    {
+                        "student_load_delta_norm": float(loaded_delta),
+                        "student_train_delta_norm": float(train_delta),
+                        "student_num_parameters": float(sum(p.size for p in student_after_train)),
+                        "local_num_examples": float(self.local_data_profile["local_num_examples"]),
+                        "raw_data_local_metrics": 1.0,
+                    }
+                )
+                self._save_private_state(round_index)
+                num_examples = int(self.local_data_profile["local_num_examples"])
+                return student_after_train, num_examples, self._sanitize_server_metrics(metrics)
+
+            # =========================================================
+            # Standard Baselines: FedAvg-Student / FedProx-Student
+            # =========================================================
+            phase_name = "FedProx-Student" if proximal_mu > 0.0 else "FedAvg-Student"
+            self.logger.info(f"Client {self.cid} [{phase_name}]: Round {round_num}")
+            if param_list:
+                self.agent.set_student_parameters(param_list)
+
+            if bool(getattr(self.cfg.training, "reset_optimizer_each_round", False)):
+                self.agent.reset_federated_optimizers()
+
+            num_steps_trained, metrics = run_local_training_round(
+                agent=self.agent,
+                features=self.features,
+                labels=self.labels,
+                cfg_training=self.cfg.training,
+                device=self.device,
+                proximal_mu=proximal_mu,
+                round_num=round_index,
+                client_id=self.cid,
+                is_fedtros=False,
+                logger=self.logger,
+            )
+            updated_params = self.agent.get_student_parameters()
+            num_examples = int(self.local_data_profile["local_num_examples"])
+            return updated_params, num_examples, metrics
+        finally:
+            self._exit_execution_device(execution_device, switched)
+
+    _SERVER_LOCAL_ONLY_METRIC_KEYS = {
+        "label_histogram",
+        "class_entropy",
+        "label_coverage",
+        "missing_classes",
+        "present_classes",
+        "imbalance_ratio",
+    }
+
+    def _sanitize_server_metrics(self, metrics: dict[str, Any]) -> dict[str, Any]:
+        """Strip client label distributions to keep client-local distribution details off the server."""
+        sanitized = {
+            k: v for k, v in (metrics or {}).items() if k not in self._SERVER_LOCAL_ONLY_METRIC_KEYS
+        }
+        sanitized["raw_data_local_metrics"] = 1.0
+        return sanitized
+
+    def _build_local_data_profile(self) -> dict[str, Any]:
+        labels = self.labels.detach().cpu().long()
+        num_classes = int(self.cfg.model.num_classes)
+        counts = torch.bincount(labels.clamp(min=0), minlength=num_classes)[:num_classes]
+        total = int(labels.numel())
+        probs = counts.float() / max(total, 1)
+        nonzero = probs[probs > 0]
+        entropy = (
+            float((-(nonzero * torch.log(nonzero))).sum().item() / np.log(num_classes))
+            if num_classes > 1 and nonzero.numel() > 0
+            else 0.0
+        )
+        coverage = float((counts > 0).sum().item() / max(num_classes, 1))
+        missing = [int(i) for i in range(num_classes) if int(counts[i].item()) == 0]
+        present = [int(i) for i in range(num_classes) if int(counts[i].item()) > 0]
+        return {
+            "local_num_examples": float(total),
+            "class_entropy": entropy,
+            "label_coverage": coverage,
+            "missing_classes": json.dumps(missing),
+            "present_classes": json.dumps(present),
+            "label_histogram": json.dumps(
+                {str(i): int(counts[i].item()) for i in range(num_classes)}, sort_keys=True
+            ),
+        }
+
+    def evaluate(
+        self, parameters: list[np.ndarray] | Parameters, config: dict[str, Any]
+    ) -> tuple[float, int, dict[str, float]]:
+        round_num = config.get("server_round", "?")
+        round_index = int(round_num) if str(round_num).isdigit() else 0
+
+        execution_device, switched = self._enter_execution_device()
+        try:
+            param_list = (
+                parameters if isinstance(parameters, list) else parameters_to_ndarrays(parameters)
+            )
+            if param_list:
+                self.agent.set_student_parameters(param_list)
 
             if not self.eval_enabled or self.eval_loader is None:
                 return 0.0, 0, {}
 
-            if str(config.get("phase", "")).lower() == "dkd_fedos":
-                loss, num_examples, student_metrics = self._evaluate_closed_set(
-                    round_index, prefix="GLOBAL_STUDENT_AFTER_SERVER_AGG", model_kind="student"
-                )
-                metrics.update(student_metrics)
-                metrics.update({f"student_{k}": v for k, v in student_metrics.items()})
-            else:
-                loss, num_examples, cs_metrics = self._evaluate_closed_set(
-                    round_index, prefix="GLOBAL_AFTER_SERVER_AGG"
-                )
-                metrics.update(cs_metrics)
-                metrics.update({f"global_after_{k}": v for k, v in cs_metrics.items()})
-
-            # EVT Logic (Optional)
-            evt_cfg = self.cfg.evt
-            if bool(evt_cfg.enabled):
-                phase_name = str(config.get("phase", "")).lower()
-                client_evt_enabled = bool(getattr(evt_cfg, "client_eval_enabled", False))
-                if phase_name == "dkd_fedos" and _dkd_fedos_final_eval_backend(evt_cfg):
-                    # Phase 2 evaluates the single aggregated global student once
-                    # after federated training. Fitting EVT on every Flower client
-                    # evaluation round is redundant, noisy, and can run before the
-                    # global student has been aggregated. Keep a clear log/metric
-                    # and avoid redundant per-client EVT during round evaluation.
-                    metrics["openset_client_evt_skipped"] = 1.0
-                    metrics["openset_final_global_eval_required"] = 1.0
-                    if int(round_index) <= 1:
-                        self.logger.info(
-                            "Client %s: skipping per-client EVT during DKD-FedOS evaluate(); "
-                            "final global open-set EVT runs after FL. backend=%s",
-                            self.cid,
-                            str(getattr(evt_cfg, "backend", "fed_digos")),
-                        )
-                elif client_evt_enabled or phase_name != "dkd_fedos":
-                    try:
-                        features = self.env.all_features_s.clone()
-                        labels = self.env.all_labels_a_t.clone()
-                        evt_metrics = self._fit_evt_and_run_openset_eval(
-                            features, labels, evt_cfg, prefix="GLOBAL"
-                        )
-                        metrics.update(evt_metrics)
-                    except Exception:
-                        self.logger.exception("Client %s: EVT evaluation failed.", self.cid)
-
-            metrics["cid"] = self.cid
-            return loss, num_examples, metrics
+            loss, num_examples, student_metrics = self._evaluate_closed_set(
+                round_index, prefix="GLOBAL_STUDENT"
+            )
+            student_metrics["cid"] = self.cid
+            return loss, num_examples, student_metrics
         finally:
             self._exit_execution_device(execution_device, switched)
 
-    # ------------------------------------------------------------------
-    # Closed-set evaluation helpers
-    # ------------------------------------------------------------------
-
     def _init_closed_set_evaluation(self) -> None:
-        """Prepare dataloader and output folder for closed-set evaluation."""
         paths_cfg = self.cfg.paths
-
-        # FedAvg/FedProx/DKD-FedOS-style client evaluation uses the shared
-        # closed-set test dataset for every client. Do not prefer client-local
-        # held-out files here; that would change the original reporting flow.
-        test_data_key = "shared_closed_set_test"
-        generic_rel = getattr(paths_cfg, "closed_set_test_data", None)
-        shared_rel = getattr(paths_cfg, "shared_closed_set_test_data", None)
-
-        candidate_paths: list[tuple[str, str | Path]] = []
-        if generic_rel:
-            candidate_paths.append(("shared_closed_set", generic_rel))
-        if shared_rel:
-            candidate_paths.append(("shared_closed_set_alias", shared_rel))
-
+        test_path_candidates = [
+            getattr(paths_cfg, "shared_closed_set_test_data", None),
+            getattr(paths_cfg, "closed_set_test_data", None),
+        ]
         test_data_path: Path | None = None
-        eval_scope = "missing"
-        for scope, candidate in candidate_paths:
-            candidate_path = _resolve_project_path(candidate)
-            if candidate_path.exists():
-                test_data_path = candidate_path
-                eval_scope = scope
-                break
+        for cand in test_path_candidates:
+            if cand:
+                p = _resolve_project_path(cand)
+                if p.exists():
+                    test_data_path = p
+                    break
 
         class_names_rel = getattr(paths_cfg, "class_names", None)
         if not (test_data_path and class_names_rel):
-            self.logger.warning("Client %s: paths for %s missing.", self.cid, test_data_key)
             return
 
         class_names_path = _resolve_project_path(class_names_rel)
-        self.closed_set_data_path = test_data_path
-        self.closed_set_eval_scope = eval_scope
-
         try:
-            data_device = self.device if self._move_data_to_device else torch.device("cpu")
             data = torch.load(test_data_path, map_location="cpu", weights_only=True)
-            features = data["features"].to(device=data_device).float()
-            labels = data["labels"].to(device=data_device).long()
+            features = data["features"].float()
+            labels = data["labels"].long()
         except Exception as exc:
-            self.logger.error("Client %s: failed to load closed-set test data: %s", self.cid, exc)
+            self.logger.error("Client %s: failed to load test data: %s", self.cid, exc)
             return
 
         dataset = TensorDataset(features, labels)
         self.eval_loader = DataLoader(
-            dataset, batch_size=self.cfg.training.batch_size, shuffle=False
+            dataset, batch_size=int(self.cfg.training.batch_size), shuffle=False
         )
-        self.eval_class_names = self._load_class_names(
-            class_names_path, int(self.cfg.model.num_actions)
-        )
-        eval_mode = str(getattr(self.cfg.evaluation, "mode", "closed_set")).lower()
-        eval_label = "Known-class eval" if eval_mode == "open_set" else "Closed-set eval"
-        self.logger.info(
-            "Client %s: %s data loaded (%s) | scope=%s | samples=%d",
-            self.cid,
-            eval_label,
-            test_data_path.name,
-            eval_scope,
-            len(dataset),
-        )
-
+        self.eval_class_names = self._load_class_names(class_names_path, int(self.cfg.model.num_classes))
         self.eval_enabled = True
-        self.logger.info(
-            "Client %s: %s enabled using %s (scope=%s)",
-            self.cid,
-            eval_label,
-            test_data_path.name,
-            eval_scope,
-        )
 
-    def _load_class_names(self, path: Path, num_actions: int) -> list[str]:
+    def _load_class_names(self, path: Path, num_classes: int) -> list[str]:
         if path.exists():
             try:
                 with open(path, encoding="utf-8") as fp:
                     raw = json.load(fp)
                 sorted_items = sorted(((int(k), v) for k, v in raw.items()), key=lambda x: x[0])
                 return [name for _, name in sorted_items]
-            except Exception as exc:
-                self.logger.warning("Client class-names load failed (%s): %s", path, exc)
-        return [f"class_{idx}" for idx in range(num_actions)]
+            except Exception:
+                pass
+        return [f"class_{idx}" for idx in range(num_classes)]
 
-    def _run_closed_set_inference(
-        self, model_kind: str = "teacher"
-    ) -> tuple[float, np.ndarray, np.ndarray]:
+    def _evaluate_closed_set(
+        self, round_index: int, prefix: str = "GLOBAL"
+    ) -> tuple[float, int, dict[str, float]]:
         assert self.eval_loader is not None
-        model_kind = str(model_kind).lower()
-        self.agent.prior_net.eval()
-        self.agent.value_net_main.eval()
-        if hasattr(self.agent, "student_model"):
-            self.agent.student_model.eval()
-
+        self.agent.student_model.eval()
         total_loss = 0.0
         total_samples = 0
         all_true: list[int] = []
@@ -1068,365 +438,31 @@ class FlowerClient(fl.client.NumPyClient):
             for features, labels in self.eval_loader:
                 features = features.to(self.device)
                 labels = labels.to(self.device)
-
-                if model_kind == "student":
-                    _, logits = self.agent.student_model(features)
-                else:
-                    mu_p, _ = self.agent.prior_net(features)
-                    logits = self.agent.value_net_main(mu_p, features)
+                _, logits = self.agent.student_model(features)
                 loss = F.cross_entropy(logits, labels, reduction="mean")
-
                 preds = logits.argmax(dim=1)
                 all_true.extend(labels.cpu().numpy().tolist())
                 all_pred.extend(preds.cpu().numpy().tolist())
-
                 batch_size = labels.size(0)
                 total_loss += loss.item() * batch_size
                 total_samples += batch_size
 
-        avg_loss = total_loss / total_samples if total_samples else 0.0
-        return avg_loss, np.array(all_true), np.array(all_pred)
-
-    def _save_client_report(self, round_index: int, report: str, prefix: str) -> None:
-        if not bool(getattr(self.cfg.evaluation, "save_client_reports", True)):
-            return
-        every_n = max(1, int(getattr(self.cfg.evaluation, "save_client_reports_every_n_rounds", 1) or 1))
-        if int(round_index) % every_n != 0:
-            return
-        if not self.eval_output_dir:
-            return
-        path = self.eval_output_dir / f"report_{prefix}_round_{round_index:03d}.txt"
-        with suppress(Exception):
-            path.write_text(report)
-
-    def _plot_client_confusion_matrix(
-        self, round_index: int, y_true: np.ndarray, y_pred: np.ndarray, prefix: str
-    ) -> None:
-        if not bool(getattr(self.cfg.evaluation, "save_client_confusion_matrices", True)):
-            return
-        every_n = max(1, int(getattr(self.cfg.evaluation, "save_client_confusion_matrices_every_n_rounds", 1) or 1))
-        if int(round_index) % every_n != 0:
-            return
-        if not self.eval_output_dir:
-            return
-
-        labels = list(range(len(self.eval_class_names)))
-        cm = confusion_matrix(y_true, y_pred, labels=labels)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            cm_norm = cm.astype(np.float32) / cm.sum(axis=1, keepdims=True)
-            cm_norm = np.nan_to_num(cm_norm)
-
-        fig, ax = plt.subplots(figsize=(6.5, 5.5))
-        ax.imshow(cm_norm, cmap=plt.get_cmap("Blues"), vmin=0, vmax=1)
-        ax.set_xticks(range(len(self.eval_class_names)))
-        ax.set_yticks(range(len(self.eval_class_names)))
-        ax.set_xticklabels(self.eval_class_names, rotation=45, ha="right")
-        ax.set_yticklabels(self.eval_class_names)
-        ax.set_xlabel("Predicted label")
-        ax.set_ylabel("True label")
-        ax.set_title(f"Client {self.cid} {prefix} CM (Round {round_index})")
-
-        for i in range(cm.shape[0]):
-            for j in range(cm.shape[1]):
-                val = cm_norm[i, j]
-                ax.text(
-                    j,
-                    i,
-                    f"{val:.2f}",
-                    ha="center",
-                    va="center",
-                    color="white" if val > 0.5 else "black",
-                    fontsize=9,
-                )
-
-        fig.tight_layout()
-        fig_path = self.eval_output_dir / f"cm_{prefix}_round_{round_index:03d}.png"
-        fig.savefig(fig_path, dpi=300)
-        plt.close(fig)
-
-    def _evaluate_closed_set(
-        self, round_index: int, prefix: str = "GLOBAL", model_kind: str = "teacher"
-    ) -> tuple[float, int, dict[str, float]]:
-        loss, y_true, y_pred = self._run_closed_set_inference(model_kind=model_kind)
+        avg_loss = total_loss / max(total_samples, 1)
+        y_true = np.array(all_true)
+        y_pred = np.array(all_pred)
         num_examples = int(y_true.size)
         accuracy = float((y_true == y_pred).mean()) if num_examples else 0.0
-        f1 = f1_score(y_true, y_pred, average="macro", zero_division=0)
-        balanced_accuracy = (
-            float(balanced_accuracy_score(y_true, y_pred)) if num_examples else 0.0
-        )
-
-        if num_examples == 0:
-            return loss, 0, {
-                "accuracy": accuracy,
-                "balanced_accuracy": balanced_accuracy,
-                "f1_macro": 0.0,
-                "num_examples": 0,
-            }
-
-        labels = list(range(len(self.eval_class_names)))
-        pred_counts = {str(i): int((y_pred == i).sum()) for i in labels}
-        true_counts = {str(i): int((y_true == i).sum()) for i in labels}
-        max_pred_count = max(pred_counts.values()) if pred_counts else 0
-        max_prediction_ratio = float(max_pred_count / max(num_examples, 1))
-        if max_prediction_ratio >= 0.95:
-            collapsed_class = max(pred_counts, key=lambda k: pred_counts[k]) if pred_counts else "?"
-            self.logger.warning(
-                "Client %s | %s | %s prediction collapse: class=%s ratio=%.4f histogram=%s",
-                self.cid,
-                prefix,
-                model_kind,
-                collapsed_class,
-                max_prediction_ratio,
-                json.dumps(pred_counts, sort_keys=True),
-            )
-        save_reports = bool(getattr(self.cfg.evaluation, "save_client_reports", True))
-        log_reports = bool(getattr(self.cfg.evaluation, "log_client_reports", True))
-        report: str | None = None
-        if save_reports or log_reports:
-            report = classification_report(
-                y_true,
-                y_pred,
-                labels=labels,
-                target_names=self.eval_class_names,
-                digits=4,
-                zero_division=0,
-            )
-            self._save_client_report(round_index, report, prefix)
-
-        self._plot_client_confusion_matrix(round_index, y_true, y_pred, prefix)
-
-        if log_reports and report is not None:
-            report_label = (
-                "Known-Class Report (pre-OSR)"
-                if str(getattr(self.cfg.evaluation, "mode", "closed_set")).lower() == "open_set"
-                else "Closed-Set Report"
-            )
-            self.logger.info(f"\n[Client {self.cid} | {prefix}] {report_label}:\n{report}")
+        f1 = float(f1_score(y_true, y_pred, average="macro", zero_division=0)) if num_examples else 0.0
+        balanced = float(balanced_accuracy_score(y_true, y_pred)) if num_examples else 0.0
 
         return (
-            loss,
+            avg_loss,
             num_examples,
             {
                 "accuracy": accuracy,
-                "balanced_accuracy": balanced_accuracy,
+                "balanced_accuracy": balanced,
                 "f1_macro": f1,
                 "num_examples": num_examples,
-                "prediction_max_ratio": max_prediction_ratio,
-                "privacy_strict_metrics": 1.0,
-                "eval_scope_is_client_local": float(
-                    str(getattr(self, "closed_set_eval_scope", "")).startswith("client")
-                ),
+                "raw_data_local_metrics": 1.0,
             },
         )
-
-    def _fit_evt_and_run_openset_eval(
-        self,
-        features: torch.Tensor,
-        labels: torch.Tensor,
-        evt_cfg: DictConfig,
-        prefix: str = "GLOBAL",
-    ) -> dict[str, float]:
-        """Fit and evaluate an open-set backend for client-side ablations.
-
-        DKD-FedOS paper metrics use final server-side global student Feature-EVT
-        unless client_eval_enabled=true.  This helper remains useful for
-        ablations, especially the dual-boundary path where the local teacher
-        generator exists only on the client.
-        """
-        paths_cfg = self.cfg.paths
-
-        test_open_key = f"test_open_client_{self.cid}"
-        shared_open_rel = getattr(paths_cfg, "shared_open_set_test_data", None)
-        generic_open_rel = getattr(paths_cfg, "open_set_test_data", None)
-        client_open_rel = getattr(paths_cfg, test_open_key, None)
-
-        open_set_rel = None
-        for candidate in (shared_open_rel, generic_open_rel, client_open_rel):
-            if candidate:
-                open_set_rel = candidate
-                break
-
-        class_names_rel = getattr(paths_cfg, "class_names", None)
-        if not (open_set_rel and class_names_rel):
-            self.logger.warning("Client %s: open-set paths missing for %s", self.cid, test_open_key)
-            return {}
-
-        calibration_features = features.float()
-        calibration_labels = labels.long()
-        validation_rel = getattr(paths_cfg, "validation_data", None)
-        if validation_rel:
-            validation_path = _resolve_project_path(validation_rel)
-            if validation_path.exists():
-                try:
-                    val_data = torch.load(validation_path, map_location="cpu", weights_only=True)
-                    calibration_features = val_data["features"].float()
-                    calibration_labels = val_data["labels"].long()
-                    self.logger.info(
-                        "Client %s: EVT calibration uses shared validation data | samples=%d",
-                        self.cid,
-                        int(calibration_labels.numel()),
-                    )
-                except Exception:
-                    self.logger.exception(
-                        "Client %s: failed to load shared validation data; falling back to local EVT calibration.",
-                        self.cid,
-                    )
-
-        open_set_path = _resolve_project_path(open_set_rel)
-        class_names_path = _resolve_project_path(class_names_rel)
-        self.open_set_data_path = open_set_path
-        try:
-            with open(class_names_path, encoding="utf-8") as fh:
-                class_map = {int(k): v for k, v in json.load(fh).items()}
-            data = torch.load(open_set_path, map_location="cpu", weights_only=True)
-            open_features = data["features"].float()
-            open_labels = data["labels"].long()
-            openset_examples = int(open_labels.numel())
-            num_unknown = int((open_labels == int(getattr(evt_cfg, "unknown_label_id", -1))).sum().item())
-            self.logger.info(
-                "Client %s: Open-set eval data loaded (%s) | total=%d | unknown=%d",
-                self.cid,
-                open_set_path.name,
-                openset_examples,
-                num_unknown,
-            )
-        except Exception as exc:
-            self.logger.error("Client %s: Error loading open set data: %s", self.cid, exc)
-            return {}
-
-        backend_raw = str(getattr(evt_cfg, "backend", "student_feature_evt")).lower()
-        if backend_raw in {"feature", "feature_evt", "student_feature"}:
-            backend = "student_feature_evt"
-        elif backend_raw in {"dual", "dual_evt"}:
-            backend = "dual_boundary_evt"
-        else:
-            backend = backend_raw
-
-        if backend in {"student_feature_evt", "dual_boundary_evt"}:
-            try:
-                feature_boundaries, meta, calibration_df = fit_student_feature_evt_models(
-                    features=calibration_features,
-                    labels=calibration_labels,
-                    batch_size=int(self.cfg.training.batch_size),
-                    student_model=self.agent.student_model,
-                    evt_cfg=evt_cfg,
-                    device=self.device,
-                    logger_=self.logger,
-                )
-                if backend == "dual_boundary_evt":
-                    meta["backend"] = "dual_boundary_evt"
-                save_feature_evt_collection(
-                    feature_boundaries,
-                    self.evt_output_dir / f"feature_evt_models_{prefix}.pkl",
-                    logger_=self.logger,
-                )
-                calibration_df.to_csv(
-                    self.openset_output_dir / f"student_feature_distances_calibration_{prefix}.csv",
-                    index=False,
-                )
-                local_boundaries = None
-                if backend == "dual_boundary_evt":
-                    local_boundaries = fit_local_generator_evt_models(
-                        features=calibration_features,
-                        labels=calibration_labels,
-                        batch_size=int(self.cfg.training.batch_size),
-                        prior_net=self.agent.prior_net,
-                        recognition_net=self.agent.recognition_net,
-                        value_net_main=self.agent.value_net_main,
-                        generation_net=self.agent.generation_net,
-                        evt_cfg=evt_cfg,
-                        device=self.device,
-                        logger_=self.logger,
-                    )
-                    save_local_generator_evt_collection(
-                        local_boundaries,
-                        self.evt_output_dir / f"local_generator_evt_models_{prefix}.pkl",
-                        logger_=self.logger,
-                    )
-                metrics = evaluate_feature_evt_open_set(
-                    features=open_features,
-                    labels=open_labels,
-                    batch_size=int(self.cfg.training.batch_size),
-                    student_model=self.agent.student_model,
-                    feature_boundaries=feature_boundaries,
-                    evt_meta=meta,
-                    class_names=class_map,
-                    output_dir=self.openset_output_dir,
-                    device=self.device,
-                    evt_cfg=evt_cfg,
-                    report_to_stdout=False,
-                    logger_=self.logger,
-                    local_generator_boundaries=local_boundaries,
-                    prior_net=self.agent.prior_net if backend == "dual_boundary_evt" else None,
-                    recognition_net=self.agent.recognition_net if backend == "dual_boundary_evt" else None,
-                    value_net_main=self.agent.value_net_main if backend == "dual_boundary_evt" else None,
-                    generation_net=self.agent.generation_net if backend == "dual_boundary_evt" else None,
-                )
-            except Exception:
-                self.logger.exception("Client %s: Feature/Dual EVT evaluation failed.", self.cid)
-                return {}
-        else:
-            try:
-                evt_models = fit_evt_models(
-                    features=calibration_features,
-                    labels=calibration_labels,
-                    batch_size=int(self.cfg.training.batch_size),
-                    evt_cfg=evt_cfg,
-                    prior_net=self.agent.prior_net,
-                    recognition_net=self.agent.recognition_net,
-                    value_net_main=self.agent.value_net_main,
-                    generation_net=self.agent.generation_net,
-                    student_model=self.agent.student_model,
-                    device=self.device,
-                    logger=self.logger,
-                )
-                evt_model_path = self.evt_output_dir / f"evt_models_{prefix}.pkl"
-                save_evt_collection(evt_models, evt_model_path, logger=self.logger)
-                meta = calibrate_evt_thresholds(
-                    features=calibration_features,
-                    labels=calibration_labels,
-                    batch_size=int(self.cfg.training.batch_size),
-                    evt_models=evt_models,
-                    evt_cfg=evt_cfg,
-                    prior_net=self.agent.prior_net,
-                    recognition_net=self.agent.recognition_net,
-                    value_net_main=self.agent.value_net_main,
-                    generation_net=self.agent.generation_net,
-                    student_model=self.agent.student_model,
-                    device=self.device,
-                    logger=self.logger,
-                )
-                save_evt_meta(meta, self.evt_output_dir / f"evt_meta_{prefix}.json", logger=self.logger)
-                metrics = evaluate_open_set(
-                    features=open_features,
-                    labels=open_labels,
-                    batch_size=int(self.cfg.training.batch_size),
-                    prior_net=self.agent.prior_net,
-                    recognition_net=self.agent.recognition_net,
-                    value_net_main=self.agent.value_net_main,
-                    generation_net=self.agent.generation_net,
-                    student_model=self.agent.student_model,
-                    evt_models=evt_models,
-                    evt_meta=meta,
-                    class_names=class_map,
-                    output_dir=self.openset_output_dir,
-                    device=self.device,
-                    evt_cfg=evt_cfg,
-                    report_to_stdout=False,
-                    logger=self.logger,
-                )
-            except Exception:
-                self.logger.exception("Client %s: legacy EVT evaluation failed.", self.cid)
-                return {}
-
-        metrics["openset_examples"] = openset_examples
-        metrics["openset_unknown"] = num_unknown
-        metrics["open_set_dataset"] = open_set_path.name
-        self.logger.info(
-            "[Client %s | %s] Open-Set AUROC: %.4f UnknownRecall: %.4f",
-            self.cid,
-            prefix,
-            metrics.get("openset_auroc", 0.0),
-            metrics.get("openset_unknown_recall", 0.0),
-        )
-        return metrics

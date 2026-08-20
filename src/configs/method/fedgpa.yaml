@@ -1,22 +1,14 @@
 # @package _global_
 experiment:
   method: FedGPA
+
 federated:
   strategy:
     name: fedgpa
     aggregation_strategy: fedgpa
-    # FedGPA: local-global prototype alignment strength (lambda in the paper).
     prototype_lambda: 0.05
-    # FedGPA: balance between prototype similarity and client sample-count prior (mu in the paper).
     prototype_mu: 0.5
-    # Model-stack adaptation: prototypes are built from normalized latent features + Q logits.
-    prototype_feature: latent_q
-    # Module-specific aggregation rates. These intentionally avoid FedAvg-style equal averaging.
-    value_mix: 1.0
-    prior_mix: 0.25
-    recognition_mix: 0.05
-    generation_mix: 0.0
-    # Extra local preservation for the Q/classifier head during non-IID rounds.
+    prototype_feature: latent
     classifier_self_weight: 0.25
     distance_temperature: 1.0
     monitor_path: ${tracking.run_dir}/fedgpa_monitoring.jsonl
@@ -24,16 +16,7 @@ federated:
     proximal_mu: 0.0
 
 training:
-  # Non-IID FedGPA needs slower exploration decay; otherwise clients lock into local class bias early.
-  epsilon_end: 0.05
-  epsilon_decay_rate: 0.98
-  # Class-balanced reward protects BP/MitM/FoT-style minority classes in the RL signal.
-  reward_mode: class_balanced
-  reward_weight_power: 0.5
-  reward_min_weight: 0.5
-  reward_max_weight: 3.0
-  reward_normalize_mean: true
-  # Small supervised CE term stabilizes the contextual-bandit/Q-classifier head.
-  aux_ce_weight: 0.10
-  aux_ce_label_smoothing: 0.02
-  aux_ce_use_class_weights: true
+  batch_size: 64
+  student_lr: 0.001
+  student_weight_decay: 0.0001
+  student_epochs: 2

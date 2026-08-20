@@ -23,6 +23,6 @@ evaluation:
   latent_embeddings_batch_size: ${evaluation.batch_size}
   latent_embeddings_max_points: 5000
 open_set:
-  evt:
-    enabled: false
+  enabled: false
+  detector: disabled
 

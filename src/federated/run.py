@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+import random
 import time
 from pathlib import Path
 from typing import Any
 
 import flwr as fl
+import numpy as np
 import pandas as pd
 import torch
 from flwr.common import (
@@ -29,7 +31,6 @@ from flwr.server.client_proxy import ClientProxy
 from flwr.server.server import Server
 from omegaconf import DictConfig, OmegaConf
 
-from src.artifacts.communication import build_communication_metrics
 from src.federated.client import FlowerClient
 from src.federated.server import (
     get_effective_num_rounds,
@@ -37,11 +38,117 @@ from src.federated.server import (
     init_global_agent_ref,
     run_server,
 )
-from src.tracking.local import LocalRunTracker
+from src.experiment.run_services import MetricsSink
 from src.utils.config import resolve_path, sync_model_dimensions_from_preprocessing
 from src.utils.utils import resolve_device_from_config, set_device, set_seed
 
 logger = logging.getLogger(__name__)
+
+
+def _restore_resume_rng_state(cfg: DictConfig, project_root: Path) -> bool:
+    """Restore the round-boundary RNG state after all resume-time construction.
+
+    Building the server reference and client model bundles consumes random draws.
+    Restoring in ``resume.py`` before that construction therefore cannot reproduce
+    an uninterrupted next round.  The global checkpoint is the authoritative
+    process RNG snapshot and must be applied immediately before ``Server.fit``.
+    """
+    raw_path = OmegaConf.select(cfg, "federated.resume_from", default=None)
+    if not raw_path:
+        return False
+    checkpoint_path = resolve_path(project_root, raw_path)
+    payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    state = payload.get("rng_state") or {}
+    if not state:
+        return False
+    if state.get("python") is not None:
+        random.setstate(state["python"])
+    if state.get("numpy") is not None:
+        np.random.set_state(state["numpy"])
+    if state.get("torch_cpu") is not None:
+        torch.set_rng_state(state["torch_cpu"])
+    if torch.cuda.is_available() and state.get("torch_cuda"):
+        torch.cuda.set_rng_state_all(state["torch_cuda"])
+    logger.info("Restored round-boundary RNG state from %s", checkpoint_path)
+    return True
+
+
+def _ndarrays_nbytes(values: list[Any]) -> int:
+    """Exact in-memory model payload bytes for the NumPy arrays Flower transports.
+
+    This intentionally excludes protocol/TLS/framework headers.  E7 reports these as
+    *model-parameter payload bytes*, matching the experiment contract.
+    """
+    total = 0
+    for value in values:
+        try:
+            total += int(value.nbytes)
+        except AttributeError:
+            arr = __import__("numpy").asarray(value)
+            total += int(arr.nbytes)
+    return total
+
+
+def _actual_communication_frame(history_frame: pd.DataFrame) -> pd.DataFrame:
+    """Build per-round communication totals from client-reported actual array bytes."""
+    if history_frame.empty or not {"round", "metric_name", "metric_value"}.issubset(history_frame.columns):
+        return pd.DataFrame()
+    names = {
+        "communication/downlink_bytes",
+        "communication/uplink_bytes",
+        "communication/round_bytes",
+    }
+    part = history_frame[history_frame["metric_name"].astype(str).isin(names)].copy()
+    if part.empty:
+        return pd.DataFrame()
+    part["metric_value"] = pd.to_numeric(part["metric_value"], errors="coerce")
+    pivot = part.pivot_table(index="round", columns="metric_name", values="metric_value", aggfunc="sum").reset_index()
+    for name in names:
+        if name not in pivot.columns:
+            pivot[name] = 0.0
+    # Aggregated Flower metrics already represent the sum for communication keys;
+    # pivot(sum) is safe because there is one distributed-aggregation row per round.
+    pivot["communication/cumulative_bytes"] = pivot["communication/round_bytes"].fillna(0).cumsum()
+    return pivot.sort_values("round").reset_index(drop=True)
+
+
+def _actual_runtime_frame(history_frame: pd.DataFrame) -> pd.DataFrame:
+    """Build one per-round runtime record from canonical Flower metrics.
+
+    ``runtime/round_seconds`` is measured server wall time.  Client/VCT/student
+    fields are synchronous critical-path (max-client) values produced by the
+    fit-metric aggregator.  This avoids reconstructing compute cost from logs.
+    """
+    if history_frame.empty or not {"round", "metric_name", "metric_value"}.issubset(history_frame.columns):
+        return pd.DataFrame()
+    names = {
+        "runtime/client_fit_seconds",
+        "runtime/teacher_seconds",
+        "runtime/student_seconds",
+        "runtime/aggregation_seconds",
+        "runtime/open_set_eval_seconds",
+        "runtime/round_seconds",
+    }
+    part = history_frame[history_frame["metric_name"].astype(str).isin(names)].copy()
+    if part.empty:
+        return pd.DataFrame()
+    part["metric_value"] = pd.to_numeric(part["metric_value"], errors="coerce")
+    pivot = part.pivot_table(
+        index="round", columns="metric_name", values="metric_value", aggfunc="max"
+    ).reset_index()
+    for name in names:
+        if name not in pivot.columns:
+            pivot[name] = 0.0
+    accounted = (
+        pivot["runtime/client_fit_seconds"].fillna(0.0)
+        + pivot["runtime/aggregation_seconds"].fillna(0.0)
+        + pivot["runtime/open_set_eval_seconds"].fillna(0.0)
+    )
+    pivot["runtime/orchestration_seconds"] = (
+        pivot["runtime/round_seconds"].fillna(0.0) - accounted
+    ).clip(lower=0.0)
+    pivot["runtime/cumulative_seconds"] = pivot["runtime/round_seconds"].fillna(0.0).cumsum()
+    return pivot.sort_values("round").reset_index(drop=True)
 
 
 def _resolve_runtime_config(cfg: DictConfig) -> DictConfig:
@@ -89,12 +196,20 @@ class _LegacyFlowerClientProxy(ClientProxy):
         _ = timeout, group_id
         fit_start = time.perf_counter()
         try:
+            downlink_arrays = parameters_to_ndarrays(ins.parameters)
+            downlink_bytes = _ndarrays_nbytes(downlink_arrays)
             parameters, num_examples, metrics = self._client.fit(
-                parameters_to_ndarrays(ins.parameters),
+                downlink_arrays,
                 dict(ins.config),
             )
+            uplink_bytes = _ndarrays_nbytes(parameters)
             metrics = dict(metrics)
-            metrics["client_fit_wall_time_sec"] = float(time.perf_counter() - fit_start)
+            client_fit_seconds = float(time.perf_counter() - fit_start)
+            metrics["client_fit_wall_time_sec"] = client_fit_seconds
+            metrics["runtime/client_fit_seconds"] = client_fit_seconds
+            metrics["communication/downlink_bytes"] = float(downlink_bytes)
+            metrics["communication/uplink_bytes"] = float(uplink_bytes)
+            metrics["communication/round_bytes"] = float(downlink_bytes + uplink_bytes)
         except Exception:
             logger.exception(
                 "Local Flower client %s fit failed | config=%s",
@@ -215,17 +330,21 @@ def run_federated_simulation(
     cfg: DictConfig,
     *,
     project_root: Path,
-    tracker: LocalRunTracker | None = None,
+    tracker: MetricsSink | None = None,
 ) -> dict[str, Any]:
     sync_model_dimensions_from_preprocessing(cfg, project_root=project_root)
     cfg = _resolve_runtime_config(cfg)
     gpu_batching_enabled = _simulation_gpu_batches_enabled(cfg)
     gpu_batch_size = _simulation_gpu_batch_size(cfg) if gpu_batching_enabled else 1
+    allow_fallback = bool(OmegaConf.select(cfg, "runtime.allow_cpu_fallback", default=False)) or bool(OmegaConf.select(cfg, "device.allow_cpu_fallback", default=False))
     if gpu_batching_enabled and not torch.cuda.is_available():
-        raise RuntimeError(
-            "runtime.simulation_gpu_batches.enabled=true but CUDA is unavailable. "
-            "Disable GPU batching only for explicit CPU validation runs."
-        )
+        if allow_fallback:
+            gpu_batching_enabled = False
+        else:
+            raise RuntimeError(
+                "runtime.simulation_gpu_batches.enabled=true but CUDA is unavailable. "
+                "Disable GPU batching only for explicit CPU validation runs."
+            )
     simulation_execution_device = (
         torch.device("cuda")
         if gpu_batching_enabled and torch.cuda.is_available()
@@ -258,7 +377,7 @@ def run_federated_simulation(
         gpu_batching_enabled,
         gpu_batch_size,
     )
-    server = Server(client_manager=client_manager, strategy=get_strategy(cfg))
+    server = Server(client_manager=client_manager, strategy=get_strategy(cfg, metrics_sink=tracker))
     if gpu_batching_enabled:
         server.set_max_workers(gpu_batch_size)
         logger.info(
@@ -266,36 +385,60 @@ def run_federated_simulation(
             gpu_batch_size,
             simulation_execution_device,
         )
+    elif bool(OmegaConf.select(cfg, "device.deterministic", default=False)):
+        # Local clients are threads in Flower's legacy in-process server.  PyTorch's
+        # RNG is process-global, so concurrent deterministic clients still race for
+        # random draws (data shuffles, VCT sampling, and synthetic boundaries).
+        # Serialize deterministic validation/reproduction runs; independent runs
+        # can still be parallelized safely by run_study.py in separate processes.
+        server.set_max_workers(1)
+        logger.info(
+            "Deterministic local simulation enabled | max_workers=1 to isolate client RNG streams"
+        )
+    _restore_resume_rng_state(cfg, project_root)
     history, _elapsed_time = server.fit(num_rounds=get_effective_num_rounds(cfg), timeout=None)
     run_dir = tracker.run_dir if tracker is not None else resolve_path(project_root, cfg.tracking.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     history_rows = _history_rows(history)
     if history_rows:
         history_df = pd.DataFrame(history_rows)
-        history_df.to_csv(run_dir / "federated_history.csv", index=False)
+        metrics_dir = run_dir / "metrics"
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        history_df.to_csv(metrics_dir / "federated_history.csv", index=False)
         if tracker is not None:
             tracker.write_json(
-                "federated_history.json",
+                "metadata/federated_history.json",
                 {
                     "num_rows": len(history_rows),
                     "phases": sorted({row["phase"] for row in history_rows}),
                     "metrics": sorted({row["metric_name"] for row in history_rows}),
                 },
             )
-        communication_df = build_communication_metrics(
-            run_dir=run_dir,
-            project_root=project_root,
-            history_frame=history_df,
-        )
+        communication_df = _actual_communication_frame(history_df)
         if not communication_df.empty:
-            communication_df.to_csv(run_dir / "communication_metrics.csv", index=False)
+            communication_df.to_csv(metrics_dir / "communication_round.csv", index=False)
             if tracker is not None:
                 tracker.write_json(
-                    "communication_metrics.json",
+                    "metadata/communication_summary.json",
                     {
                         "num_rows": len(communication_df),
+                        "semantics": "actual_numpy_model_parameter_payload_bytes_excluding_protocol_headers",
                         "method": str(cfg.experiment.method),
                         "max_round": int(communication_df["round"].max()),
+                        "total_bytes": float(communication_df["communication/round_bytes"].sum()),
+                    },
+                )
+        runtime_df = _actual_runtime_frame(history_df)
+        if not runtime_df.empty:
+            runtime_df.to_csv(metrics_dir / "timing_round.csv", index=False)
+            if tracker is not None:
+                tracker.write_json(
+                    "metadata/runtime_summary.json",
+                    {
+                        "num_rows": len(runtime_df),
+                        "semantics": "server_round_wall_time_plus_synchronous_client_critical_path",
+                        "max_round": int(runtime_df["round"].max()),
+                        "total_round_wall_seconds": float(runtime_df["runtime/round_seconds"].sum()),
                     },
                 )
     timing_summary: dict[str, float] = {}

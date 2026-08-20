@@ -1,10 +1,7 @@
 # @package _global_
 experiment:
-  method: FedAvg
+  method: FedAvg-Student
 
-# Clean FedAvg baseline: reset local optimizer/replay/epsilon each round,
-# keep shared-test client evaluation before/after local fit, and use central
-# validation only for best-checkpoint selection.
 federated:
   strategy:
     name: fedavg
@@ -18,15 +15,17 @@ federated:
     prefix: val
 
 training:
+  teacher_enabled: false
+  kd_enabled: false
+  alignment_enabled: false
+  student_osr_enabled: false
+  student_open_set_enabled: false
+  fedtros_global_anchor_weight: 0.0
   reset_optimizer_each_round: true
-  reset_replay_buffer_each_round: true
-  reset_epsilon_each_round: true
-  round_aware_seed: true
   evaluate_after_local_fit: true
   evaluate_before_local_fit: false
-  aux_ce_weight: 0.0
-  generator:
-    enabled: false
+  local_epochs: 2
+  batch_size: 64
 
 checkpointing:
   monitor_metric: val/macro_f1

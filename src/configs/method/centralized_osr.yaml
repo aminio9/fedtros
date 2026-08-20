@@ -7,5 +7,3 @@ federated:
     name: centralized
     aggregation_strategy: centralized
 open_set:
-  evt:
-    enabled: true

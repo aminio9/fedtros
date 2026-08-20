@@ -1,8 +1,0 @@
-name: double_q_learning_agent
-use_double_dqn: true
-target_update: soft
-federated_parameters:
-  - prior_net
-  - recognition_net
-  - value_net_main
-  - generation_net

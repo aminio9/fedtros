@@ -19,8 +19,8 @@ source_labels:
   - Web Attack-Brute Force
   - Web Attack-Sql Injection
   - Web Attack-XSS
-closed_set_num_actions: 15
-open_set_num_actions: 9
+closed_set_num_classes: 15
+open_set_num_classes: 9
 known_labels:
   - BENIGN
   - DDoS
@@ -38,6 +38,7 @@ unknown_labels:
   - Web Attack-Brute Force
   - Web Attack-Sql Injection
   - Web Attack-XSS
+partition_file: null
 preprocessing:
   mode: single_source
   protocol: open_set
@@ -64,3 +65,4 @@ preprocessing:
   iid: false
   max_unknown_test_ratio: 1.0
   unknown_label_id: -1
+  smoke: false

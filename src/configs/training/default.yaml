@@ -3,119 +3,74 @@ validation_interval: 1
 checkpoint_interval: 1
 resume_from: null
 seed: ${seed}
-batch_size: 512
-local_episodes_per_round: 15
-steps_per_episode: 100
-replay_buffer_size: 50000
-min_buffer_size: 512
-gamma: 0.7
-lr_prior: ${optimizer.lr_prior}
-lr_q_rl: ${optimizer.lr_q_rl}
-tau: 0.01
-target_update_freq: 100
-use_double_dqn: ${agent.use_double_dqn}
-prior_grad_clip_norm: 1.0
-q_grad_clip_norm: 1.0
-epsilon_start: 1.0
-epsilon_end: 0.01
-epsilon_decay_rate: 0.95
-prior_kl_raw: false
+batch_size: 64
+local_epochs: 2
+grad_clip_norm: 1.0
+label_smoothing: 0.02
 
-# Clean FedAvg/FedProx baseline controls. Defaults are conservative so custom
-# methods keep their prior behavior unless their method config enables these.
+# Teacher parameters
+teacher_lr: 0.001
+teacher_weight_decay: 0.0001
+teacher_beta_kl: 0.01
+teacher_epochs: 2
+teacher_grad_clip_norm: 1.0
+teacher_enabled: true
+teacher_stochastic_training: true
+kd_enabled: true
+kd_gating_enabled: true
+alignment_enabled: true
+teacher_hidden_dims: [512, 256]
+teacher_dropout: 0.0
+
+# Student parameters
+student_lr: 0.001
+student_weight_decay: 0.0001
+student_epochs: 2
+fedtros_student_hidden_dims: [512, 256, 128]
+fedtros_student_activation: gelu
+fedtros_student_norm: layernorm
+fedtros_student_dropout: 0.05
+
+# Distillation and Alignment
+lambda_kd: 0.20
+lambda_align: 0.08
+adaptive_transfer_weights: false
+lambda_kd_min: 0.03
+lambda_kd_max: 0.35
+lambda_align_min: 0.01
+lambda_align_max: 0.12
+kd_base_temperature: 3.0
+kd_min_temperature: 1.0
+kd_decay: 0.95
+align_mse_weight: 1.0
+align_cos_weight: 0.5
+fedtros_global_anchor_weight: 2.0
+fedtros_global_anchor_min_weight: 0.0
+fedtros_global_anchor_coverage_power: 1.0
+student_task_weight: 1.0
+class_balance_beta: 0.999
+class_weight_min: 0.2
+class_weight_max: 5.0
+
+# Student OSR Latent Branch (8-D)
+student_osr_enabled: false
+student_osr_latent_dim: 8
+student_osr_hidden_dims: [128, 64]
+student_osr_decoder_hidden_dims: [64, 128]
+student_osr_dropout: 0.05
+student_osr_norm: layernorm
+student_osr_activation: gelu
+student_osr_detach_features: true
+student_osr_lr: 0.001
+student_osr_weight_decay: 0.0001
+student_open_set_enabled: false
+
+# Federated baseline controls
 reset_optimizer_each_round: false
-reset_replay_buffer_each_round: false
-reset_epsilon_each_round: false
-round_aware_seed: false
 evaluate_before_local_fit: false
 evaluate_after_local_fit: true
 
-# RL reward shaping. The default keeps old +1/-1 behavior so baselines stay comparable.
-# FedGPA overrides this to class_balanced for non-IID/minority-class stability.
-reward_mode: symmetric        # symmetric | class_balanced
-reward_correct: 1.0
-reward_wrong: -1.0
-reward_weight_power: 0.5      # sqrt inverse-frequency when class_balanced
-reward_min_weight: 0.5
-reward_max_weight: 3.0
-reward_normalize_mean: true
-
-# Auxiliary supervised stabilizer on Q-values. Disabled by default; FedGPA enables it.
-aux_ce_weight: 0.0
-aux_ce_label_smoothing: 0.0
-aux_ce_use_class_weights: true
-
-generator:
-  enabled: true
-  batch_size: 128
-  epochs: 50
-  rounds: 1
-  epochs_per_round: 30
-  lr: 0.0005
-  min_correct_samples: 10
 smoke:
   num_samples: 24
   epochs: 1
-  steps_per_episode: 3
-  min_buffer_size: 2
-  batch_size: 2
-
-# DKD-FedOS / Sentinel-style dynamic knowledge distillation defaults.
-# These are inert unless the dkd_fedos strategy activates them.
-dkd_student_hidden_dims: [512, 256, 128]
-dkd_student_lr: 0.001
-dkd_student_activation: gelu
-dkd_student_norm: layernorm
-dkd_student_dropout: 0.05
-# Open-set v7 uses Feature-EVT over the student feature space.
-dkd_dataset_min_steps: 50
-dkd_dataset_epochs_small_client: 10
-dkd_global_anchor_weight: 2.0
-dkd_global_anchor_min_weight: 0.0
-dkd_global_anchor_coverage_power: 1.0
-dkd_student_full_ce_with_anchor: true
-dkd_teacher_to_student_start_round: 1
-dkd_alignment_start_round: 2
-dkd_update_teacher_from_student: false
-dkd_student_to_teacher_start_round: 999
-dkd_task_weight: 1.0
-dkd_kd_base_temperature: 3.0
-dkd_kd_min_temperature: 1.0
-dkd_kd_decay: 0.95
-dkd_lambda_kd_init: 0.20
-dkd_lambda_align_init: 0.08
-dkd_lambda_kd_min: 0.03
-dkd_lambda_kd_max: 0.35
-dkd_lambda_kd_max_base: 0.18
-dkd_lambda_kd_max_growth: 0.02
-dkd_lambda_align_min: 0.01
-dkd_lambda_align_max: 0.12
-dkd_lambda_align_max_base: 0.06
-dkd_lambda_align_max_growth: 0.01
-dkd_align_mse_weight: 1.0
-dkd_align_cos_weight: 0.5
-dkd_class_balance_beta: 0.999
-dkd_class_weight_min: 0.2
-dkd_class_weight_max: 5.0
-dkd_protect_absent_classes: true
-
-# Fed-DiGOS student-owned open-set generator branch. Disabled for closed-set experiments,
-# enabled by E2/E4. Reconstruction gradients are detached from classifier features by default.
-dkd_student_osr_enabled: false
-dkd_student_osr_latent_dim: 8
-dkd_student_osr_hidden_dims: [128, 64]
-dkd_student_osr_decoder_hidden_dims: [64, 128]
-dkd_student_osr_dropout: 0.05
-dkd_student_osr_norm: layernorm
-dkd_student_osr_activation: gelu
-dkd_student_osr_detach_features: true
-dkd_student_osr_lr: 0.001
-dkd_student_osr_weight_decay: 0.0001
-dkd_student_energy_lr: 0.0002
-dkd_student_energy_weight_decay: 0.0001
-
-# FedPD++/PROSER-style K+1 open-set placeholder head on the federated student.
-# Enabled by open-set experiments; trained from known data and known-derived mixup only.
-dkd_student_open_set_enabled: false
-dkd_student_open_set_lr: 0.001
-dkd_student_open_set_weight_decay: 0.0001
+  batch_size: 4

@@ -12,8 +12,8 @@ source_labels:
   - Re
   - DeC
   - FDV
-closed_set_num_actions: 7
-open_set_num_actions: 5
+closed_set_num_classes: 7
+open_set_num_classes: 5
 known_labels:
   - Normal
   - DoS
@@ -23,6 +23,7 @@ known_labels:
 unknown_labels:
   - Re
   - DeC
+partition_file: null
 preprocessing:
   mode: single_source
   protocol: open_set
@@ -49,3 +50,4 @@ preprocessing:
   iid: false
   max_unknown_test_ratio: 1.0
   unknown_label_id: -1
+  smoke: false

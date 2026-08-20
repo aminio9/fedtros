@@ -1,6 +1,6 @@
-dir: ${tracking.run_dir}
+dir: ${tracking.run_dir}/checkpoints
 best_model_path: ${checkpointing.dir}/best_model.pt
-latest_checkpoint_path: ${checkpointing.dir}/latest_checkpoint.pt
+latest_checkpoint_path: ${checkpointing.dir}/latest.pt
 final_model_path: ${checkpointing.dir}/final_model.pt
 save_best: true
 save_latest: true

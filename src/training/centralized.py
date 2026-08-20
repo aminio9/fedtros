@@ -1,14 +1,16 @@
+"""Centralized baseline training routine for FedTROS-PR."""
+
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from omegaconf import DictConfig
 
-from src.agents.agent import Agent
-from src.agents.policy import EpsilonGreedyPolicy, EpsilonScheduler
+if TYPE_CHECKING:
+    from src.models.bundle import FedTROSModelBundle as Agent
 from src.checkpointing.checkpoints import (
     CheckpointState,
     load_agent_checkpoint,
@@ -17,11 +19,9 @@ from src.checkpointing.checkpoints import (
 )
 from src.data.io import load_tensor_dataset
 from src.evaluation.closed_set import evaluate_closed_set, load_class_names
-from src.models.models import OpenSetQChainModelFactory
-from src.rl.environment import BlockchainIntrusionEnv
-from src.rl.local_training import run_local_training_round
-from src.rl.replay_buffer import ExperienceReplayBuffer
-from src.tracking.local import LocalRunTracker
+from src.models.models import ModelFactory
+from src.training.local_training import run_local_training_round
+from src.experiment.run_services import MetricsSink
 from src.utils.config import resolve_path
 
 logger = logging.getLogger(__name__)
@@ -43,25 +43,15 @@ def run_training(
     *,
     project_root: Path,
     device: torch.device,
-    tracker: LocalRunTracker,
+    tracker: MetricsSink,
 ) -> dict[str, Any]:
-    train_data_path = _central_train_path(cfg, project_root)
+    from src.models.bundle import FedTROSModelBundle as Agent
 
-    env = BlockchainIntrusionEnv(
-        processed_data_path=str(train_data_path),
-        steps_per_episode=int(cfg.training.steps_per_episode),
-        device=device,
-        move_data_to_device=bool(cfg.device.move_data_to_device),
-        global_num_actions=int(cfg.model.num_actions),
-        reward_mode=str(getattr(cfg.training, "reward_mode", "symmetric")),
-        reward_correct=float(getattr(cfg.training, "reward_correct", 1.0)),
-        reward_wrong=float(getattr(cfg.training, "reward_wrong", -1.0)),
-        reward_weight_power=float(getattr(cfg.training, "reward_weight_power", 0.5)),
-        reward_min_weight=float(getattr(cfg.training, "reward_min_weight", 0.5)),
-        reward_max_weight=float(getattr(cfg.training, "reward_max_weight", 3.0)),
-        reward_normalize_mean=bool(getattr(cfg.training, "reward_normalize_mean", True)),
-    )
-    agent = Agent(OpenSetQChainModelFactory(cfg.model), cfg.training, device=device)
+    train_data_path = _central_train_path(cfg, project_root)
+    train_features, train_labels = load_tensor_dataset(train_data_path, map_location="cpu")
+
+    model_factory = ModelFactory(cfg.model)
+    agent = Agent(model_factory, cfg.training, device=device)
     if cfg.training.resume_from is not None:
         load_agent_checkpoint(
             agent,
@@ -70,15 +60,6 @@ def run_training(
             strict=bool(cfg.checkpointing.strict_load),
             load_optimizers=True,
         )
-
-    buffer = ExperienceReplayBuffer(int(cfg.training.replay_buffer_size))
-    policy = EpsilonGreedyPolicy(
-        agent.prior_net,
-        agent.value_net_main,
-        int(cfg.model.num_actions),
-        device,
-    )
-    epsilon_scheduler = EpsilonScheduler(cfg.training)
 
     best_metric: float | None = None
     best_metrics: dict[str, Any] = {}
@@ -90,32 +71,31 @@ def run_training(
     class_names_path = resolve_path(project_root, cfg.paths.class_names)
     can_validate = val_data_path.exists() and class_names_path.exists()
     class_names = (
-        load_class_names(class_names_path, int(cfg.model.num_actions)) if can_validate else None
+        load_class_names(class_names_path, int(cfg.model.num_classes)) if can_validate else None
     )
 
     for epoch in range(1, int(cfg.training.epochs) + 1):
         steps, train_metrics = run_local_training_round(
             agent=agent,
-            env=env,
-            buffer=buffer,
-            policy=policy,
-            epsilon_scheduler=epsilon_scheduler,
+            features=train_features,
+            labels=train_labels,
             cfg_training=cfg.training,
             device=device,
+            round_num=epoch,
+            is_fedtros=True,
+            logger=logger,
         )
         total_steps += int(steps)
         metrics: dict[str, Any] = {
             "epoch": epoch,
             "global_step": total_steps,
-            "train/loss": float(train_metrics.get("avg_td_loss", 0.0)),
-            "train/accuracy": float(train_metrics.get("policy_accuracy", 0.0)),
-            "train/balanced_accuracy": float(train_metrics.get("balanced_policy_accuracy", 0.0)),
-            "train/reward": float(train_metrics.get("avg_reward_per_episode", 0.0)),
-            "train/double_q_loss": float(train_metrics.get("avg_td_loss", 0.0)),
-            "train/kl_loss": float(train_metrics.get("avg_kl_loss", 0.0)),
-            "train/aux_ce_loss": float(train_metrics.get("avg_aux_ce_loss", 0.0)),
-            "train/prox_loss": float(train_metrics.get("avg_prox_loss", 0.0)),
-            "train/epsilon": float(train_metrics.get("epsilon", 0.0)),
+            "train/loss": float(train_metrics.get("avg_student_total_loss", train_metrics.get("train_loss", 0.0))),
+            "train/task_loss": float(train_metrics.get("avg_student_task_loss", 0.0)),
+            "train/teacher_loss": float(train_metrics.get("avg_teacher_loss", 0.0)),
+            "train/teacher_kl_loss": float(train_metrics.get("avg_teacher_kl_loss", 0.0)),
+            "train/kd_loss": float(train_metrics.get("avg_student_kd_loss", 0.0)),
+            "train/align_loss": float(train_metrics.get("avg_student_align_loss", 0.0)),
+            "train/accuracy": float(train_metrics.get("student_acc", 0.0)),
         }
 
         if can_validate and epoch % int(cfg.training.validation_interval) == 0:
@@ -192,5 +172,5 @@ def run_training(
         "best_metrics": best_metrics,
     }
     tracker.write_json("training_summary.json", summary)
-    logger.info("Training complete | best_metric=%s | total_steps=%s", best_metric, total_steps)
+    logger.info("Centralized training complete | best_metric=%s | total_steps=%s", best_metric, total_steps)
     return summary

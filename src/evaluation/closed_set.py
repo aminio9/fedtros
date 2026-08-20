@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 import torch
@@ -19,18 +19,19 @@ from sklearn.metrics import (
 )
 from torch.utils.data import DataLoader, TensorDataset
 
-from src.agents.agent import Agent
+if TYPE_CHECKING:
+    from src.models.bundle import FedTROSModelBundle as Agent
 
 logger = logging.getLogger(__name__)
 
 
-def load_class_names(path: str | Path, num_actions: int) -> dict[int, str]:
+def load_class_names(path: str | Path, num_classes: int) -> dict[int, str]:
     class_path = Path(path)
     if not class_path.exists():
         raise FileNotFoundError(f"Class-name mapping not found: {class_path}")
     raw = json.loads(class_path.read_text(encoding="utf-8"))
     class_names = {int(k): str(v) for k, v in raw.items()}
-    missing = [idx for idx in range(num_actions) if idx not in class_names]
+    missing = [idx for idx in range(num_classes) if idx not in class_names]
     if missing:
         raise ValueError(f"Class-name mapping is missing class ids: {missing}")
     return class_names
@@ -51,8 +52,7 @@ def evaluate_closed_set(
     loader = DataLoader(
         TensorDataset(features.float(), labels.long()), batch_size=batch_size, shuffle=False
     )
-    agent.prior_net.eval()
-    agent.value_net_main.eval()
+    agent.student_model.eval()
 
     total_loss = 0.0
     total = 0
@@ -62,8 +62,7 @@ def evaluate_closed_set(
         for batch_features, batch_labels in loader:
             batch_features = batch_features.to(device)
             batch_labels = batch_labels.to(device)
-            mu, _ = agent.prior_net(batch_features)
-            logits = agent.value_net_main(mu, batch_features)
+            _, logits = agent.student_model(batch_features)
             loss = F.cross_entropy(logits, batch_labels, reduction="sum")
             preds = logits.argmax(dim=1)
             total_loss += float(loss.item())
@@ -99,6 +98,11 @@ def evaluate_closed_set(
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
+    metrics_dir = output_path / "metrics"
+    predictions_dir = output_path / "predictions"
+    artifacts_dir = output_path / "artifacts"
+    for directory in (metrics_dir, predictions_dir, artifacts_dir):
+        directory.mkdir(parents=True, exist_ok=True)
     metrics = {
         f"{prefix}/loss": float(loss_value),
         f"{prefix}/accuracy": float(accuracy),
@@ -114,21 +118,34 @@ def evaluate_closed_set(
     if prefix == "test":
         metrics["test/loss"] = float(loss_value)
         metrics["test/accuracy"] = float(accuracy)
-    (output_path / f"{prefix}_metrics.json").write_text(
+        # Stable namespace used by W&B, aggregation, and the publication bundle.
+        metrics.update({
+            "closed_set/loss": float(loss_value),
+            "closed_set/accuracy": float(accuracy),
+            "closed_set/balanced_accuracy": float(balanced),
+            "closed_set/macro_precision": float(macro_precision),
+            "closed_set/macro_recall": float(macro_recall),
+            "closed_set/macro_f1": float(macro_f1),
+        })
+    (metrics_dir / f"{prefix}_metrics.json").write_text(
         json.dumps(metrics, indent=2, sort_keys=True),
         encoding="utf-8",
     )
-    (output_path / f"{prefix}_classification_report.json").write_text(
+    (artifacts_dir / f"{prefix}_classification_report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True),
         encoding="utf-8",
     )
     confusion_df = pd.DataFrame(cm, index=target_names, columns=target_names)
-    confusion_df.to_csv(output_path / f"{prefix}_confusion_matrix.csv")
+    confusion_df.to_csv(artifacts_dir / f"{prefix}_confusion_matrix.csv")
+    if prefix == "test":
+        npy_path = artifacts_dir / "confusion_closed.npy"
+        import numpy as np
+        np.save(npy_path, cm)
     if save_predictions:
         pred_records = [
             {"y_true": int(t), "y_pred": int(p)} for t, p in zip(y_true, y_pred, strict=True)
         ]
-        (output_path / f"{prefix}_predictions.jsonl").write_text(
+        (predictions_dir / f"{prefix}_predictions.jsonl").write_text(
             "".join(json.dumps(record) + "\n" for record in pred_records),
             encoding="utf-8",
         )

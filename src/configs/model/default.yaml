@@ -1,4 +1,4 @@
-name: openset_qchain
+name: default
 feature_dim: 31
 num_classes: 4
 latent_dim: 64
@@ -8,8 +8,6 @@ activation: gelu
 dropout: 0.05
 
 # Compatibility aliases
-state_dim: ${model.feature_dim}
-num_actions: ${model.num_classes}
 input_dim: ${model.feature_dim}
 
 transformer:
