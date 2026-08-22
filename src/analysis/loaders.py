@@ -138,6 +138,8 @@ class RunRecord:
         if self._client_distribution_df is None:
             self._client_distribution_df=_csv(
                 self.run_dir/"metadata"/"client_class_distribution.csv",
+                self.run_dir/"data"/"client_class_distribution.csv",
+                self.run_dir/"processed"/"client_class_distribution.csv",
                 self.run_dir/"client_class_distribution.csv",
             )
         return self._client_distribution_df

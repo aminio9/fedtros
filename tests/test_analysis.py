@@ -498,3 +498,62 @@ def test_e7_publication_bundle_exports_efficiency_curve(tmp_path: Path):
     assert {"communication/cumulative_bytes", "performance_metric", "performance_value"}.issubset(
         frame.columns
     )
+
+
+def test_existing_plot_adapter_exports_complete_29_figure_contract(tmp_path: Path):
+    """Canonical run outputs are transformed into every input used by the existing renderer."""
+    runs_dir = tmp_path / "outputs"
+
+    def make(run_id: str, **kwargs):
+        path = _create_mock_run(runs_dir, run_id, **kwargs)
+        record = load_run(path)
+        distribution = pd.DataFrame({
+            "client_id": range(1, record.num_clients + 1),
+            "Normal": [60] * record.num_clients,
+            "BP": [10] * record.num_clients,
+            "DoS": [10] * record.num_clients,
+            "MitM": [10] * record.num_clients,
+            "FoT": [10] * record.num_clients,
+        })
+        (path / "data").mkdir(exist_ok=True)
+        distribution.to_csv(path / "data" / "client_class_distribution.csv", index=False)
+        return path
+
+    paths = [
+        make("e1", study="E1-IID-CS", method="FedTROS-PR", alpha=1.0, num_clients=10),
+        make("e2", study="E2-IID-OSR", method="FedTROS-PR", alpha=1.0, num_clients=10),
+        make("e3_a01", study="E3-NIID-CS", method="FedTROS-PR", alpha=0.1, num_clients=10),
+        make("e3_a05", study="E3-NIID-CS", method="FedTROS-PR", alpha=0.5, num_clients=10),
+        make("e3_a1", study="E3-NIID-CS", method="FedTROS-PR", alpha=1.0, num_clients=10),
+        make("e3_a1_avg", study="E3-NIID-CS", method="FedAvg", alpha=1.0, num_clients=10),
+        make("e3_a1_prox", study="E3-NIID-CS", method="FedProx", alpha=1.0, num_clients=10),
+        make("e6_10", study="E6-SCALE", method="FedTROS-PR", num_clients=10),
+        make("e6_50", study="E6-SCALE", method="FedTROS-PR", num_clients=50),
+        make("e6_100", study="E6-SCALE", method="FedTROS-PR", num_clients=100),
+        make("e7", study="E7-EFFICIENCY", method="FedTROS-PR", num_clients=10),
+        make("a1", study="A1-TEACHER", method="FedTROS-PR", num_clients=10),
+    ]
+    e2 = paths[1]
+    projection_dir = e2 / "artifacts"
+    projection_dir.mkdir(exist_ok=True)
+    pd.DataFrame({
+        "x": [0.0, 1.0, 0.5], "y": [0.0, 1.0, 0.5],
+        "point_type": ["sample", "positive_prototype", "negative_prototype"],
+        "label": ["Normal", "Normal", "Boundary"],
+        "is_unknown": [0, 0, 1], "final_reject": [0, 0, 1], "sample_id": [0, pd.NA, pd.NA],
+    }).to_csv(projection_dir / "prototype_rank_latent_projection.csv", index=False)
+
+    from scripts.export_plot_data import REQUIRED_FILES, REQUIRED_SCALABILITY_COLUMNS, export_plot_data
+
+    output_dir = tmp_path / "plot_data"
+    manifest = export_plot_data([load_run(path) for path in paths], output_dir, strict=True)
+    assert manifest["status"] == "COMPLETE"
+    assert REQUIRED_FILES.issubset({path.name for path in output_dir.iterdir()})
+    scores = pd.read_csv(output_dir / "exp2_scores.csv")
+    assert {"known_or_unknown", "prototype_rank_score", "selected_threshold_used", "final_reject"}.issubset(scores.columns)
+    scalability = pd.read_csv(output_dir / "scalability_100_clients.csv")
+    assert REQUIRED_SCALABILITY_COLUMNS.issubset(scalability.columns)
+    communication = pd.read_csv(output_dir / "communication_alpha1.csv")
+    assert {"round", "method", "cumulative_mb", "accuracy_percent"}.issubset(
+        communication.columns
+    )

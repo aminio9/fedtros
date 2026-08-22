@@ -167,7 +167,13 @@ def main() -> int:
         study = load_study_config(args.study, root)
     except FileNotFoundError as exc:
         logger.error("%s", exc); return 2
-    plans = expand_study_matrix(study, stage=args.stage, seeds=args.seeds, project_root=root)
+    plans = expand_study_matrix(
+        study,
+        stage=args.stage,
+        seeds=args.seeds,
+        clients=args.clients,
+        project_root=root,
+    )
     plans = filter_plans(plans, args)
     out = args.output_dir if args.output_dir.is_absolute() else root / args.output_dir
     summary = perform_dry_run(plans, output_base_dir=out)
