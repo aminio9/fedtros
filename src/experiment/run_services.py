@@ -21,6 +21,7 @@ class MetricsSink(Protocol):
 
     def log_metrics(self, metrics: dict[str, Any], step: int | None = None) -> None: ...
     def write_json(self, filename: str | Path, payload: dict[str, Any] | list[Any]) -> Path: ...
+    def log_artifact(self, local_path: str | Path, artifact_path: str | None = None) -> None: ...
 
 
 class RunServices:
@@ -98,6 +99,22 @@ class RunServices:
             final_metrics=self._summary,
             extra={"tracker": self.tracker_id, "tracker_run_id": self.tracker_run_id},
         )
+        if str(status).upper() == "COMPLETED":
+            # Mirror the exact canonical inputs needed by downstream analysis and
+            # plotting.  Local ResultStore remains authoritative; W&B artifacts are
+            # a traceable, checksummed transport/inspection copy.
+            artifact_paths = (
+                self.run_dir / "config" / "resolved_config.yaml",
+                self.run_dir / "metadata",
+                self.run_dir / "metrics",
+                self.run_dir / "predictions",
+                self.run_dir / "artifacts",
+                self.run_dir / "logs",
+                self.run_dir / "result_manifest.json",
+            )
+            for path in artifact_paths:
+                if path.exists():
+                    self.log_artifact(path, artifact_path=f"{self.run_id}-{path.name}")
         try:
             self.tracker.finish(status=status)
         except Exception as exc:

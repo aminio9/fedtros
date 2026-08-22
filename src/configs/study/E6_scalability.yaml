@@ -16,5 +16,5 @@ base_overrides:
   federated.num_rounds: 100
   training.local_epochs: 2
   evaluation.mode: open_set
-  open_set.evaluate_each_round: false
+  open_set.evaluate_each_round: true
   open_set.evaluate_every_n_rounds: 5

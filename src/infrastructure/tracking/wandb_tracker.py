@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,23 @@ class WandBTracker(ExperimentTracker):
         notes: str | None = None,
         save_code: bool = False,
     ) -> None:
+        run_dir = Path(run_dir).expanduser().resolve()
+        wandb_dir = run_dir / "wandb"
+        wandb_data_dir = wandb_dir / "data"
+        wandb_cache_dir = wandb_dir / "cache"
+        wandb_config_dir = wandb_dir / "config"
+        for directory in (wandb_dir, wandb_data_dir, wandb_cache_dir, wandb_config_dir):
+            directory.mkdir(parents=True, exist_ok=True)
+
+        # W&B otherwise stages artifacts and core logs under the user-local profile,
+        # which is frequently read-only on managed servers/containers.  Each run is
+        # an independent process, so run-local SDK state is parallel-safe and fully
+        # portable with the canonical output directory.
+        os.environ["WANDB_DATA_DIR"] = str(wandb_data_dir)
+        os.environ["WANDB_CACHE_DIR"] = str(wandb_cache_dir)
+        os.environ["WANDB_CONFIG_DIR"] = str(wandb_config_dir)
+        os.environ["WANDB_DIR"] = str(wandb_dir)
+
         try:
             import wandb
         except ImportError as exc:  # make the configuration error explicit
@@ -64,10 +82,6 @@ class WandBTracker(ExperimentTracker):
         mode = str(mode).lower()
         if mode not in {"online", "offline", "disabled"}:
             raise ValueError(f"Unsupported W&B mode: {mode!r}")
-        run_dir = Path(run_dir)
-        wandb_dir = run_dir / "wandb"
-        wandb_dir.mkdir(parents=True, exist_ok=True)
-
         # W&B run IDs may not contain /\\#?%: . Generated FedTROS IDs already avoid these;
         # enforce the restriction here to fail before network use.
         forbidden = set("/\\#?%:")

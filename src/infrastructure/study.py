@@ -27,11 +27,15 @@ STAGE_PROFILES: dict[str, dict[str, Any]] = {
         "federated.num_clients": 2,
         "dataset.preprocessing.num_clients": 2,
         "dataset.preprocessing.smoke": True,
+        "dataset.preprocessing.smoke_min_samples_per_client": 1,
+        "dataset.preprocessing.smoke_max_samples_per_class": 512,
         "open_set.calibration.min_samples_per_class": 2,
         "open_set.prototype_rank.prototype.num_prototypes_per_class": 2,
         "open_set.prototype_rank.prototype.min_samples_per_prototype": 2,
         "open_set.prototype_rank.prototype.negative.num_prototypes": 4,
         "open_set.prototype_rank.prototype.negative.max_samples": 128,
+        "open_set.evaluate_each_round": True,
+        "open_set.evaluate_every_n_rounds": 1,
         "runtime.allow_cpu_fallback": True,
     },
     "development": {"federated.num_rounds": 5, "training.local_epochs": 1},
@@ -105,6 +109,7 @@ def get_paired_partition_path(
     known_labels: list[str] | None = None,
     unknown_labels: list[str] | None = None,
     stage: str | None = None,
+    partition_profile: str | None = None,
 ) -> Path:
     """Partition key shared across matched methods for one *scientific condition*.
 
@@ -180,7 +185,9 @@ def _known_for_unknown(study_cfg: dict[str, Any], unknowns: list[str]) -> list[s
 
 def expand_study_matrix(
     study_cfg: dict[str, Any], *, stage: str = "development",
-    seeds: list[int] | tuple[int, ...] | None = None, project_root: Path | None = None,
+    seeds: list[int] | tuple[int, ...] | None = None,
+    clients: list[int] | tuple[int, ...] | None = None,
+    project_root: Path | None = None,
 ) -> list[PlannedRun]:
     root = project_root or Path(".")
     study_id = str(study_cfg.get("study_id", "E0-VERIFY"))
@@ -192,7 +199,9 @@ def expand_study_matrix(
     unknown_by_dataset = {str(k).lower(): list(v) for k, v in (study_cfg.get("unknown_labels_by_dataset") or {}).items()}
     known_by_dataset = {str(k).lower(): list(v) for k, v in (study_cfg.get("known_labels_by_dataset") or {}).items()}
     seed_values = list(seeds) if seeds is not None else list(study_cfg.get("seeds", CANONICAL_SEEDS))
-    if stage == "smoke":
+    if clients is not None:
+        client_values = [int(v) for v in clients]
+    elif stage == "smoke":
         # Smoke validation is an engineering analogue, never the paper-scale client
         # matrix.  Studies may opt into several tiny client counts (E6); otherwise
         # the global smoke profile supplies the canonical two-client setting.
@@ -250,6 +259,20 @@ def expand_study_matrix(
             part = get_paired_partition_path(
                 root, dataset, alpha, int(seed), iid=iid, num_clients=clients,
                 known_labels=known, unknown_labels=unknowns, stage=stage,
+                partition_profile=(
+                    hashlib.sha256(
+                        json.dumps(
+                            {
+                                key: value
+                                for key, value in overrides.items()
+                                if key.startswith("dataset.preprocessing.smoke_")
+                            },
+                            sort_keys=True,
+                        ).encode("utf-8")
+                    ).hexdigest()[:8]
+                    if stage == "smoke"
+                    else None
+                ),
             )
             overrides["dataset.partition_file"] = part.as_posix()
             run_id, human_name, config_hash = generate_run_id(overrides, study_id=study_id)

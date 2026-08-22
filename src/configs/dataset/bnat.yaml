@@ -52,3 +52,5 @@ preprocessing:
   iid: false
   unknown_label_id: -1
   smoke: false
+  smoke_min_samples_per_client: 1
+  smoke_max_samples_per_class: 512

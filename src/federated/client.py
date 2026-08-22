@@ -278,6 +278,8 @@ class FlowerClient(fl.client.NumPyClient):
                         "raw_data_local_metrics": 1.0,
                     }
                 )
+                if bool(getattr(self.cfg.training, "evaluate_after_local_fit", False)):
+                    metrics.update(self._evaluate_local_student())
                 self._save_private_state(round_index)
                 num_examples = int(self.local_data_profile["local_num_examples"])
                 return student_after_train, num_examples, self._sanitize_server_metrics(metrics)
@@ -305,6 +307,8 @@ class FlowerClient(fl.client.NumPyClient):
                 is_fedtros=False,
                 logger=self.logger,
             )
+            if bool(getattr(self.cfg.training, "evaluate_after_local_fit", False)):
+                metrics.update(self._evaluate_local_student())
             updated_params = self.agent.get_student_parameters()
             num_examples = int(self.local_data_profile["local_num_examples"])
             return updated_params, num_examples, metrics
@@ -466,3 +470,36 @@ class FlowerClient(fl.client.NumPyClient):
                 "raw_data_local_metrics": 1.0,
             },
         )
+
+    def _evaluate_local_student(self) -> dict[str, float]:
+        """Measure the locally trained student on its client-local data."""
+        dataset = TensorDataset(self.features.detach().cpu(), self.labels.detach().cpu())
+        loader = DataLoader(
+            dataset,
+            batch_size=int(self.cfg.training.batch_size),
+            shuffle=False,
+            drop_last=False,
+        )
+        was_training = self.agent.student_model.training
+        self.agent.student_model.eval()
+        all_true: list[int] = []
+        all_pred: list[int] = []
+        with torch.no_grad():
+            for features, labels in loader:
+                features = features.to(self.device)
+                labels = labels.to(self.device)
+                _, logits = self.agent.student_model(features)
+                all_true.extend(labels.cpu().numpy().tolist())
+                all_pred.extend(logits.argmax(dim=1).cpu().numpy().tolist())
+        self.agent.student_model.train(was_training)
+
+        y_true = np.asarray(all_true)
+        y_pred = np.asarray(all_pred)
+        if y_true.size == 0:
+            return {"local_student_accuracy": 0.0, "local_student_f1_macro": 0.0}
+        return {
+            "local_student_accuracy": float((y_true == y_pred).mean()),
+            "local_student_f1_macro": float(
+                f1_score(y_true, y_pred, average="macro", zero_division=0)
+            ),
+        }

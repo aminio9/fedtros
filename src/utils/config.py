@@ -140,6 +140,23 @@ def validate_config(cfg: DictConfig, extra_required: Iterable[str] = ()) -> None
             "dataset.preprocessing.num_clients must match federated.num_clients. "
             "Override federated.num_clients to change both values."
         )
+    strategy_name = _select_str(cfg, "federated.strategy.name").lower()
+    aggregation_strategy = _select_str(
+        cfg, "federated.strategy.aggregation_strategy"
+    ).lower()
+    if strategy_name == "fedprox":
+        proximal_mu = float(
+            OmegaConf.select(cfg, "federated.server.proximal_mu", default=0.0)
+        )
+        if proximal_mu <= 0.0:
+            raise ValueError(
+                "FedProx requires federated.server.proximal_mu > 0; "
+                "a zero value is equivalent to FedAvg."
+            )
+        if aggregation_strategy != "fedprox":
+            raise ValueError(
+                "FedProx requires federated.strategy.aggregation_strategy=fedprox."
+            )
     _validate_external_experiment_contract(cfg)
     _validate_experiment_contract(cfg)
 

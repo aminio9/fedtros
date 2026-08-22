@@ -1,6 +1,4 @@
 defaults:
-  - stage: development
-  - method: fedtros_pr
   - dataset: bnat
   - model: fedtros
   - optimizer: adam
@@ -16,6 +14,11 @@ defaults:
   - output: local
   - sweep: none
   - experiment: baseline
+  # Global method and stage configs intentionally come after their base groups.
+  # Otherwise later defaults overwrite method-specific strategy/training values
+  # (for example FedProx's non-zero proximal coefficient).
+  - method: fedtros_pr
+  - stage: development
   - override hydra/job_logging: disabled
   - override hydra/hydra_logging: disabled
   - _self_
