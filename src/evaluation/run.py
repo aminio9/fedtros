@@ -6,12 +6,13 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
 import torch
 from omegaconf import DictConfig, OmegaConf
 
 if TYPE_CHECKING:
     from src.models.bundle import FedTROSModelBundle as Agent
-from src.artifacts.embeddings import export_latent_embeddings
+from src.artifacts.embeddings import export_latent_embeddings, export_prototype_rank_projection
 from src.checkpointing.checkpoints import load_agent_checkpoint
 from src.data.io import load_tensor_dataset
 from src.evaluation.closed_set import evaluate_closed_set, load_class_names
@@ -276,6 +277,28 @@ def run_prototype_rank_evaluation(
         logger_=logger,
         report_to_stdout=bool(cfg.evaluation.report_to_stdout),
     )
+
+    if bool(getattr(cfg.evaluation, "export_latent_embeddings", True)):
+        scores_path = output_dir / "predictions" / "open_set_scores.csv"
+        if not scores_path.exists():
+            scores_path = output_dir / "open_set_scores.csv"
+        if not scores_path.exists():
+            raise FileNotFoundError(
+                "Prototype-Rank evaluation did not write open_set_scores.csv required for "
+                "the latent projection artifact."
+            )
+        export_prototype_rank_projection(
+            model=agent.student_model,
+            features=open_features,
+            labels=open_labels,
+            class_names=class_names,
+            prototype_bank=prototype_bank,
+            scores=pd.read_csv(scores_path),
+            output_path=output_dir / "artifacts" / "prototype_rank_latent_projection.csv",
+            batch_size=int(cfg.evaluation.latent_embeddings_batch_size),
+            max_points=int(cfg.evaluation.latent_embeddings_max_points),
+            feature_source=feature_source,
+        )
 
     if server_round is not None:
         metrics["server_round"] = int(server_round)

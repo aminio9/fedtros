@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
 from omegaconf import OmegaConf
 
 from src.artifacts.communication import build_communication_metrics
-from src.artifacts.embeddings import export_latent_embeddings
+from src.artifacts.embeddings import export_latent_embeddings, export_prototype_rank_projection
 from src.artifacts.suite import build_suite_artifacts
 from src.evaluation.compare import compare_runs
 
@@ -173,6 +175,34 @@ def test_export_latent_embeddings_writes_projection_csv(tmp_path):
     assert frame["label"].tolist() == ["Normal", "DoS", "Unknown"]
     assert frame["x"].tolist() == [1.0, 4.0, 7.0]
     assert frame["y"].tolist() == [2.0, 5.0, 8.0]
+
+
+def test_export_prototype_rank_projection_joins_samples_and_prototypes(tmp_path):
+    output_path = tmp_path / "prototype_rank_latent_projection.csv"
+    bank = SimpleNamespace(
+        prototypes={0: np.array([[1.0, 2.0]]), 1: np.array([[4.0, 5.0]])},
+        negative_prototypes=np.array([[2.5, 3.5]]),
+    )
+    scores = pd.DataFrame({"sample_id": [0, 1, 2], "final_reject": [0, 0, 1]})
+    frame = export_prototype_rank_projection(
+        model=SelectFirstTwo(),
+        features=torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]),
+        labels=torch.tensor([0, 1, -1]),
+        class_names={0: "Normal", 1: "DoS"},
+        prototype_bank=bank,
+        scores=scores,
+        output_path=output_path,
+        batch_size=2,
+        max_points=10,
+    )
+
+    assert output_path.exists()
+    assert output_path.with_suffix(".json").exists()
+    assert set(frame["point_type"]) == {"sample", "positive_prototype", "negative_prototype"}
+    samples = frame[frame["point_type"] == "sample"]
+    assert samples["sample_id"].astype(int).tolist() == [0, 1, 2]
+    assert samples["final_reject"].tolist() == [0, 0, 1]
+    assert samples["is_unknown"].tolist() == [0, 0, 1]
 
 
 def test_build_communication_metrics_uses_logical_rounds(tmp_path):

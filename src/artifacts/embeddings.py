@@ -121,3 +121,147 @@ def export_latent_embeddings(
     )
     logger.info("Saved latent embeddings to %s (%d rows)", output_path, len(frame))
     return frame
+
+
+def export_prototype_rank_projection(
+    *,
+    model: torch.nn.Module,
+    features: torch.Tensor,
+    labels: torch.Tensor,
+    class_names: dict[int, str],
+    prototype_bank: Any,
+    scores: pd.DataFrame,
+    output_path: Path,
+    batch_size: int,
+    max_points: int = 5000,
+    feature_source: str = "student_embedding",
+) -> pd.DataFrame:
+    """Export samples and fitted prototypes in one deterministic 2D projection.
+
+    This is a scientific data artifact consumed by the existing plot renderer.  PCA
+    is fitted jointly to the sampled evaluation representations and the exact
+    positive/boundary prototypes, so every plotted point shares one coordinate
+    system.  Rejection decisions are joined by the stable sample IDs written by the
+    Prototype-Rank evaluator.
+    """
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    dataset = TensorDataset(features.float(), labels.long())
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    device = _module_device(model)
+    latent_batches: list[np.ndarray] = []
+    label_batches: list[np.ndarray] = []
+
+    use_osr = str(feature_source).lower() in {"osr_mu", "osr_embedding", "student_osr", "osr"}
+    with torch.no_grad():
+        model.eval()
+        for batch_features, batch_labels in loader:
+            batch_features = batch_features.to(device)
+            out = model(batch_features)
+            if not isinstance(out, (tuple, list)) or len(out) < 2:
+                raise ValueError("Prototype-Rank projection requires model(features) -> (embedding, logits).")
+            embedding, logits = out[0], out[1]
+            if use_osr:
+                if not hasattr(model, "osr_score"):
+                    raise ValueError("feature_source=osr_mu requires a student model with osr_score().")
+                condition = torch.argmax(logits, dim=1)
+                embedding = model.osr_score(
+                    batch_features,
+                    condition,
+                    detach_features=True,
+                )["mu"]
+            latent_batches.append(embedding.detach().cpu().numpy())
+            label_batches.append(batch_labels.cpu().numpy())
+
+    latent = np.concatenate(latent_batches, axis=0) if latent_batches else np.empty((0, 2))
+    latent_labels = np.concatenate(label_batches, axis=0) if label_batches else np.empty((0,), int)
+    sample_ids = np.arange(len(latent), dtype=int)
+    if max_points > 0 and len(latent) > max_points:
+        indices = np.linspace(0, len(latent) - 1, num=max_points, dtype=int)
+        latent = latent[indices]
+        latent_labels = latent_labels[indices]
+        sample_ids = sample_ids[indices]
+
+    positive_vectors: list[np.ndarray] = []
+    positive_labels: list[str] = []
+    for class_id, values in sorted(getattr(prototype_bank, "prototypes", {}).items()):
+        vectors = np.asarray(values, dtype=float)
+        if vectors.ndim == 1:
+            vectors = vectors.reshape(1, -1)
+        positive_vectors.extend(vectors)
+        positive_labels.extend([_label_name(int(class_id), class_names)] * len(vectors))
+    positive = np.asarray(positive_vectors, dtype=float)
+    if positive.size == 0:
+        positive = np.empty((0, latent.shape[1] if latent.ndim == 2 else 0))
+    negative = np.asarray(getattr(prototype_bank, "negative_prototypes", []), dtype=float)
+    if negative.ndim == 1 and negative.size:
+        negative = negative.reshape(1, -1)
+    if negative.size == 0:
+        negative = np.empty((0, latent.shape[1] if latent.ndim == 2 else 0))
+
+    combined = np.vstack([latent, positive, negative])
+    if combined.shape[1] == 1:
+        projected = np.column_stack([combined[:, 0], np.zeros(len(combined), dtype=float)])
+        projection_name = "identity_1d"
+    elif combined.shape[1] == 2:
+        projected = combined.astype(float)
+        projection_name = "identity_2d"
+    else:
+        projected = PCA(n_components=2, random_state=0).fit_transform(combined)
+        projection_name = "joint_pca"
+
+    n_samples = len(latent)
+    n_positive = len(positive)
+    sample_xy = projected[:n_samples]
+    positive_xy = projected[n_samples : n_samples + n_positive]
+    negative_xy = projected[n_samples + n_positive :]
+
+    score_index = scores.copy()
+    if "sample_id" not in score_index.columns:
+        score_index["sample_id"] = np.arange(len(score_index), dtype=int)
+    score_index = score_index.drop_duplicates("sample_id", keep="last").set_index("sample_id")
+    rejection = pd.to_numeric(
+        score_index.get("final_reject", pd.Series(dtype=float)), errors="coerce"
+    ).reindex(sample_ids).fillna(0).astype(int).to_numpy()
+
+    sample_frame = pd.DataFrame({
+        "x": sample_xy[:, 0],
+        "y": sample_xy[:, 1],
+        "point_type": "sample",
+        "label": [_label_name(int(label), class_names) for label in latent_labels],
+        "is_unknown": (latent_labels < 0).astype(int),
+        "final_reject": rejection,
+        "sample_id": sample_ids,
+    })
+    positive_frame = pd.DataFrame({
+        "x": positive_xy[:, 0],
+        "y": positive_xy[:, 1],
+        "point_type": "positive_prototype",
+        "label": positive_labels,
+        "is_unknown": 0,
+        "final_reject": 0,
+        "sample_id": pd.Series([pd.NA] * len(positive_xy), dtype="Int64"),
+    })
+    negative_frame = pd.DataFrame({
+        "x": negative_xy[:, 0],
+        "y": negative_xy[:, 1],
+        "point_type": "negative_prototype",
+        "label": "Boundary",
+        "is_unknown": 1,
+        "final_reject": 1,
+        "sample_id": pd.Series([pd.NA] * len(negative_xy), dtype="Int64"),
+    })
+    frame = pd.concat([sample_frame, positive_frame, negative_frame], ignore_index=True)
+    frame.to_csv(output_path, index=False)
+    output_path.with_suffix(".json").write_text(
+        json.dumps({
+            "feature_source": str(feature_source),
+            "projection": projection_name,
+            "saved_samples": int(n_samples),
+            "positive_prototypes": int(n_positive),
+            "negative_prototypes": int(len(negative)),
+            "max_points": int(max_points),
+        }, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    logger.info("Saved Prototype-Rank latent projection to %s (%d rows)", output_path, len(frame))
+    return frame
