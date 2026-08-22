@@ -1,7 +1,0 @@
-run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,round,communication/downlink_bytes,communication/round_bytes,communication/uplink_bytes,communication/cumulative_bytes
-e6scale_bnat_fedtros_pr_a0p5_fotunk_c2_s42_e3cfd2,E6-SCALE,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,1,1451040.0,2902080.0,1451040.0,2902080.0
-e6scale_bnat_fedtros_pr_a0p5_fotunk_c2_s42_e3cfd2,E6-SCALE,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,2,1451040.0,2902080.0,1451040.0,5804160.0
-e6scale_bnat_fedtros_pr_a0p5_fotunk_c3_s42_c3adae,E6-SCALE,FedTROS-PR,B-NAT,0.5,42,3,canonical,FoT,1,2176560.0,4353120.0,2176560.0,4353120.0
-e6scale_bnat_fedtros_pr_a0p5_fotunk_c3_s42_c3adae,E6-SCALE,FedTROS-PR,B-NAT,0.5,42,3,canonical,FoT,2,2176560.0,4353120.0,2176560.0,8706240.0
-e6scale_bnat_fedtros_pr_a0p5_fotunk_c4_s42_199059,E6-SCALE,FedTROS-PR,B-NAT,0.5,42,4,canonical,FoT,1,2902080.0,5804160.0,2902080.0,5804160.0
-e6scale_bnat_fedtros_pr_a0p5_fotunk_c4_s42_199059,E6-SCALE,FedTROS-PR,B-NAT,0.5,42,4,canonical,FoT,2,2902080.0,5804160.0,2902080.0,11608320.0

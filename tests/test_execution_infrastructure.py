@@ -50,7 +50,7 @@ from src.infrastructure.tracking import (
 )
 from src.models.bundle import FedTROSModelBundle
 from src.models.student import StudentIDSModel
-from src.models.variational_classifier_teacher import VariationalClassifierTeacher
+from src.models.variational_teacher import VariationalClassifierTeacher
 
 
 @pytest.fixture

@@ -1,9 +1,0 @@
-run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,client_id,Normal,BP,DoS,MitM,OaU,FoT,FDV,BENIGN,DDoS,DoS GoldenEye,DoS Hulk,DoS Slowhttptest,DoS slowloris,FTP-Patator,PortScan,SSH-Patator,normal,backdoor,ddos,dos,injection,password,scanning
-e5dataset_bnat_fedtros_pr_a0p5_fotunk_c2_s42_d367ed,E5-DATASET,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,1,63.0,0.0,68.0,62.0,,,,,,,,,,,,,,,,,,,
-e5dataset_bnat_fedtros_pr_a0p5_fotunk_c2_s42_d367ed,E5-DATASET,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,2,6.0,69.0,1.0,7.0,,,,,,,,,,,,,,,,,,,
-e5dataset_btat_fedtros_pr_a0p5_2unk_c2_s42_c0e96c,E5-DATASET,FedTROS-PR,B-TAT,0.5,42,2,canonical,Re|DeC,1,6.0,,0.0,,13.0,1.0,15.0,,,,,,,,,,,,,,,,
-e5dataset_btat_fedtros_pr_a0p5_2unk_c2_s42_c0e96c,E5-DATASET,FedTROS-PR,B-TAT,0.5,42,2,canonical,Re|DeC,2,61.0,,68.0,,54.0,66.0,52.0,,,,,,,,,,,,,,,,
-e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,1,,,,,,,,6.0,0.0,13.0,1.0,15.0,4.0,40.0,55.0,60.0,,,,,,,
-e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,2,,,,,,,,61.0,68.0,54.0,66.0,52.0,63.0,27.0,12.0,7.0,,,,,,,
-e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032,E5-DATASET,FedTROS-PR,ToN-IoT,0.5,42,2,canonical,mitm|ransomware|xss,1,,,,,,,,,,,,,,,,,6.0,0.0,13.0,1.0,15.0,4.0,40.0
-e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032,E5-DATASET,FedTROS-PR,ToN-IoT,0.5,42,2,canonical,mitm|ransomware|xss,2,,,,,,,,,,,,,,,,,61.0,67.0,54.0,66.0,52.0,63.0,27.0

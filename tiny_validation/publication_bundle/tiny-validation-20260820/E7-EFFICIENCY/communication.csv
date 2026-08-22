@@ -1,7 +1,0 @@
-run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,round,communication/downlink_bytes,communication/round_bytes,communication/uplink_bytes,communication/cumulative_bytes
-e7efficiency_bnat_fedavg_a0p5_fotunk_c2_s42_70a246,E7-EFFICIENCY,FedAvg-Student,B-NAT,0.5,42,2,canonical,FoT,1,1451040.0,2902080.0,1451040.0,2902080.0
-e7efficiency_bnat_fedavg_a0p5_fotunk_c2_s42_70a246,E7-EFFICIENCY,FedAvg-Student,B-NAT,0.5,42,2,canonical,FoT,2,1451040.0,2902080.0,1451040.0,5804160.0
-e7efficiency_bnat_fedprox_a0p5_fotunk_c2_s42_0811ac,E7-EFFICIENCY,FedProx-Student,B-NAT,0.5,42,2,canonical,FoT,1,1451040.0,2902080.0,1451040.0,2902080.0
-e7efficiency_bnat_fedprox_a0p5_fotunk_c2_s42_0811ac,E7-EFFICIENCY,FedProx-Student,B-NAT,0.5,42,2,canonical,FoT,2,1451040.0,2902080.0,1451040.0,5804160.0
-e7efficiency_bnat_fedtros_pr_a0p5_fotunk_c2_s42_df3cf8,E7-EFFICIENCY,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,1,1451040.0,2902080.0,1451040.0,2902080.0
-e7efficiency_bnat_fedtros_pr_a0p5_fotunk_c2_s42_df3cf8,E7-EFFICIENCY,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,2,1451040.0,2902080.0,1451040.0,5804160.0

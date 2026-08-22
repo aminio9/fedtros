@@ -1,9 +1,0 @@
-run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,round,communication/downlink_bytes,communication/round_bytes,communication/uplink_bytes,communication/cumulative_bytes
-e5dataset_bnat_fedtros_pr_a0p5_fotunk_c2_s42_d367ed,E5-DATASET,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,1,1451040.0,2902080.0,1451040.0,2902080.0
-e5dataset_bnat_fedtros_pr_a0p5_fotunk_c2_s42_d367ed,E5-DATASET,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,2,1451040.0,2902080.0,1451040.0,5804160.0
-e5dataset_btat_fedtros_pr_a0p5_2unk_c2_s42_c0e96c,E5-DATASET,FedTROS-PR,B-TAT,0.5,42,2,canonical,Re|DeC,1,2414632.0,4829264.0,2414632.0,4829264.0
-e5dataset_btat_fedtros_pr_a0p5_2unk_c2_s42_c0e96c,E5-DATASET,FedTROS-PR,B-TAT,0.5,42,2,canonical,Re|DeC,2,2414632.0,4829264.0,2414632.0,9658528.0
-e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,1,1661000.0,3322000.0,1661000.0,3322000.0
-e5dataset_cicids2017_fedtros_pr_a0p5_6unk_c2_s42_c16bb9,E5-DATASET,FedTROS-PR,CIC-IDS2017,0.5,42,2,canonical,Bot|Heartbleed|Infiltration|Web Attack-Brute Force|Web Attack-Sql Injection|Web Attack-XSS,2,1661000.0,3322000.0,1661000.0,6644000.0
-e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032,E5-DATASET,FedTROS-PR,ToN-IoT,0.5,42,2,canonical,mitm|ransomware|xss,1,1646648.0,3293296.0,1646648.0,3293296.0
-e5dataset_toniot_fedtros_pr_a0p5_3unk_c2_s42_569032,E5-DATASET,FedTROS-PR,ToN-IoT,0.5,42,2,canonical,mitm|ransomware|xss,2,1646648.0,3293296.0,1646648.0,6586592.0

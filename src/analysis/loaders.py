@@ -226,11 +226,32 @@ def is_run_completed(run_dir: Path) -> bool:
     return str(_manifest(run_dir).get("status", "")).upper()=="COMPLETED"
 
 
+def _infer_study_from_name(name: str) -> str:
+    low = name.lower()
+    if low.startswith("e0"): return "E0-VERIFY"
+    if low.startswith("e1"): return "E1-IID-CS"
+    if low.startswith("e2"): return "E2-IID-OSR"
+    if low.startswith("e3"): return "E3-NIID-CS"
+    if low.startswith("e4"): return "E4-NIID-FOSR"
+    if low.startswith("e5"): return "E5-DATASET"
+    if low.startswith("e6"): return "E6-SCALE"
+    if low.startswith("e7"): return "E7-EFFICIENCY"
+    if low.startswith("e8"): return "E8-LOAO"
+    if low.startswith("a1"): return "A1-TEACHER"
+    if low.startswith("a2"): return "A2-ANCHOR"
+    if low.startswith("a3"): return "A3-TRANSFER"
+    if low.startswith("a4"): return "A4-PR"
+    if low.startswith("a5"): return "A5-FEATURE"
+    if low.startswith("s1"): return "S1-SENSITIVITY"
+    return "unknown"
+
+
 def load_run(run_dir: str|Path) -> RunRecord:
     p=Path(run_dir).resolve()
     if not p.is_dir(): raise FileNotFoundError(p)
     manifest=_manifest(p); config=_cfg(p); metrics=_metrics(p)
-    study=str(manifest.get("study_id") or manifest.get("study") or _sel(config,"experiment.id","unknown"))
+    study_raw = manifest.get("study_id") or manifest.get("study") or _sel(config,"experiment.id",None)
+    study = str(study_raw) if study_raw not in (None, "None", "unknown", "") else _infer_study_from_name(p.name)
     stage=str(manifest.get("stage") or _sel(config,"stage","unknown"))
     method=_normalize_method(str(manifest.get("method") or _sel(config,"experiment.method",_sel(config,"federated.strategy.name","unknown"))))
     dataset=str(manifest.get("dataset") or _sel(config,"dataset.name","unknown"))
@@ -240,6 +261,8 @@ def load_run(run_dir: str|Path) -> RunRecord:
     clients=int(manifest.get("num_clients", _sel(config,"federated.num_clients",0)) or 0)
     unknown=list(manifest.get("unknown_labels") or manifest.get("held_out_unknown") or _sel(config,"dataset.preprocessing.unknown_labels",[]) or [])
     status=str(manifest.get("status", "COMPLETED" if (p/"result_manifest.json").exists() else "INCOMPLETE")).upper()
+    variant_raw = manifest.get("variant") or _sel(config,"experiment.variant",None)
+    variant = str(variant_raw) if variant_raw not in (None, "None", "") else "canonical"
     return RunRecord(
         run_id=str(manifest.get("run_id") or p.name), run_dir=p, metadata=manifest, config=config,
         study=study, stage=stage, method=method, dataset=dataset, alpha=alpha, iid=iid,
@@ -248,5 +271,5 @@ def load_run(run_dir: str|Path) -> RunRecord:
         split_hash=str(manifest.get("split_hash", manifest.get("dataset_split_hash", ""))),
         git_commit=str(manifest.get("git_commit", manifest.get("code_commit", ""))),
         timestamp_utc=str(manifest.get("started_at", manifest.get("created_at", ""))),
-        variant=str(manifest.get("variant") or _sel(config,"experiment.variant","canonical")),
+        variant=variant,
     )

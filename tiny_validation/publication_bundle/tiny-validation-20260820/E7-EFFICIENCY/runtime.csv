@@ -1,7 +1,0 @@
-run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,round,runtime/client_fit_seconds,runtime/student_seconds,runtime/teacher_seconds,runtime/aggregation_seconds,runtime/round_seconds,runtime/open_set_eval_seconds,runtime/orchestration_seconds,runtime/cumulative_seconds
-e7efficiency_bnat_fedavg_a0p5_fotunk_c2_s42_70a246,E7-EFFICIENCY,FedAvg-Student,B-NAT,0.5,42,2,canonical,FoT,1,0.1761784999980591,0.1396650000096997,0.0,0.0,0.0,0.0,0.0,0.0
-e7efficiency_bnat_fedavg_a0p5_fotunk_c2_s42_70a246,E7-EFFICIENCY,FedAvg-Student,B-NAT,0.5,42,2,canonical,FoT,2,0.2334358999942196,0.2056490999966627,0.0,0.0,0.0,0.0,0.0,0.0
-e7efficiency_bnat_fedprox_a0p5_fotunk_c2_s42_0811ac,E7-EFFICIENCY,FedProx-Student,B-NAT,0.5,42,2,canonical,FoT,1,0.184357899997849,0.1460925999999744,0.0,0.0,0.0,0.0,0.0,0.0
-e7efficiency_bnat_fedprox_a0p5_fotunk_c2_s42_0811ac,E7-EFFICIENCY,FedProx-Student,B-NAT,0.5,42,2,canonical,FoT,2,0.2167955999902915,0.179581499993219,0.0,0.0,0.0,0.0,0.0,0.0
-e7efficiency_bnat_fedtros_pr_a0p5_fotunk_c2_s42_df3cf8,E7-EFFICIENCY,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,1,1.3291262999991886,0.3763037000026088,0.8304186000023037,0.0702984999952605,1.407050599998911,0.0,0.0076258000044617,1.407050599998911
-e7efficiency_bnat_fedtros_pr_a0p5_fotunk_c2_s42_df3cf8,E7-EFFICIENCY,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,2,1.1854888999951072,0.505207900001551,0.5704203000059351,0.0625198000052478,1.254517500012298,0.0,0.006508800011943,2.661568100011209

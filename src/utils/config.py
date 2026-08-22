@@ -250,6 +250,8 @@ def _validate_experiment_contract(cfg: DictConfig) -> None:
     pipeline = str(OmegaConf.select(cfg, "experiment.pipeline", default="full")).lower()
     valid_pipelines = {
         "full",
+        "all",
+        "smoke",
         "reproduce",
         "centralized",
         "federated",

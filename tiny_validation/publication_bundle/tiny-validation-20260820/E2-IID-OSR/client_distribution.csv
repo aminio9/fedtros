@@ -1,3 +1,0 @@
-run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,client_id,Normal,BP,DoS,MitM
-e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f,E2-IID-OSR,FedTROS-PR,B-NAT,1.0,42,2,canonical,FoT,1,32,36,35,35
-e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f,E2-IID-OSR,FedTROS-PR,B-NAT,1.0,42,2,canonical,FoT,2,37,33,34,34

@@ -2,7 +2,7 @@ import _bootstrap  # noqa: F401
 import hydra
 from omegaconf import DictConfig
 
-from src.training import run_smoke_test
+from src.training.smoke import run_smoke_test
 from src.utils.entrypoints import prepare_run_context
 
 

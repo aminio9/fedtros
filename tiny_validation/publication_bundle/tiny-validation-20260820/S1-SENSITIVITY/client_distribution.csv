@@ -1,5 +1,0 @@
-run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,client_id,Normal,BP,DoS,MitM
-s1sensitivity_bnat_fedtros_pr_a0p5_fotunk_c2_s42_beta0_7f27bb,S1-SENSITIVITY,FedTROS-PR,B-NAT,0.5,42,2,beta0,FoT,1,63,0,68,62
-s1sensitivity_bnat_fedtros_pr_a0p5_fotunk_c2_s42_beta0_7f27bb,S1-SENSITIVITY,FedTROS-PR,B-NAT,0.5,42,2,beta0,FoT,2,6,69,1,7
-s1sensitivity_bnat_fedtros_pr_a0p5_fotunk_c2_s42_beta_canonical_2d6b34,S1-SENSITIVITY,FedTROS-PR,B-NAT,0.5,42,2,beta_canonical,FoT,1,63,0,68,62
-s1sensitivity_bnat_fedtros_pr_a0p5_fotunk_c2_s42_beta_canonical_2d6b34,S1-SENSITIVITY,FedTROS-PR,B-NAT,0.5,42,2,beta_canonical,FoT,2,6,69,1,7

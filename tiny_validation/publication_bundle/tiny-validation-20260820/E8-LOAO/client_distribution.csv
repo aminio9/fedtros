@@ -1,9 +1,0 @@
-run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,client_id,Normal,DoS,MitM,FoT,BP
-e8loao_bnat_fedtros_pr_a0p5_bpunk_c2_s42_9e886d,E8-LOAO,FedTROS-PR,B-NAT,0.5,42,2,canonical,BP,1,63,0.0,68.0,62.0,
-e8loao_bnat_fedtros_pr_a0p5_bpunk_c2_s42_9e886d,E8-LOAO,FedTROS-PR,B-NAT,0.5,42,2,canonical,BP,2,6,69.0,1.0,7.0,
-e8loao_bnat_fedtros_pr_a0p5_dosunk_c2_s42_9c8a83,E8-LOAO,FedTROS-PR,B-NAT,0.5,42,2,canonical,DoS,1,63,,68.0,62.0,0.0
-e8loao_bnat_fedtros_pr_a0p5_dosunk_c2_s42_9c8a83,E8-LOAO,FedTROS-PR,B-NAT,0.5,42,2,canonical,DoS,2,6,,1.0,7.0,69.0
-e8loao_bnat_fedtros_pr_a0p5_fotunk_c2_s42_de0bde,E8-LOAO,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,1,63,68.0,62.0,,0.0
-e8loao_bnat_fedtros_pr_a0p5_fotunk_c2_s42_de0bde,E8-LOAO,FedTROS-PR,B-NAT,0.5,42,2,canonical,FoT,2,6,1.0,7.0,,69.0
-e8loao_bnat_fedtros_pr_a0p5_mitmunk_c2_s42_5b3571,E8-LOAO,FedTROS-PR,B-NAT,0.5,42,2,canonical,MitM,1,63,68.0,,62.0,0.0
-e8loao_bnat_fedtros_pr_a0p5_mitmunk_c2_s42_5b3571,E8-LOAO,FedTROS-PR,B-NAT,0.5,42,2,canonical,MitM,2,6,1.0,,7.0,69.0

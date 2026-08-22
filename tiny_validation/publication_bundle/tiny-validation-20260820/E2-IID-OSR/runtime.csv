@@ -1,3 +1,0 @@
-run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,round,runtime/aggregation_seconds,runtime/client_fit_seconds,runtime/open_set_eval_seconds,runtime/round_seconds,runtime/student_seconds,runtime/teacher_seconds,runtime/orchestration_seconds,runtime/cumulative_seconds
-e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f,E2-IID-OSR,FedTROS-PR,B-NAT,1.0,42,2,canonical,FoT,1,0.0564909999957308,0.8981046999979299,0.0,0.9610347999987424,0.353639100008877,0.4231431999942288,0.0064391000050818,0.9610347999987424
-e2iidosr_bnat_fedtros_pr_iid_fotunk_c2_s42_af6e1f,E2-IID-OSR,FedTROS-PR,B-NAT,1.0,42,2,canonical,FoT,2,0.0607218999939505,0.9986983999988296,0.0,1.0692236999893794,0.4361767000082182,0.444124899993767,0.0098033999965991,2.030258499988122

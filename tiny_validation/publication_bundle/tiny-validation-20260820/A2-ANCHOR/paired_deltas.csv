@@ -1,7 +1,0 @@
-study,method,dataset,alpha,num_clients,unknown_labels,variant,reference_variant,metric,delta_mean,delta_sd,delta_ci95_low,delta_ci95_high,n_pairs
-A2-ANCHOR,FedTROS-PR,B-NAT,0.5,2,FoT,fixed_anchor,adaptive_anchor,open_set/auroc,-0.01663961038961037,0.0,-0.01663961038961037,-0.01663961038961037,1
-A2-ANCHOR,FedTROS-PR,B-NAT,0.5,2,FoT,fixed_anchor,adaptive_anchor,open_set/unknown_f1,-0.002917683072655164,0.0,-0.002917683072655164,-0.002917683072655164,1
-A2-ANCHOR,FedTROS-PR,B-NAT,0.5,2,FoT,fixed_anchor,adaptive_anchor,open_set/known_false_unknown_rate,0.038961038961038974,0.0,0.038961038961038974,0.038961038961038974,1
-A2-ANCHOR,FedTROS-PR,B-NAT,0.5,2,FoT,no_anchor,adaptive_anchor,open_set/auroc,-0.021306818181818232,0.0,-0.021306818181818232,-0.021306818181818232,1
-A2-ANCHOR,FedTROS-PR,B-NAT,0.5,2,FoT,no_anchor,adaptive_anchor,open_set/unknown_f1,-0.0021317921265811,0.0,-0.0021317921265811,-0.0021317921265811,1
-A2-ANCHOR,FedTROS-PR,B-NAT,0.5,2,FoT,no_anchor,adaptive_anchor,open_set/known_false_unknown_rate,0.05194805194805194,0.0,0.05194805194805194,0.05194805194805194,1

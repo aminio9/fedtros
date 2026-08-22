@@ -1,7 +1,0 @@
-run_id,study,method,dataset,alpha,seed,num_clients,variant,unknown_labels,client_id,Normal,BP,DoS,MitM
-a2anchor_bnat_fedtros_pr_a0p5_fotunk_c2_s42_adaptive_anchor_22ae9d,A2-ANCHOR,FedTROS-PR,B-NAT,0.5,42,2,adaptive_anchor,FoT,1,63,0,68,62
-a2anchor_bnat_fedtros_pr_a0p5_fotunk_c2_s42_adaptive_anchor_22ae9d,A2-ANCHOR,FedTROS-PR,B-NAT,0.5,42,2,adaptive_anchor,FoT,2,6,69,1,7
-a2anchor_bnat_fedtros_pr_a0p5_fotunk_c2_s42_fixed_anchor_84962e,A2-ANCHOR,FedTROS-PR,B-NAT,0.5,42,2,fixed_anchor,FoT,1,63,0,68,62
-a2anchor_bnat_fedtros_pr_a0p5_fotunk_c2_s42_fixed_anchor_84962e,A2-ANCHOR,FedTROS-PR,B-NAT,0.5,42,2,fixed_anchor,FoT,2,6,69,1,7
-a2anchor_bnat_fedtros_pr_a0p5_fotunk_c2_s42_no_anchor_3f2353,A2-ANCHOR,FedTROS-PR,B-NAT,0.5,42,2,no_anchor,FoT,1,63,0,68,62
-a2anchor_bnat_fedtros_pr_a0p5_fotunk_c2_s42_no_anchor_3f2353,A2-ANCHOR,FedTROS-PR,B-NAT,0.5,42,2,no_anchor,FoT,2,6,69,1,7
