@@ -149,33 +149,36 @@ poetry run python scripts/build_q1_results.py \
 
 This computes non-visual statistics and tables. It does **not** render figures.
 
-## Export the plots-repository bundle
+## Export data for the existing plots repository
 
-After the final freeze:
+After the final freeze, export the exact CSV/JSON contract used by the established
+29-figure renderer:
 
 ```bash
-poetry run python scripts/export_publication_bundle.py \
-  --outputs-dir outputs \
-  --target-root publication_exports \
-  --freeze-id fedtros-pr-vct-paper-final-01 \
-  --include-stages paper_final ablation reproduction
+poetry run python scripts/export_plot_data.py \
+  --runs-dir outputs \
+  --stage paper_final ablation reproduction \
+  --output-dir ../plots/outputs/paper_data
 ```
+
+It is strict by default and reports missing experiment cells/artifacts instead of
+silently exporting a partial publication dataset.
 
 Then, in the separate plots repository:
 
 ```bash
 cd ../plots
 python scripts/generate_all.py \
-  --bundle ../fedtros/publication_exports/fedtros-pr-vct-paper-final-01 \
-  --output-dir outputs/figures \
-  --strict
+  --data-dir outputs/paper_data \
+  --figures-dir outputs/figures \
+  --tables-dir outputs/tables
 
 python scripts/verify_outputs.py \
-  --bundle ../fedtros/publication_exports/fedtros-pr-vct-paper-final-01 \
   --figures-dir outputs/figures
 ```
 
-The plots repository validates bundle schema/checksums before rendering.
+`scripts/export_publication_bundle.py` remains available for the optional compact
+bundle consumer, but it does not replace the existing 29-figure plotting workflow.
 
 ## W&B modes
 
