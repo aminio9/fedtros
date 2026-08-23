@@ -1,10 +1,6 @@
 # Stage: paper_final
 stage: paper_final
 federated.num_rounds: 100
-training.local_epochs: 1
+training.local_epochs: 2
 seeds:
-  - 17
   - 42
-  - 73
-  - 101
-  - 137
