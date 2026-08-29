@@ -258,7 +258,8 @@ class FlowerClient(fl.client.NumPyClient):
 
                 # Train Student OSR Branch if enabled
                 prototype_rank_cfg = getattr(getattr(self.cfg, "open_set", None), "prototype_rank", None)
-                if prototype_rank_cfg is not None and bool(getattr(prototype_rank_cfg, "enabled", False)):
+                canonical = bool(OmegaConf.select(self.cfg, "method.canonical", default=False))
+                if not canonical and prototype_rank_cfg is not None and bool(getattr(prototype_rank_cfg, "enabled", False)):
                     try:
                         osr_metrics = self.agent.train_student_osr_on_dataset(
                             self.features, self.labels, prototype_rank_cfg, logger=self.logger
@@ -318,7 +319,9 @@ class FlowerClient(fl.client.NumPyClient):
     _SERVER_LOCAL_ONLY_METRIC_KEYS = {
         "label_histogram",
         "class_entropy",
+        "unnormalized_entropy",
         "label_coverage",
+        "kappa_i",
         "missing_classes",
         "present_classes",
         "imbalance_ratio",
@@ -344,13 +347,17 @@ class FlowerClient(fl.client.NumPyClient):
             if num_classes > 1 and nonzero.numel() > 0
             else 0.0
         )
+        unnorm_entropy = float((-(nonzero * torch.log(nonzero))).sum().item()) if nonzero.numel() > 0 else 0.0
+        kappa_i = float(np.exp(unnorm_entropy) / max(num_classes, 1))
         coverage = float((counts > 0).sum().item() / max(num_classes, 1))
         missing = [int(i) for i in range(num_classes) if int(counts[i].item()) == 0]
         present = [int(i) for i in range(num_classes) if int(counts[i].item()) > 0]
         return {
             "local_num_examples": float(total),
             "class_entropy": entropy,
+            "unnormalized_entropy": unnorm_entropy,
             "label_coverage": coverage,
+            "kappa_i": kappa_i,
             "missing_classes": json.dumps(missing),
             "present_classes": json.dumps(present),
             "label_histogram": json.dumps(

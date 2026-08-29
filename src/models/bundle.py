@@ -314,6 +314,7 @@ class FedTROSModelBundle:
         *,
         class_weights: torch.Tensor | None = None,
         present_classes: torch.Tensor | None = None,
+        kappa_i: float | None = None,
         round_num: int = 0,
         label_smoothing: float = 0.02,
         proximal_mu: float = 0.0,
@@ -352,7 +353,11 @@ class FedTROSModelBundle:
         anchor_loss = torch.zeros((), device=self.device)
         anchor_weight = 0.0
         class_coverage = 1.0
-        if present_classes is not None:
+        
+        canonical = bool(getattr(self.train_cfg, "canonical", False))
+        if canonical and kappa_i is not None:
+            class_coverage = float(kappa_i)
+        elif present_classes is not None:
             present_mask = present_classes.to(self.device).bool().view(-1)[: self.num_classes]
             class_coverage = float(present_mask.float().mean().detach().item()) if present_mask.numel() else 1.0
 
@@ -520,6 +525,16 @@ class FedTROSModelBundle:
 
         features = features.detach().float().to(dev)
         labels = labels.detach().long().view(-1).to(dev).clamp(0, self.num_classes - 1)
+        
+        counts = torch.bincount(labels, minlength=self.num_classes)[:self.num_classes]
+        total_samples = int(counts.sum().item())
+        if total_samples > 0:
+            probs = counts[counts > 0].float() / total_samples
+            unnorm_entropy = -(probs * torch.log(probs)).sum().item()
+            kappa_i = float(np.exp(unnorm_entropy) / max(self.num_classes, 1))
+        else:
+            kappa_i = 1.0 / max(self.num_classes, 1)
+
         dataset = TensorDataset(features, labels)
         if len(dataset) == 0:
             return {"dataset_train_steps": 0.0}
@@ -571,6 +586,7 @@ class FedTROSModelBundle:
                     by,
                     class_weights=class_weights,
                     present_classes=present_classes,
+                    kappa_i=kappa_i,
                     round_num=round_num,
                     label_smoothing=label_smoothing,
                     t2s_start_round=t2s_start,

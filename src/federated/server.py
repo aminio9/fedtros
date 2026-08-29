@@ -984,11 +984,16 @@ class FedTROSStrategy(FedAvg):
         self._append_csv_row(path, row)
 
     def _client_support_weight(self, record: dict[str, Any], *, max_examples: float) -> float:
-        """Canonical FedTROS-PR support weight: sqrt(n_i / max_j n_j), clipped."""
+        """Canonical FedTROS-PR support weight: n_i^gamma."""
         num_examples = max(float(record.get("num_examples", 0.0)), 0.0)
-        sample_factor = float(np.sqrt(num_examples / max(float(max_examples), 1.0)))
-        min_weight = float(OmegaConf.select(self.cfg, "strategy.support_min_weight", default=0.01))
-        return float(np.clip(sample_factor, min_weight, 1.0))
+        canonical = bool(OmegaConf.select(self.cfg, "method.canonical", default=False))
+        if canonical:
+            gamma = float(OmegaConf.select(self.cfg, "strategy.gamma", default=0.5))
+            return float(num_examples ** gamma)
+        else:
+            sample_factor = float(np.sqrt(num_examples / max(float(max_examples), 1.0)))
+            min_weight = float(OmegaConf.select(self.cfg, "strategy.support_min_weight", default=0.01))
+            return float(np.clip(sample_factor, min_weight, 1.0))
 
     def _save_student_checkpoint(
         self,

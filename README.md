@@ -1,13 +1,13 @@
-# FedTROS-PR
+# FedTROS-MC
 
-**FedTROS-PR — Federated Teacher-Regularized Open-Set Recognition with Prototype-Rank Rejection**
+**FedTROS-MC — Federated Teacher-Regularized Open-Set Recognition with Multicenter Conformal Rejection**
 
-This repository is the scientific training/evaluation side of a two-repository research workflow. The private teacher is a supervised **Variational Classifier Teacher (VCT)** and the final known/unknown decision is **Prototype-Rank Rejection (PR)**. Only student parameters are federated. The separate `plots` repository renders publication figures from a versioned publication bundle; it never imports FedTROS Python modules.
+This repository is the scientific training/evaluation side of a two-repository research workflow. The private teacher is a supervised **Variational Classifier Teacher (VCT)** and the final known/unknown decision is **Multicenter Conformal Rejection (MC)**. Only student parameters are federated. The separate `plots` repository renders publication figures from a versioned publication bundle; it never imports FedTROS Python modules.
 
 ## Architecture
 
 ```text
-study YAML -> run_study.py / run.py -> FedTROS-PR train/evaluate
+study YAML -> run_study.py / run.py -> FedTROS-MC train/evaluate
                                      |-> W&B (monitoring only)
                                      `-> outputs/runs/<run_id> (scientific source of truth)
                                                 |

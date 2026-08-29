@@ -276,6 +276,7 @@ def run_prototype_rank_evaluation(
         calibration_df=calibration_df,
         logger_=logger,
         report_to_stdout=bool(cfg.evaluation.report_to_stdout),
+        meta=meta,
     )
 
     if bool(getattr(cfg.evaluation, "export_latent_embeddings", True)):

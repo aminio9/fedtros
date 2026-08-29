@@ -5,11 +5,11 @@
 
 ## Acceptance criteria
 
-The source contains a genuine optional student OSR branch because it has: (1) separate trainable student parameters, (2) a distinct OSR representation, (3) an explicit local OSR training objective, (4) checkpoint/federated student state when enabled, and (5) a Prototype-Rank feature-source path that can consume the branch representation.
+The source contains a genuine optional student OSR branch because it has: (1) separate trainable student parameters, (2) a distinct OSR representation, (3) an explicit local OSR training objective, (4) checkpoint/federated student state when enabled, and (5) a Multicenter Conformal feature-source path that can consume the branch representation.
 
 ## Canonical pre-A5 behavior
 
-The default FedTROS-PR configuration now sets:
+The default FedTROS-MC configuration now sets:
 
 ```yaml
 training:
@@ -21,7 +21,7 @@ open_set:
       feature_source: student_embedding
 ```
 
-Thus normal E1-E8 runs use the deterministic penultimate federated-student embedding for Prototype-Rank. The optional branch is enabled only by the predeclared `A5-FEATURE` variant:
+Thus normal E1-E8 runs use the deterministic penultimate federated-student embedding for Multicenter Conformal. The optional branch is enabled only by the predeclared `A5-FEATURE` variant:
 
 - `student_embedding`: branch disabled, PR uses the normalized student embedding.
 - `osr_branch_embedding`: branch enabled/trained, PR uses `osr_mu`.

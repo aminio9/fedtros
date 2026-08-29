@@ -102,3 +102,6 @@ prototype_rank:
     save_scores: true
     save_quantiles: true
     save_overlap_report: true
+rejection:
+  method: multicenter_conformal
+  alpha: 0.05

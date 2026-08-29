@@ -1,4 +1,4 @@
-# FedTROS-PR (VCT) — Q1 Experiment Design, Run Plan, Table/Figure Plan, and Post-Run Audit
+# FedTROS-MC (VCT) — Q1 Experiment Design, Run Plan, Table/Figure Plan, and Post-Run Audit
 
 **Target use:** 2026 Q1-journal experimental section and executable experiment workflow
 **Primary evidence boundary:** Section 4 (*Experiments*) of `main(4).pdf` plus the uploaded run-command text files.
@@ -146,7 +146,7 @@ Teacher transfer should not be credited as a single monolithic component. Gated 
 
 Primary evidence: A3.
 
-## H6 — Necessity of boundary prototypes and empirical rank calibration
+## H6 — Necessity of boundary prototypes and split conformal calibration calibration
 
 The final PR module should outperform simpler same-backbone rejection methods and its improvement should be traceable to boundary information and rank calibration.
 
@@ -197,7 +197,7 @@ RL
 Canonical tokens:
 
 ```text
-paper method: FedTROS-PR
+paper method: FedTROS-MC
 config token: fedtros_pr
 teacher: vct
 final detector: prototype_rank
@@ -310,7 +310,7 @@ The final held-out unknown test partition is opened only after:
 
 # 5. Canonical Method and Baseline Definitions
 
-## 5.1 FedTROS-PR (canonical)
+## 5.1 FedTROS-MC (canonical)
 
 The final post-refactor system should contain only components verified in source:
 
@@ -362,7 +362,7 @@ The cleanest PR attribution is obtained by applying multiple rejection rules to 
 2. **Energy score** — same frozen classifier, post-hoc energy scoring unless explicitly training an energy objective.
 3. **Positive-only prototype** — nearest normalized class-prototype distance, no boundary term.
 4. **Positive + boundary raw prototype score** — full geometric score, no empirical-rank transform.
-5. **Full FedTROS-PR** — positive + boundary score + disjoint empirical-rank calibration.
+5. **Full FedTROS-MC** — positive + boundary score + disjoint empirical-rank calibration.
 6. **PROSER-style baseline** — only if a faithful implementation exists and uses the same known-only protocol. It should not remain hidden inside the canonical method.
 
 ## 5.4 Training-method + detector crossed comparison
@@ -373,7 +373,7 @@ For E4, do not compare only “FedTROS with PR” against closed-set FedAvg/FedP
 FedAvg-Student + PR
 FedProx-Student + PR
 [optional SCAFFOLD-Student + PR]
-FedTROS + PR  = FedTROS-PR
+FedTROS + PR  = FedTROS-MC
 ```
 
 This isolates whether the proposed federated training produces a representation that is genuinely better for open-set rejection.
@@ -388,9 +388,9 @@ This isolates whether the proposed federated training produces a representation 
 | E1 | IID closed-set utility | Does the refactored method preserve ordinary classification? | BNaT, BTAT | IID | FedAvg-Student, FedProx-Student, contextual CoL/Co-CNN values | 5 | Acc, Macro-F1, per-class F1 |
 | E2 | IID open-set isolation | Does PR reject unseen attacks without non-IID confounding? | BNaT | IID, FoT unknown + optional LOO reuse | MSP, Energy, proto variants, full PR | 5 | AUROC, AUPRC, U-F1, K-FUR |
 | E3 | Non-IID closed-set | Does FedTROS resist label skew/client drift? | BNaT | α={1.0,0.5,0.1} | FedAvg-S, FedProx-S, SCAFFOLD-S | 5 (10 preferred headline) | Macro-F1, Acc, worst-client F1 |
-| E4 | Non-IID open-set | Does FedTROS-PR work when heterogeneity and unknowns co-occur? | BNaT | α={1.0,0.5,0.1}, FoT unknown | training×detector crossed baselines | 5 | AUROC/AUPRC/FPR@95TPR/U-F1/K-FUR |
-| E5 | Dataset-wise robustness | Does behavior persist across different datasets? | BTAT, CIC-IDS2017, ToN-IoT (+BNaT reference row) | α=0.5 | FedTROS-PR + selected matched baselines | 5 | same OSR metric set |
-| E6 | Fixed-data scalability | What happens as clients increase while global data are fixed? | BNaT | α=0.5, 10/50/100 clients | FedTROS-PR | 5 for final endpoints; 3 acceptable for runtime-heavy full curves | performance + runtime + client dispersion |
+| E4 | Non-IID open-set | Does FedTROS-MC work when heterogeneity and unknowns co-occur? | BNaT | α={1.0,0.5,0.1}, FoT unknown | training×detector crossed baselines | 5 | AUROC/AUPRC/FPR@95TPR/U-F1/K-FUR |
+| E5 | Dataset-wise robustness | Does behavior persist across different datasets? | BTAT, CIC-IDS2017, ToN-IoT (+BNaT reference row) | α=0.5 | FedTROS-MC + selected matched baselines | 5 | same OSR metric set |
+| E6 | Fixed-data scalability | What happens as clients increase while global data are fixed? | BNaT | α=0.5, 10/50/100 clients | FedTROS-MC | 5 for final endpoints; 3 acceptable for runtime-heavy full curves | performance + runtime + client dispersion |
 | E7 | Systems/communication efficiency | What is the true cost of the method? | BNaT | α=0.5 and/or 1.0 | architecture-matched baselines | 5 endpoints | bytes, time, memory, params, accuracy/MB |
 | E8 | Leave-one-attack-out OSR | Is performance robust to unknown identity? | BNaT | α=0.5 canonical; optional IID supplement | BP/DoS/MitM/FoT held out one at a time | 5 | class-wise OSR matrix |
 | A1 | Teacher ablation | Is VCT needed? | BNaT | α=0.1 and 0.5 | no teacher / deterministic teacher / VCT | 3→5 | paired ΔMacro-F1, ΔAUROC |
@@ -953,7 +953,7 @@ If this becomes too expensive, use a factorial subset that still isolates gating
 
 ---
 
-## A4 — Prototype-Rank Detector Ablation
+## A4 — Multicenter Conformal Detector Ablation
 
 Use the **same frozen student checkpoint** to avoid retraining confounds.
 
@@ -963,7 +963,7 @@ Use the **same frozen student checkpoint** to avoid retraining confounds.
 2. Energy
 3. positive-only normalized prototype distance
 4. positive + boundary score without rank
-5. positive + boundary + empirical rank (full PR)
+5. positive + boundary + split conformal calibration (full PR)
 
 Optional:
 
@@ -1131,7 +1131,7 @@ and, where space allows:
 All method comparisons use the same seed-specific partitions. Report paired per-seed deltas:
 
 ```text
-Delta = metric(FedTROS-PR) - metric(baseline)
+Delta = metric(FedTROS-MC) - metric(baseline)
 ```
 
 ## 11.3 Significance testing
@@ -1150,7 +1150,7 @@ Do not test every cell of every table independently. Predeclare primary comparis
 
 1. FedTROS vs FedAvg-Student at `alpha=0.1` (closed-set Macro-F1).
 2. FedTROS vs FedProx-Student at `alpha=0.1`.
-3. FedTROS-PR vs FedAvg-Student+PR at `alpha=0.5` (AUROC/U-F1).
+3. FedTROS-MC vs FedAvg-Student+PR at `alpha=0.5` (AUROC/U-F1).
 4. full PR vs positive+boundary raw score (AUROC/U-F1).
 5. VCT vs deterministic teacher (A1).
 6. adaptive vs fixed anchor (A2).
@@ -1226,7 +1226,7 @@ Dataset | Unknown protocol | AUROC | AUPRC | U-F1 | K-FUR | Known Acc After
 Rows:
 
 ```text
-Full FedTROS-PR
+Full FedTROS-MC
 No teacher
 Deterministic teacher
 No anchor
@@ -1319,7 +1319,7 @@ Columns: AUROC, AUPRC, FPR@95TPR, U-Recall, U-F1, K-FUR.
 
 ## Figure 6 — Component contribution / paired-delta plot
 
-Forest/dot plot of each ablation’s change from full FedTROS-PR across seeds.
+Forest/dot plot of each ablation’s change from full FedTROS-MC across seeds.
 
 Prefer deltas with CI over a crowded bar chart.
 
@@ -1977,7 +1977,7 @@ The final paper should tell the experimental story in this order:
 2. **Heterogeneity:** architecture-matched baselines degrade under client label skew; FedTROS is more stable.
 3. **Mechanism:** the adaptive anchor, VCT transfer, and PR detector each have measurable roles; unnecessary components are removed.
 4. **Open set:** closed-set predictions absorb unseen attacks, while PR provides an explicit known/unknown trade-off.
-5. **Joint challenge:** FedTROS-PR remains effective when non-IID heterogeneity and unknown attacks occur together.
+5. **Joint challenge:** FedTROS-MC remains effective when non-IID heterogeneity and unknown attacks occur together.
 6. **Unknown identity:** performance varies substantially by held-out attack, preventing overclaiming from one FoT scenario.
 7. **Dataset robustness:** behavior is tested independently on several security datasets, including difficult failure cases.
 8. **Systems:** only the student is communicated, but private-teacher compute is reported honestly; communication comparisons use matched student baselines.

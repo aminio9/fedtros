@@ -19,7 +19,7 @@ Configuration: `src/configs/tracking/wandb.yaml`
 ```yaml
 backend: wandb
 mode: online   # online | offline | disabled
-project: FedTROS-PR
+project: FedTROS-MC
 ```
 
 `disabled` selects `NullTracker`; training/evaluation and publication exports continue to work.
@@ -39,7 +39,7 @@ Operational events belong in `logs/run.log`, not metric namespaces.
 
 ## Grouping
 
-W&B project: `FedTROS-PR`.
+W&B project: `FedTROS-MC`.
 
 The study ID is the default group, for example `E4-NIID-FOSR`. Run names include dataset, method, alpha/IID, unknown condition, client count, and seed.
 

@@ -1,4 +1,4 @@
-# FedTROS-PR experiment running guide
+# FedTROS-MC experiment running guide
 
 ## 1. Pre-flight
 
@@ -29,7 +29,7 @@ E0 verification
 
 - **A1:** no teacher / deterministic teacher / VCT (plus beta=0 control in the study definition).
 - **A2:** no anchor / fixed anchor / coverage-adaptive anchor.
-- **A4:** MSP / Energy / positive-only prototype / boundary raw / full Prototype-Rank.
+- **A4:** MSP / Energy / positive-only prototype / boundary raw / full Multicenter Conformal.
 - **A5:** only when testing whether the real dedicated OSR branch earns its complexity versus the ordinary student embedding.
 
 ## 3. Dry-run a matrix

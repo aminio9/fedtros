@@ -1,10 +1,10 @@
-# FedTROS-PR Full Experiment Runbook for Google Colab
+# FedTROS-MC Full Experiment Runbook for Google Colab
 
-**Purpose:** execute the complete post-refactor FedTROS-PR experiment contract from E0 through E8, A1 through A5, and S1 with durable outputs, exact resume behavior, and publication-ready provenance.
+**Purpose:** execute the complete post-refactor FedTROS-MC experiment contract from E0 through E8, A1 through A5, and S1 with durable outputs, exact resume behavior, and publication-ready provenance.
 
 **Repository state used for this runbook:** 20 August 2026 workspace state.
 
-**Canonical method:** FedTROS-PR with a private Variational Classifier Teacher (VCT), a federated student, coverage-adaptive anchoring, disagreement-gated knowledge distillation, feature alignment, and known-only Prototype-Rank rejection.
+**Canonical method:** FedTROS-MC with a private Variational Classifier Teacher (VCT), a federated student, coverage-adaptive anchoring, disagreement-gated knowledge distillation, feature alignment, and known-only Multicenter Conformal rejection.
 
 ---
 
@@ -61,7 +61,7 @@ Use the live declarative files, not the retired shell scripts:
 - Method definitions: `src/configs/method/*.yaml`
 - Dataset contracts: `src/configs/dataset/*.yaml`
 - VCT/student training defaults: `src/configs/training/default.yaml`
-- Prototype-Rank configuration: `src/configs/open_set/fedtros_pr.yaml`
+- Multicenter Conformal configuration: `src/configs/open_set/fedtros_pr.yaml`
 - Federated defaults: `src/configs/federated/default.yaml`
 - Tracking: `src/configs/tracking/wandb.yaml`
 - Checkpointing: `src/configs/checkpointing/default.yaml`
@@ -111,14 +111,14 @@ The three-seed gate/sensitivity studies use:
 
 | Study | Dataset(s) | Method(s) | Alpha/IID | Unknown condition |
 |---|---|---|---|---|
-| E1 | BNaT, BTAT | FedTROS-PR, FedAvg, FedProx | IID | none; all labels known |
-| E2 | BNaT | FedTROS-PR | IID | FoT |
-| E3 | BNaT | FedTROS-PR, FedAvg, FedProx | α = 1.0, 0.5, 0.1 | none |
-| E4 | BNaT | FedTROS-PR, FedAvg, FedProx | α = 1.0, 0.5, 0.1 | FoT |
-| E5 | BNaT, BTAT, CIC-IDS2017, ToN-IoT | FedTROS-PR, FedAvg, FedProx | α = 0.5 | dataset-specific frozen holdout |
-| E6 | BNaT | FedTROS-PR | α = 0.5; clients = 10, 50, 100 | FoT |
-| E7 | BNaT | FedTROS-PR, FedAvg, FedProx | α = 0.5 | FoT |
-| E8 | BNaT | FedTROS-PR | α = 0.5 | BP, DoS, MitM, or FoT, one at a time |
+| E1 | BNaT, BTAT | FedTROS-MC, FedAvg, FedProx | IID | none; all labels known |
+| E2 | BNaT | FedTROS-MC | IID | FoT |
+| E3 | BNaT | FedTROS-MC, FedAvg, FedProx | α = 1.0, 0.5, 0.1 | none |
+| E4 | BNaT | FedTROS-MC, FedAvg, FedProx | α = 1.0, 0.5, 0.1 | FoT |
+| E5 | BNaT, BTAT, CIC-IDS2017, ToN-IoT | FedTROS-MC, FedAvg, FedProx | α = 0.5 | dataset-specific frozen holdout |
+| E6 | BNaT | FedTROS-MC | α = 0.5; clients = 10, 50, 100 | FoT |
+| E7 | BNaT | FedTROS-MC, FedAvg, FedProx | α = 0.5 | FoT |
+| E8 | BNaT | FedTROS-MC | α = 0.5 | BP, DoS, MitM, or FoT, one at a time |
 
 ### 3.2 Frozen E5 protocols
 
@@ -195,7 +195,7 @@ training:
   student_osr_latent_dim: 8
 ```
 
-### 4.2 Prototype-Rank
+### 4.2 Multicenter Conformal
 
 ```yaml
 open_set:
@@ -247,7 +247,7 @@ runtime:
 
 tracking:
   backend: wandb
-  project: FedTROS-PR
+  project: FedTROS-MC
   mode: online             # online | offline | disabled
 
 checkpointing:
@@ -532,7 +532,7 @@ Do not continue if any scientific gate fails.
 
 ## 9. Run one representative paper-scale pilot
 
-Use seed 42, BNaT, FedTROS-PR, α=0.5 from E4. First dry-run it:
+Use seed 42, BNaT, FedTROS-MC, α=0.5 from E4. First dry-run it:
 
 ```python
 dry_run(

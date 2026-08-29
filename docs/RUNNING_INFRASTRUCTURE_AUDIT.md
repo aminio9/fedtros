@@ -1,6 +1,6 @@
 # Running & Logging Infrastructure Audit (Workstream B)
 
-**Project:** FedTROS-PR (Federated Teacher-Regularized Open-Set Recognition with Prototype-Rank Rejection)
+**Project:** FedTROS-MC (Federated Teacher-Regularized Open-Set Recognition with Multicenter Conformal Rejection)
 **Date:** 2026-08-19
 **Auditor:** Workstream B Infrastructure Team
 **Scope:** Execution scripts, shell harnesses, launchers, status trackers, logging mechanisms, and command pipelines.

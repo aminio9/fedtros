@@ -202,8 +202,8 @@ class PrototypeBank:
 
     Earlier prototypes used positive-only KMeans over the closed-set backbone,
     which drifted as the classifier became more confident.  This bank defaults
-    to OSR latent features, L2 normalization, class radii, and optional negative
-    boundary prototypes generated from known-only calibration features.
+    to the normalized federated student embedding, L2 normalization, class radii,
+    and optional negative boundary prototypes generated from known-only calibration features.
     """
 
     prototypes: dict[int, np.ndarray]
@@ -415,7 +415,7 @@ def _fit_prototypes(calib_df: pd.DataFrame, num_classes: int, cfg: Any, log: log
     features_by_class: dict[int, np.ndarray] = {}
     if not enabled:
         return PrototypeBank(prototypes, radii={}, normalize=normalize)
-    feature_source = str(_nested(cfg, "prototype.feature_source", "osr_mu"))
+    feature_source = str(_nested(cfg, "prototype.feature_source", "student_embedding"))
     for c in range(num_classes):
         cls = calib_df[(calib_df["y_raw"] == c) & (calib_df["correct_known"] == 1)]
         if cls.empty:
@@ -458,6 +458,11 @@ def _fit_prototypes(calib_df: pd.DataFrame, num_classes: int, cfg: Any, log: log
         )
 
     negative_enabled = bool(_nested(cfg, "prototype.negative.enabled", True))
+    canonical = bool(_nested(cfg, "canonical", False))
+    if canonical and negative_enabled:
+        raise RuntimeError("Phase 12 contract violation: Boundary prototype bank generation must be disabled in canonical mode.")
+    if canonical:
+        negative_enabled = False
     negative_prototypes = None
     negative_radius = 1.0
     negative_weight = float(_nested(cfg, "prototype.negative.weight", 0.35)) if negative_enabled else 0.0
@@ -771,6 +776,12 @@ def calibrate_prototype_rank(
     if np.any(labels_np == unknown_label_id):
         raise ValueError("Prototype-Rank calibration data must contain known classes only; found unknown labels.")
 
+    canonical = bool(_nested(cfg, "canonical", False))
+    if canonical:
+        for name, param in student_model.named_parameters():
+            if param.requires_grad:
+                raise RuntimeError(f"Phase 4 contract violation: Student model parameter {name} requires gradients during post-hoc calibration.")
+
     df = _collect_student_scores(
         features,
         labels,
@@ -837,7 +848,8 @@ def calibrate_prototype_rank(
             "total_samples": int(len(df)),
             "note": "Smoke/development fallback only: prototype fitting and calibration reuse the same pool.",
         }
-
+    if canonical and not split_provenance.get("disjoint_split", False):
+        raise RuntimeError("Phase 5 contract violation: Strict disjoint reference-data contract failed in canonical mode.")
     prototype_bank = _fit_prototypes(df_proto, num_classes, cfg, log)
     df["prototype_score"] = [
         float(prototype_bank.score(np.asarray(row["feature"]).reshape(1, -1), int(row["y_raw"]))[0])
@@ -913,14 +925,15 @@ def evaluate_prototype_rank(
     student_model: torch.nn.Module,
     batch_size: int,
     device: torch.device,
-    cfg: Any,
-    class_names: dict[int, str],
-    output_dir: Path,
+    cfg: DictConfig,
+    class_names: list[str],
+    output_dir: Path | str,
     prototype_bank: PrototypeBank,
     calibration_df: pd.DataFrame,
     logger_: logging.Logger | None = None,
-    report_to_stdout: bool = False,
-) -> dict[str, float]:
+    report_to_stdout: bool = True,
+    meta: dict | None = None,
+) -> dict[str, Any]:
     """Evaluate the configured known-only Prototype-Rank detector.
 
     The function requires a calibration DataFrame.  There is deliberately no EVT,
@@ -976,46 +989,74 @@ def evaluate_prototype_rank(
     selected_thresholds: list[float] = []
     component_rows: list[dict[str, float]] = []
 
-    for _, row in df.iterrows():
-        c = int(row["pred_before_osr"])
-        cal = rank_calibrators.get(-1) if calibration_scope == "global" else rank_calibrators.get(c)
-        if cal is None:
-            cal = rank_calibrators.get(c)
-        if cal is None:
-            raise ValueError(f"Missing empirical-rank calibrator for predicted class={c}.")
-
-        unknown_score, selected_threshold, scores = _select_rank_score_and_threshold(row, cal, cfg)
-        msp_rank = float(scores["msp_rank_score"])
-        proser_rank = float(scores["proser_rank_score"])
-        gen_rank = float(scores["gen_rank_score"])
-        energy_rank = float(scores["energy_rank_score"])
-        proto_rank = float(scores["prototype_rank_score"])
-        mean_rank = _mean_finite([proser_rank, gen_rank, energy_rank, proto_rank])
-        weighted_rank = _mean_finite(
-            [proser_rank, gen_rank, energy_rank, proto_rank], weights=_score_weights(cfg)
-        )
-        max_rank = float(np.nanmax([proser_rank, gen_rank, energy_rank, proto_rank]))
-        reject = bool(unknown_score > selected_threshold)
-        final_preds.append(open_set_label_id if reject else c)
-        unknown_scores.append(float(unknown_score))
-        selected_thresholds.append(float(selected_threshold))
-        component_rows.append(
-            {
-                **scores,
-                "mean_rank_score": float(mean_rank),
-                "weighted_rank_score": float(weighted_rank),
-                "max_rank_score": float(max_rank),
-                "msp_rank_reject": int(msp_rank > float(scores["msp_threshold"])),
-                "proser_rank_reject": int(proser_rank > float(scores["proser_threshold"])),
-                "gen_rank_reject": int(gen_rank > float(scores["gen_threshold"])),
-                "energy_rank_reject": int(energy_rank > float(scores["energy_threshold"])),
-                "prototype_rank_reject": int(proto_rank > float(scores["prototype_threshold"])),
-                "prototype_raw_reject": int(float(row["prototype_score"]) > float(scores["prototype_raw_threshold"])),
-                "mean_rank_reject": int(mean_rank > float(scores["mean_threshold"])),
-                "weighted_rank_reject": int(weighted_rank > float(scores["weighted_threshold"])),
-                "max_rank_reject": int(max_rank > float(scores["max_threshold"])),
-            }
-        )
+    rejection_method = str(_nested(cfg, "rejection.method", "prototype_rank")).lower()
+    canonical = bool(_nested(cfg, "canonical", False))
+    
+    if canonical or rejection_method == "multicenter_conformal":
+        if meta is None or "conformal_meta" not in meta:
+            raise ValueError("Phase 9/11 contract violation: Conformal metadata missing!")
+        from src.openset.conformal import score_multicenter_conformal
+        df = score_multicenter_conformal(df, meta["conformal_meta"])
+        
+        final_preds = [open_set_label_id if r else int(p) for r, p in zip(df["rejected"], df["pred_before_osr"])]
+        unknown_scores = df["conformal_score"].tolist()
+        
+        thresholds_dict = meta["conformal_meta"]["thresholds"]
+        # Handle string keys if serialized to JSON
+        thresholds_dict = {int(k): float(v) for k, v in thresholds_dict.items()}
+        selected_thresholds = [thresholds_dict.get(int(p), float('inf')) for p in df["pred_before_osr"]]
+        
+        dummy_row = {
+            "msp_rank_score": 0.0, "proser_rank_score": 0.0, "gen_rank_score": 0.0, 
+            "energy_rank_score": 0.0, "prototype_rank_score": 0.0,
+            "mean_rank_score": 0.0, "weighted_rank_score": 0.0, "max_rank_score": 0.0,
+            "msp_rank_reject": 0, "proser_rank_reject": 0, "gen_rank_reject": 0,
+            "energy_rank_reject": 0, "prototype_rank_reject": 0, "prototype_raw_reject": 0,
+            "mean_rank_reject": 0, "weighted_rank_reject": 0, "max_rank_reject": 0
+        }
+        for _ in range(len(df)):
+            component_rows.append(dummy_row)
+    else:
+        for _, row in df.iterrows():
+            c = int(row["pred_before_osr"])
+            cal = rank_calibrators.get(-1) if calibration_scope == "global" else rank_calibrators.get(c)
+            if cal is None:
+                cal = rank_calibrators.get(c)
+            if cal is None:
+                raise ValueError(f"Missing empirical-rank calibrator for predicted class={c}.")
+    
+            unknown_score, selected_threshold, scores = _select_rank_score_and_threshold(row, cal, cfg)
+            msp_rank = float(scores["msp_rank_score"])
+            proser_rank = float(scores["proser_rank_score"])
+            gen_rank = float(scores["gen_rank_score"])
+            energy_rank = float(scores["energy_rank_score"])
+            proto_rank = float(scores["prototype_rank_score"])
+            mean_rank = _mean_finite([proser_rank, gen_rank, energy_rank, proto_rank])
+            weighted_rank = _mean_finite(
+                [proser_rank, gen_rank, energy_rank, proto_rank], weights=_score_weights(cfg)
+            )
+            max_rank = float(np.nanmax([proser_rank, gen_rank, energy_rank, proto_rank]))
+            reject = bool(unknown_score > selected_threshold)
+            final_preds.append(open_set_label_id if reject else c)
+            unknown_scores.append(float(unknown_score))
+            selected_thresholds.append(float(selected_threshold))
+            component_rows.append(
+                {
+                    **scores,
+                    "mean_rank_score": float(mean_rank),
+                    "weighted_rank_score": float(weighted_rank),
+                    "max_rank_score": float(max_rank),
+                    "msp_rank_reject": int(msp_rank > float(scores["msp_threshold"])),
+                    "proser_rank_reject": int(proser_rank > float(scores["proser_threshold"])),
+                    "gen_rank_reject": int(gen_rank > float(scores["gen_threshold"])),
+                    "energy_rank_reject": int(energy_rank > float(scores["energy_threshold"])),
+                    "prototype_rank_reject": int(proto_rank > float(scores["prototype_threshold"])),
+                    "prototype_raw_reject": int(float(row["prototype_score"]) > float(scores["prototype_raw_threshold"])),
+                    "mean_rank_reject": int(mean_rank > float(scores["mean_threshold"])),
+                    "weighted_rank_reject": int(weighted_rank > float(scores["weighted_threshold"])),
+                    "max_rank_reject": int(max_rank > float(scores["max_threshold"])),
+                }
+            )
 
     component_df = pd.DataFrame(component_rows, index=df.index)
     for column in component_df.columns:

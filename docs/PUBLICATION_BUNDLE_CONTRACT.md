@@ -1,4 +1,4 @@
-# FedTROS-PR -> plots publication bundle
+# FedTROS-MC -> plots publication bundle
 
 The research and plotting repositories remain independent Python projects. They communicate only through an immutable, checksum-verified file contract.
 
@@ -15,7 +15,7 @@ Schema:
 
 - `schema_name = fedtros_pr_publication_bundle`
 - `schema_version = 1`
-- `method = FedTROS-PR`
+- `method = FedTROS-MC`
 - canonical tabular format: CSV
 
 The bundle `manifest.json` records the source run IDs, config/split hashes, code commit, studies present, and SHA-256 checksums of all exported files.

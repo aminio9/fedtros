@@ -6,7 +6,7 @@ Run from the repository root with Bash.
 - `run_validation_tiny.sh`: runs the tiny end-to-end validation path and then plots it.
 - `e1_closed_set.sh` through `e8_labelwise_open_set.sh`: experiment command files.
 - `run_full_suite.sh`: sequential batch runner for E1-E8.
-- `multirun_main_methods.sh`: legacy shell wrapper for the pre-study CLI; retained for migration reference only. Use `scripts/run_study.py E3-NIID-CS` for the canonical FedAvg-Student, FedProx-Student, and FedTROS-PR matrix.
+- `multirun_main_methods.sh`: legacy shell wrapper for the pre-study CLI; retained for migration reference only. Use `scripts/run_study.py E3-NIID-CS` for the canonical FedAvg-Student, FedProx-Student, and FedTROS-MC matrix.
 - `e3_federated_noniid.sh` and `e4_combined_open_set_noniid.sh`: sweep Dirichlet alpha values `0.1`, `0.5`, `1.0`, and `10.0`.
 - `multirun_alpha_seed_sensitivity.sh`: Hydra multirun over seeds and alpha values for E4.
 - `e5_multi_dataset_open_set_noniid.sh`: external benchmark validation scaffold for B-TAT, ToN-IoT, and CIC-IDS2017; it skips datasets until their final mappings are supplied.
