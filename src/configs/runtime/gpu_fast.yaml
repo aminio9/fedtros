@@ -1,16 +1,16 @@
-name: gpu
+name: gpu_fast
 device_prefer: gpu
 allow_cpu_fallback: false
-move_data_to_device: false
-deterministic: true
+move_data_to_device: true
+deterministic: false
 benchmark: true
 use_deterministic_algorithms: false
 client_num_cpus: 1
 client_num_gpus: 1.0
 simulation_gpu_batches:
   enabled: true
-  batch_size: 100
-client_device_residency: swap
-local_batch_size: null
-empty_cache_after_client: true
+  batch_size: 2
+client_device_residency: resident
+local_batch_size: 512
+empty_cache_after_client: false
 log_device_state: true

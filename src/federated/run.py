@@ -153,7 +153,11 @@ def _actual_runtime_frame(history_frame: pd.DataFrame) -> pd.DataFrame:
 
 def _resolve_runtime_config(cfg: DictConfig) -> DictConfig:
     """Freeze Hydra interpolations before config crosses process boundaries."""
-    return OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
+    resolved = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
+    local_batch_size = OmegaConf.select(resolved, "runtime.local_batch_size", default=None)
+    if local_batch_size not in (None, "???"):
+        resolved.training.batch_size = int(local_batch_size)
+    return resolved
 
 
 def _simulation_gpu_batches_enabled(cfg: DictConfig) -> bool:
@@ -265,7 +269,19 @@ def _build_local_clients(
             benchmark=bool(cfg.device.benchmark),
             use_deterministic_algorithms=bool(cfg.device.use_deterministic_algorithms),
         )
-        device = torch.device("cpu")
+        residency = str(
+            OmegaConf.select(cfg, "runtime.client_device_residency", default="swap")
+        ).lower()
+        if residency not in {"swap", "resident"}:
+            raise ValueError(
+                "runtime.client_device_residency must be 'swap' or 'resident', "
+                f"got {residency!r}"
+            )
+        device = (
+            simulation_execution_device
+            if simulation_gpu_batching and residency == "resident"
+            else torch.device("cpu")
+        )
         data_path = _client_data_path(cfg, project_root, client_id)
         client = FlowerClient(
             cid=str(client_id),
@@ -368,7 +384,7 @@ def run_federated_simulation(
         use_deterministic_algorithms=bool(cfg.device.use_deterministic_algorithms),
     )
     logger.info(
-        "Starting Flower simulation | clients=%d | logical_rounds=%d | flower_rounds=%d | strategy=%s | simulation_device=%s | gpu_batching=%s | batch_size=%d",
+        "Starting Flower simulation | clients=%d | logical_rounds=%d | flower_rounds=%d | strategy=%s | simulation_device=%s | gpu_batching=%s | worker_concurrency=%d | local_batch_size=%d",
         int(cfg.federated.num_clients),
         int(cfg.federated.num_rounds),
         get_effective_num_rounds(cfg),
@@ -376,14 +392,16 @@ def run_federated_simulation(
         simulation_execution_device,
         gpu_batching_enabled,
         gpu_batch_size,
+        int(cfg.training.batch_size),
     )
     server = Server(client_manager=client_manager, strategy=get_strategy(cfg, metrics_sink=tracker))
     if gpu_batching_enabled:
         server.set_max_workers(gpu_batch_size)
         logger.info(
-            "Local Flower simulation worker batching enabled | batch_size=%d | execution_device=%s",
+            "Local Flower simulation worker batching enabled | worker_concurrency=%d | execution_device=%s | local_batch_size=%d",
             gpu_batch_size,
             simulation_execution_device,
+            int(cfg.training.batch_size),
         )
     elif bool(OmegaConf.select(cfg, "device.deterministic", default=False)):
         # Local clients are threads in Flower's legacy in-process server.  PyTorch's

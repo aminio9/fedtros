@@ -243,6 +243,16 @@ def _validate_runtime(cfg: DictConfig) -> None:
                 "GPU runtime requires runtime.simulation_gpu_batches.enabled=true "
                 "for local Flower simulation."
             )
+    residency = str(
+        OmegaConf.select(cfg, "runtime.client_device_residency", default="swap")
+    ).lower()
+    if residency not in {"swap", "resident"}:
+        raise ValueError(
+            "runtime.client_device_residency must be 'swap' or 'resident'."
+        )
+    local_batch_size = OmegaConf.select(cfg, "runtime.local_batch_size", default=None)
+    if local_batch_size not in (None, "???") and int(local_batch_size) <= 0:
+        raise ValueError("runtime.local_batch_size must be positive when provided.")
     batch_size = int(OmegaConf.select(cfg, "runtime.simulation_gpu_batches.batch_size"))
     if batch_size <= 0:
         raise ValueError("runtime.simulation_gpu_batches.batch_size must be positive.")

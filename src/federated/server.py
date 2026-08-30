@@ -1172,11 +1172,42 @@ def make_fit_config_fn(cfg: DictConfig, local_epochs: int, batch_size: int):
     return fit_config
 
 
+STRATEGY_ALIASES: dict[str, str] = {
+    "fedtros": "fedtros",
+    "fedtros_mc": "fedtros",
+    "fedtros_pr": "fedtros",
+    "fedtros_pr_legacy": "fedtros",
+    "fedavg": "fedavg",
+    "fedavg_student": "fedavg",
+    "fedprox": "fedprox",
+    "fedprox_student": "fedprox",
+    "scaffold": "scaffold",
+    "local_only": "local_only",
+}
+
+
+def normalize_strategy_name(name: str) -> str:
+    """Resolve a configured strategy alias to an implemented strategy."""
+    configured = str(name).strip().lower()
+    try:
+        return STRATEGY_ALIASES[configured]
+    except KeyError as exc:
+        supported = ", ".join(sorted(STRATEGY_ALIASES))
+        raise ValueError(
+            f"Unsupported federated strategy {name!r}. "
+            f"Supported strategies/aliases: {supported}."
+        ) from exc
+
+
 def get_strategy(cfg: DictConfig, metrics_sink: Any | None = None) -> Strategy:
-    strat_name = str(cfg.strategy.name).lower()
+    configured_name = str(cfg.strategy.name).strip().lower()
+    strat_name = normalize_strategy_name(configured_name)
     device = torch.device("cpu")
     logger.info(
-        "Server strategy setup | strategy=%s | server_device=%s | logical_rounds=%d | flower_rounds=%d",
+        "Server strategy setup | strategy=%s | configured_strategy=%s | resolved_strategy=%s "
+        "| server_device=%s | logical_rounds=%d | flower_rounds=%d",
+        configured_name,
+        configured_name,
         strat_name,
         device,
         int(cfg.server.num_rounds),
@@ -1212,8 +1243,12 @@ def get_strategy(cfg: DictConfig, metrics_sink: Any | None = None) -> Strategy:
         logger.info("--- Strategy: Local-only Student ---")
         return LocalOnlyStrategy(cfg=cfg, metrics_sink=metrics_sink, **args)
 
-    if strat_name == "fedtros_pr":
-        logger.info("--- Strategy: FedTROS-PR (Federated Teacher-Regularized Open-Set Recognition with Prototype-Rank Rejection) ---")
+    if strat_name == "fedtros":
+        logger.info(
+            "--- Strategy: FedTROSStrategy (configured=%s, canonical=%s) ---",
+            configured_name,
+            bool(OmegaConf.select(cfg, "method.canonical", default=False)),
+        )
         return FedTROSStrategy(
             cfg=cfg,
             metrics_sink=metrics_sink,
@@ -1230,8 +1265,13 @@ def get_strategy(cfg: DictConfig, metrics_sink: Any | None = None) -> Strategy:
             **args,
         )
 
-    logger.info("--- Strategy: FedAvg with Model Saving ---")
-    return SaveModelFedAvg(cfg=cfg, metrics_sink=metrics_sink, **args)
+    if strat_name == "fedavg":
+        logger.info("--- Strategy: FedAvg with Model Saving ---")
+        return SaveModelFedAvg(cfg=cfg, metrics_sink=metrics_sink, **args)
+
+    # normalize_strategy_name() guarantees this is unreachable unless a new
+    # alias is added without a corresponding implementation branch.
+    raise RuntimeError(f"Strategy alias {configured_name!r} resolved to unhandled {strat_name!r}.")
 
 
 def get_effective_num_rounds(cfg: DictConfig) -> int:

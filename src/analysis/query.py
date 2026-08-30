@@ -25,12 +25,14 @@ def _roots(outputs_dir: str|Path|Sequence[str|Path]) -> list[Path]:
 
 def query_runs(study=None, stage=None, method=None, dataset=None, alpha=None, seed=None, num_clients=None,
                status: str|None="COMPLETED", outputs_dir: str|Path|Sequence[str|Path]="outputs",
-               predicate: Callable[[RunRecord],bool]|None=None) -> list[RunRecord]:
+               predicate: Callable[[RunRecord],bool]|None=None,
+               include_invalid: bool = False) -> list[RunRecord]:
     out=[]
     for rdir in _roots(outputs_dir):
         try: r=load_run(rdir)
         except Exception as exc: logger.debug("Skip %s: %s",rdir,exc); continue
         if status is not None and r.status.upper()!=status.upper(): continue
+        if not include_invalid and r.validity_status != "VALID": continue
         if not _match(r.study,study) or not _match(r.stage,stage) or not _match(r.method,method) or not _match(r.dataset,dataset): continue
         if alpha is not None:
             vals=list(alpha) if isinstance(alpha,(list,tuple,set)) else [alpha]

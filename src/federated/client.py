@@ -53,10 +53,26 @@ class FlowerClient(fl.client.NumPyClient):
             if simulation_execution_device is not None
             else self.device
         )
+        self._client_device_residency = str(
+            OmegaConf.select(cfg, "runtime.client_device_residency", default="swap")
+        ).lower()
+        if self._client_device_residency not in {"swap", "resident"}:
+            raise ValueError(
+                "runtime.client_device_residency must be 'swap' or 'resident', "
+                f"got {self._client_device_residency!r}"
+            )
         self._simulation_rest_device = (
-            torch.device("cpu") if self._simulation_gpu_batching else self.device
+            torch.device("cpu")
+            if self._simulation_gpu_batching and self._client_device_residency == "swap"
+            else self.device
         )
         self._move_data_to_device = bool(cfg.device.move_data_to_device)
+        self._log_device_state = bool(
+            OmegaConf.select(cfg, "runtime.log_device_state", default=True)
+        )
+        self._empty_cache_after_client = bool(
+            OmegaConf.select(cfg, "runtime.empty_cache_after_client", default=True)
+        )
 
         self.logger.info("Client %s: Initializing...", cid)
 
@@ -194,8 +210,53 @@ class FlowerClient(fl.client.NumPyClient):
         if not switched:
             return
         self._switch_runtime_device(self._simulation_rest_device)
-        if target_device.type == "cuda" and torch.cuda.is_available():
+        if (
+            self._empty_cache_after_client
+            and target_device.type == "cuda"
+            and torch.cuda.is_available()
+        ):
             torch.cuda.empty_cache()
+
+    def _attach_runtime_device_metrics(
+        self, metrics: dict[str, Any], execution_device: torch.device
+    ) -> dict[str, Any]:
+        """Record and validate the device used by a local fit."""
+        model_device = next(self.agent.student_model.parameters()).device
+        feature_device = self.features.device
+        batch_device = execution_device
+        metrics.update(
+            {
+                "runtime/execution_device": str(execution_device),
+                "runtime/model_device": str(model_device),
+                "runtime/feature_device": str(feature_device),
+                "runtime/batch_device": str(batch_device),
+            }
+        )
+        if execution_device.type == "cuda" and torch.cuda.is_available():
+            metrics["runtime/cuda_memory_allocated_mb"] = float(
+                torch.cuda.memory_allocated(execution_device) / (1024**2)
+            )
+            metrics["runtime/cuda_memory_peak_mb"] = float(
+                torch.cuda.max_memory_allocated(execution_device) / (1024**2)
+            )
+            if model_device.type != "cuda":
+                raise RuntimeError(
+                    f"Client {self.cid} requested CUDA execution but model is on {model_device}."
+                )
+        if self._log_device_state:
+            allocated = metrics.get("runtime/cuda_memory_allocated_mb", 0.0)
+            peak = metrics.get("runtime/cuda_memory_peak_mb", 0.0)
+            self.logger.info(
+                "Local fit device state | execution=%s model=%s features=%s batch=%s "
+                "cuda_allocated_mb=%.1f cuda_peak_mb=%.1f",
+                execution_device,
+                model_device,
+                feature_device,
+                batch_device,
+                float(allocated),
+                float(peak),
+            )
+        return metrics
 
     def get_parameters(self, config: dict[str, Any]) -> list[np.ndarray]:
         _ = config
@@ -286,6 +347,7 @@ class FlowerClient(fl.client.NumPyClient):
                     metrics.update(self._evaluate_local_student())
                 self._save_private_state(round_index)
                 num_examples = int(self.local_data_profile["local_num_examples"])
+                metrics = self._attach_runtime_device_metrics(metrics, execution_device)
                 return student_after_train, num_examples, self._sanitize_server_metrics(metrics)
 
             # =========================================================
@@ -322,6 +384,7 @@ class FlowerClient(fl.client.NumPyClient):
                 metrics["scaffold_control_delta"] = encode_control_variate(delta_control)
                 metrics["student_num_parameters"] = float(sum(p.size for p in self.agent.get_student_parameters()))
                 metrics["local_num_examples"] = float(self.local_data_profile["local_num_examples"])
+                metrics = self._attach_runtime_device_metrics(metrics, execution_device)
                 return self.agent.get_student_parameters(), int(self.local_data_profile["local_num_examples"]), self._sanitize_server_metrics(metrics)
 
             if strategy_name == "local_only":
@@ -335,6 +398,7 @@ class FlowerClient(fl.client.NumPyClient):
                     device=self.device,
                     client_id=self.cid,
                 )
+                metrics = self._attach_runtime_device_metrics(metrics, execution_device)
                 return self.agent.get_student_parameters(), int(self.local_data_profile["local_num_examples"]), self._sanitize_server_metrics(metrics)
 
             # Standard Baselines: FedAvg-Student / FedProx-Student
@@ -363,6 +427,7 @@ class FlowerClient(fl.client.NumPyClient):
                 metrics.update(self._evaluate_local_student())
             updated_params = self.agent.get_student_parameters()
             num_examples = int(self.local_data_profile["local_num_examples"])
+            metrics = self._attach_runtime_device_metrics(metrics, execution_device)
             return updated_params, num_examples, metrics
         finally:
             self._exit_execution_device(execution_device, switched)

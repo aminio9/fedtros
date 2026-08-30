@@ -57,6 +57,7 @@ class RunRecord:
     git_commit: str = ""
     timestamp_utc: str = ""
     variant: str = "canonical"
+    validity_status: str = "VALID"
     _history_df: pd.DataFrame | None = None
     _scores_df: pd.DataFrame | None = None
     _roc_df: pd.DataFrame | None = None
@@ -261,6 +262,9 @@ def load_run(run_dir: str|Path) -> RunRecord:
     p=Path(run_dir).resolve()
     if not p.is_dir(): raise FileNotFoundError(p)
     manifest=_manifest(p); config=_cfg(p); metrics=_metrics(p)
+    validity = _json(p / "metadata" / "run_validity.json")
+    if validity:
+        manifest = {**manifest, "validity": validity}
     study_raw = manifest.get("study_id") or manifest.get("study") or _sel(config,"experiment.id",None)
     study = str(study_raw) if study_raw not in (None, "None", "unknown", "") else _infer_study_from_name(p.name)
     stage=str(manifest.get("stage") or _sel(config,"stage","unknown"))
@@ -274,6 +278,7 @@ def load_run(run_dir: str|Path) -> RunRecord:
     clients=int(manifest.get("num_clients", _sel(config,"federated.num_clients",0)) or 0)
     unknown=list(manifest.get("unknown_labels") or manifest.get("held_out_unknown") or _sel(config,"dataset.preprocessing.unknown_labels",[]) or [])
     status=str(manifest.get("status", "COMPLETED" if (p/"result_manifest.json").exists() else "INCOMPLETE")).upper()
+    validity_status = str(manifest.get("validity", {}).get("status", "VALID")).upper()
     variant_raw = manifest.get("variant") or _sel(config,"experiment.variant",None)
     variant = str(variant_raw) if variant_raw not in (None, "None", "") else "canonical"
     return RunRecord(
@@ -284,7 +289,7 @@ def load_run(run_dir: str|Path) -> RunRecord:
         split_hash=str(manifest.get("split_hash", manifest.get("dataset_split_hash", ""))),
         git_commit=str(manifest.get("git_commit", manifest.get("code_commit", ""))),
         timestamp_utc=str(manifest.get("started_at", manifest.get("created_at", ""))),
-        variant=variant,
+        variant=variant, validity_status=validity_status,
     )
 
     @property

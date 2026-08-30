@@ -7,7 +7,6 @@ methods:
   - fedtros_pr
   - fedavg
   - fedprox
-  - fedgpa
 datasets:
   - bnat
 alphas:
