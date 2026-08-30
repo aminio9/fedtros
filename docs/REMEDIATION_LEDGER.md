@@ -18,6 +18,8 @@ This ledger tracks the method-consistency and experimental-reproducibility remed
 | Matched baseline matrix | completed | 2d399e9 | Added centralized method config and exposed FedAvg/FedProx/SCAFFOLD/local-only/centralized in core studies |
 | Publication provenance gate | completed | 2f9d661 | Validator now verifies final-test identifier path, existence, and SHA-256 checksum for open-set studies |
 | Full regression verification | completed | 10a53d2 | Full test suite after final changes: 157 passed |
+| Run/download/plot workflow | completed | eea6f43 | Runbook prioritizes FedTROS-MC, five-seed main stage, strict bundle validation, and explicit plots data source |
+| Canonical main-stage alias | completed | ed5f921 | `main` now receives the same publication constraints as `paper_final`/`reproduction`; protocol tests passed |
 
 ## Operating rules
 
