@@ -160,5 +160,12 @@ def export(outputs:Path,target_root:Path,freeze_id:str|None,include_stages:list[
 def main():
     p=argparse.ArgumentParser(description="Export versioned publication bundle for the separate plots repository")
     p.add_argument("--outputs-dir",default="outputs"); p.add_argument("--target-root",default="publication_exports"); p.add_argument("--freeze-id",default=None); p.add_argument("--include-stages",nargs="+",default=["paper_final","ablation","reproduction"])
-    a=p.parse_args(); target=export(Path(a.outputs_dir),Path(a.target_root),a.freeze_id,a.include_stages); print(target)
+    p.add_argument("--allow-incomplete", action="store_true", help="diagnostic export only; bypass the publication evidence gate")
+    a=p.parse_args()
+    if not a.allow_incomplete:
+        from scripts.validate_publication_evidence import validate
+        report=validate(Path(a.outputs_dir) / "runs")
+        if not report["publication_ready"]:
+            raise SystemExit("Publication evidence gate failed; use --allow-incomplete only for diagnostics.\n" + json.dumps(report, indent=2, sort_keys=True))
+    target=export(Path(a.outputs_dir),Path(a.target_root),a.freeze_id,a.include_stages); print(target)
 if __name__=="__main__": main()
