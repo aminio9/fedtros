@@ -29,7 +29,7 @@ from src.infrastructure.run_id import generate_run_id
 logger = get_logger("run_study")
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args() -> tuple[argparse.Namespace, list[str]]:
     p = argparse.ArgumentParser(description="Run a declarative FedTROS-MC study matrix.")
     p.add_argument("study", help="Study ID/name/YAML (e.g. E4-NIID-FOSR, A1-TEACHER)")
     p.add_argument("--stage", default="development", choices=["smoke","development","tuning","ablation","main","reproduction"])
@@ -48,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-parallel", type=int, default=1, help="Maximum simultaneous independent runs")
     p.add_argument("--wandb-mode", choices=["online","offline","disabled"], default=None)
     p.add_argument("--output-dir", type=Path, default=Path("outputs"))
-    return p.parse_args()
+    return p.parse_known_args()
 
 
 def _matches(value: object, allowed: list[object] | None) -> bool:
@@ -74,6 +74,7 @@ def hydra_args(
     wandb_mode: str | None,
     *,
     output_base: Path | None = None,
+    extra_args: list[str] | None = None,
 ) -> list[str]:
     args: list[str] = []
     for key, value in run.overrides.items():
@@ -91,6 +92,8 @@ def hydra_args(
         args.append(f"tracking.mode={wandb_mode}")
     if output_base is not None:
         args.append(f"output.root_dir={str(output_base.resolve())}")
+    if extra_args:
+        args.extend(extra_args)
     return args
 
 
@@ -140,11 +143,12 @@ def launch(
     wandb_mode: str | None,
     *,
     output_base: Path,
+    extra_args: list[str] | None = None,
 ) -> tuple[str, bool, float]:
     cmd = [
         sys.executable,
         str(project_root / "scripts" / "run.py"),
-        *hydra_args(run, wandb_mode, output_base=output_base),
+        *hydra_args(run, wandb_mode, output_base=output_base, extra_args=extra_args),
     ]
     env = os.environ.copy()
     env["PYTHONPATH"] = str(project_root) + os.pathsep + env.get("PYTHONPATH", "")
@@ -160,7 +164,7 @@ def launch(
 
 
 def main() -> int:
-    args = parse_args()
+    args, extra_args = parse_args()
     configure_logging()
     root = _ROOT
     try:
@@ -204,9 +208,10 @@ def main() -> int:
             run_dir = out / "runs" / run.run_id
             status = str(getattr(run, "status", "NEW")).upper()
             if args.resume and run_dir.exists() and _checkpoint_for(run_dir) is not None:
+                # Note: resume.py currently does not take extra hydra args
                 _, ok, _ = launch_resume(run, root, out, gpu)
             else:
-                _, ok, _ = launch(run, root, gpu, args.wandb_mode, output_base=out)
+                _, ok, _ = launch(run, root, gpu, args.wandb_mode, output_base=out, extra_args=extra_args)
             if not ok:
                 failures += 1
                 if not args.continue_on_error:
@@ -224,6 +229,7 @@ def main() -> int:
                         gpu,
                         args.wandb_mode,
                         output_base=out,
+                        extra_args=extra_args,
                     )
                 )
             for fut in concurrent.futures.as_completed(futures):
