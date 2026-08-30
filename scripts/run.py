@@ -26,7 +26,7 @@ from hydra.utils import get_original_cwd
 from omegaconf import DictConfig, OmegaConf
 
 from src.data import run_preprocessing
-from src.evaluation import run_evaluation, run_prototype_rank_evaluation
+from src.evaluation import run_evaluation, run_open_set_evaluation
 from src.experiment import create_run_services
 from src.federated import run_federated_simulation
 from src.infrastructure.logging import configure_logging, get_logger
@@ -229,8 +229,25 @@ def execute_run(cfg: DictConfig, project_root: Path, *, resume: bool = False) ->
         file_level=str(OmegaConf.select(cfg, "logging.debug_level", default="DEBUG")),
     )
     logger.info("=" * 88)
-    logger.info("FedTROS-PR run starting | %s", human_name)
-    logger.info("study=%s | stage=%s | run_id=%s | config=%s", study_id, stage, run_id, config_hash[:12])
+    dataset_name = str(OmegaConf.select(cfg, "dataset.name", default="unknown_dataset"))
+    method_name = str(OmegaConf.select(cfg, "experiment.method", default="unknown_method"))
+    protocol_name = str(OmegaConf.select(cfg, "evaluation.mode", default="unknown_protocol"))
+    clients = str(OmegaConf.select(cfg, "dataset.preprocessing.num_clients", default="unknown_clients"))
+    seed = str(OmegaConf.select(cfg, "seed", default="unknown_seed"))
+    
+    logger.info(
+        "Experiment starting |\n"
+        f"  study={study_id}\n"
+        f"  stage={stage}\n"
+        f"  dataset={dataset_name}\n"
+        f"  method={method_name}\n"
+        f"  protocol={protocol_name}\n"
+        f"  clients={clients}\n"
+        f"  seed={seed}\n"
+        f"  run_id={run_id}\n"
+        f"  config_hash={config_hash}\n"
+        f"  git_commit={git_commit}"
+    )
     logger.info("run_dir=%s", run_dir)
     logger.info("=" * 88)
 
@@ -274,6 +291,29 @@ def execute_run(cfg: DictConfig, project_root: Path, *, resume: bool = False) ->
     pipeline = str(OmegaConf.select(cfg, "experiment.pipeline", default="full")).lower()
     start_time = time.perf_counter()
 
+    def validate_canonical_runtime_contract(cfg):
+        canonical = str(OmegaConf.select(cfg, "method.canonical", default="false")).lower() == "true"
+        method_id = str(OmegaConf.select(cfg, "method", default="")).lower()
+        if canonical:
+            if "fedtros_mc" not in method_id and "fedtros" not in method_id:
+                raise ValueError(f"Method must be fedtros_mc, got {method_id}")
+            if float(OmegaConf.select(cfg, "federated.strategy.gamma", default=0.0)) != 0.5:
+                raise ValueError("Canonical requires gamma==0.5")
+            if bool(OmegaConf.select(cfg, "training.student_osr_enabled", default=False)):
+                raise ValueError("Canonical requires student_osr_decoder==False")
+            
+            rejection_backend = str(OmegaConf.select(cfg, "open_set.detector", default="")).lower()
+            if rejection_backend != "multicenter_conformal" and rejection_backend != "prototype_rank":
+                # Let evaluation fail if it's explicitly wrong
+                pass
+                
+            if bool(OmegaConf.select(cfg, "open_set.evaluate_each_round", default=False)):
+                raise ValueError("Canonical requires round_open_set_eval==False")
+
+    stage_str = str(OmegaConf.select(cfg, "stage", default="development"))
+    if stage_str in {"main", "paper_final", "reproduction"}:
+        validate_canonical_runtime_contract(cfg)
+
     try:
         with _time_stage("preprocessing", pipeline_timings):
             metadata = run_preprocessing(cfg, project_root=project_root)
@@ -294,7 +334,7 @@ def execute_run(cfg: DictConfig, project_root: Path, *, resume: bool = False) ->
                 "model_name": str(OmegaConf.select(cfg, "model.name", default="fedtros")),
                 "method": str(OmegaConf.select(cfg, "experiment.method", default="FedTROS-PR")),
                 "teacher_type": "variational_classifier",
-                "open_set_method": "prototype_rank",
+                "open_set_method": str(OmegaConf.select(cfg, "open_set.detector", default="multicenter_conformal")),
             },
             feature_manifest=feature_manifest,
         )
@@ -308,7 +348,7 @@ def execute_run(cfg: DictConfig, project_root: Path, *, resume: bool = False) ->
             open_enabled = bool(OmegaConf.select(cfg, "open_set.enabled", default=False))
             if eval_mode == "open_set" or open_enabled:
                 with _time_stage("open_set_eval", pipeline_timings):
-                    run_prototype_rank_evaluation(
+                    run_open_set_evaluation(
                         cfg,
                         project_root=project_root,
                         device=device,
@@ -328,14 +368,14 @@ def execute_run(cfg: DictConfig, project_root: Path, *, resume: bool = False) ->
             open_enabled = bool(OmegaConf.select(cfg, "open_set.enabled", default=False)) or str(OmegaConf.select(cfg, "evaluation.mode", default="closed_set")).lower() == "open_set"
             with _time_stage("centralized_eval", pipeline_timings):
                 if open_enabled:
-                    run_prototype_rank_evaluation(cfg, project_root=project_root, device=device, tracker=services)
+                    run_open_set_evaluation(cfg, project_root=project_root, device=device, tracker=services)
                 else:
                     run_evaluation(cfg, project_root=project_root, device=device, tracker=services)
         elif pipeline == "evaluate":
             open_enabled = bool(OmegaConf.select(cfg, "open_set.enabled", default=False)) or str(OmegaConf.select(cfg, "evaluation.mode", default="closed_set")).lower() == "open_set"
             with _time_stage("evaluation_only", pipeline_timings):
                 if open_enabled:
-                    run_prototype_rank_evaluation(cfg, project_root=project_root, device=device, tracker=services)
+                    run_open_set_evaluation(cfg, project_root=project_root, device=device, tracker=services)
                 else:
                     run_evaluation(cfg, project_root=project_root, device=device, tracker=services)
         else:
@@ -396,7 +436,7 @@ def _render_hydra_value(value: Any) -> str:
 
 def _normalize_method_alias(value: str) -> str:
     token = value.lower().replace("-", "_")
-    return {"fedtros": "fedtros_pr", "fedtros_pr": "fedtros_pr", "fedavg_student": "fedavg", "fedprox_student": "fedprox"}.get(token, token)
+    return {"fedtros": "fedtros_mc", "fedtros_mc": "fedtros_mc", "fedtros_pr": "fedtros_pr", "fedavg_student": "fedavg", "fedprox_student": "fedprox"}.get(token, token)
 
 
 def _resolve_direct_study_args(raw_args: list[str]) -> list[str] | None:
@@ -445,7 +485,7 @@ def _resolve_direct_study_args(raw_args: list[str]) -> list[str] | None:
         sample = "\n".join(f"  - {p.run_id}" for p in candidates[:8]) or "  (none)"
         raise SystemExit(
             f"Direct study execution must resolve to exactly one run, but {len(candidates)} cells match {study_name}.\n"
-            f"Add dimensions such as seed=42, method=fedtros_pr, alpha=0.5, variant=... or use:\n"
+            f"Add dimensions such as seed=42, method=fedtros_mc, alpha=0.5, variant=... or use:\n"
             f"  python scripts/run_study.py {study_name} --dry-run\n"
             f"Matching cells:\n{sample}"
         )

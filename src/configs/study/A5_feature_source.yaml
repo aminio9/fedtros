@@ -1,7 +1,7 @@
 study_id: A5-FEATURE
 name: A5_feature_source
 description: Feature-source gate; run only if the dedicated student OSR branch exists and is trained.
-methods: [fedtros_pr]
+methods: [fedtros_mc]
 datasets: [bnat]
 alphas: [0.5]
 iids: [false]
@@ -11,6 +11,6 @@ num_clients: 10
 seeds: [17, 42, 73, 101, 137]
 variants:
   - name: student_embedding
-    overrides: {training.student_osr_enabled: false, open_set.prototype_rank.prototype.feature_source: student_embedding}
+    overrides: {training.student_osr_enabled: false, open_set.prototype.feature_source: student_embedding}
   - name: osr_branch_embedding
-    overrides: {training.student_osr_enabled: true, open_set.prototype_rank.prototype.feature_source: osr_mu}
+    overrides: {method.canonical: false, training.canonical: true, training.student_osr_enabled: true, open_set.prototype.feature_source: osr_mu}

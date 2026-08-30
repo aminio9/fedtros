@@ -603,23 +603,40 @@ class FedTROSStrategy(FedAvg):
             OmegaConf.select(cfg, "open_set.save_round_scores", default=False)
         )
 
-        logger.info(
-            "FedTROS-PR READY | "
-            "student_aggregation_mode=%s | global_anchor_enabled=%s | "
-            "global_anchor_weight=%.3f | student_hidden_dims=%s | student_layers=%d | "
-            "support_min_weight=%.3f | round_open_set_eval=%s every=%d | "
-            "student_osr_enabled=%s | resume_round_offset=%d",
-            self.student_aggregation_mode,
-            bool(anchor_weight > 0.0),
-            anchor_weight,
-            actual_hidden,
-            len(GLOBAL_AGENT_REF.get_student_parameters()),
-            self.support_min_weight,
-            self.round_open_set_eval_enabled,
-            self.round_open_set_eval_every_n,
-            bool(getattr(GLOBAL_AGENT_REF.student_model, "osr_enabled", False)),
-            self.resume_round_offset,
-        )
+        canonical = bool(OmegaConf.select(cfg, "method.canonical", default=False))
+        if canonical:
+            self.round_open_set_eval_enabled = False
+            logger.info(
+                "--- Strategy: FedTROS-MC ---\n"
+                "canonical=true\n"
+                "anchor_statistic=kappa_i\n"
+                "anchor_enabled=true\n"
+                "aggregation=power_support_average\n"
+                "gamma=0.500\n"
+                f"student_hidden_dims={actual_hidden}\n"
+                f"student_osr_decoder={bool(getattr(GLOBAL_AGENT_REF.student_model, 'osr_enabled', False))}\n"
+                "rejection_backend=multicenter_conformal\n"
+                "round_final_unknown_eval=false\n"
+                f"resume_round_offset={self.resume_round_offset}"
+            )
+        else:
+            logger.info(
+                "FedTROS-PR (legacy) READY | "
+                "student_aggregation_mode=%s | global_anchor_enabled=%s | "
+                "global_anchor_weight=%.3f | student_hidden_dims=%s | student_layers=%d | "
+                "support_min_weight=%.3f | round_open_set_eval=%s every=%d | "
+                "student_osr_enabled=%s | resume_round_offset=%d",
+                self.student_aggregation_mode,
+                bool(anchor_weight > 0.0),
+                anchor_weight,
+                actual_hidden,
+                len(GLOBAL_AGENT_REF.get_student_parameters()),
+                self.support_min_weight,
+                self.round_open_set_eval_enabled,
+                self.round_open_set_eval_every_n,
+                bool(getattr(GLOBAL_AGENT_REF.student_model, "osr_enabled", False)),
+                self.resume_round_offset,
+            )
 
     def _effective_round(self, server_round: int) -> int:
         return int(self.resume_round_offset) + int(server_round)
@@ -641,7 +658,7 @@ class FedTROSStrategy(FedAvg):
             },
         )
         logger.info(
-            "FedTROS-PR round=%d effective_round=%d sampled=%d",
+            "FedTROS round=%d effective_round=%d sampled=%d",
             server_round,
             effective_round,
             len(clients),
@@ -678,7 +695,7 @@ class FedTROSStrategy(FedAvg):
         for client, fit_res in results:
             weights = parameters_to_ndarrays(fit_res.parameters)
             if not weights:
-                logger.warning("FedTROS-PR client %s returned empty student weights; skipping", client.cid)
+                logger.warning("FedTROS client %s returned empty student weights; skipping", client.cid)
                 continue
             records.append({
                 "cid": getattr(client, "cid", "?"),
@@ -687,14 +704,25 @@ class FedTROSStrategy(FedAvg):
                 "metrics": dict(fit_res.metrics),
             })
         if not records:
-            logger.warning("FedTROS-PR round=%d has no usable client updates", server_round)
+            logger.warning("FedTROS round=%d has no usable client updates", server_round)
             return self.global_student_parameters, {}
 
         max_examples = max(float(r.get("num_examples", 0.0)) for r in records)
         support_weights = [self._client_support_weight(r, max_examples=max_examples) for r in records]
         for record, weight in zip(records, support_weights, strict=True):
             record["support_weight"] = float(weight)
+        
+        csv_path = _resolve_path(self.cfg.tracking.run_dir) / "client_support.csv"
+        file_exists = csv_path.exists()
+        with open(csv_path, "a", encoding="utf-8") as f:
+            if not file_exists:
+                f.write("round,client_id,n_i,q_i,kappa_i,aggregation_weight,anchor_lambda\n")
+            for record in records:
+                m = record["metrics"]
+                f.write(f"{server_round},{record['cid']},{record['num_examples']},{m.get('q_i','')},{m.get('kappa_i','')},{record['support_weight']},{m.get('student_anchor_weight','')}\n")
+        
         weight_sum = max(float(np.sum(support_weights)), EPS)
+
 
         base = parameters_to_ndarrays(self.global_student_parameters)
         avg_weights: list[np.ndarray] = []
@@ -847,10 +875,11 @@ class FedTROSStrategy(FedAvg):
         backend = str(
             OmegaConf.select(self.cfg, "open_set.detector", default="prototype_rank")
         ).lower()
-        if backend not in {"prototype_rank", "fedtros_pr"}:
+        canonical = bool(OmegaConf.select(self.cfg, "method.canonical", default=False))
+        if canonical or backend not in {"prototype_rank", "fedtros_pr"}:
             logger.info(
-                "FedTROS-PR round=%d open-set evaluation skipped: backend=%s is not Prototype-Rank.",
-                server_round, backend,
+                "FedTROS round=%d open-set evaluation skipped: canonical mode or non-legacy backend.",
+                server_round,
             )
             return {}
 
@@ -1006,13 +1035,14 @@ class FedTROSStrategy(FedAvg):
         if GLOBAL_AGENT_REF is None:
             return
         GLOBAL_AGENT_REF.set_student_parameters(weights)
+        canonical = bool(OmegaConf.select(self.cfg, "method.canonical", default=False))
         checkpoint = {
             "round": round_num,
             "epoch": round_num,
             "global_step": round_num,
             "schema_version": 2,
-            "method": "FedTROS-PR",
-            "method_id": "fedtros_pr",
+            "method": "FedTROS-MC" if canonical else "FedTROS-PR (legacy)",
+            "method_id": "fedtros_mc" if canonical else "fedtros_pr_legacy",
             "teacher_type": "variational_classifier",
             "config_hash": str(OmegaConf.select(self.cfg, "experiment.config_hash", default="")),
             "code_commit": str(OmegaConf.select(self.cfg, "experiment.git_commit", default="unknown_commit")),
@@ -1032,9 +1062,9 @@ class FedTROSStrategy(FedAvg):
                 "torch_cpu": torch.get_rng_state(),
                 "torch_cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
             }
-        # Canonical FedTROS checkpoint paths
-        round_path = model_dir / f"fedtros_pr_student_round_{round_num:04d}.pt"
-        latest_path = model_dir / "fedtros_pr_student_latest.pt"
+        prefix = "fedtros_mc" if canonical else "fedtros_pr_legacy"
+        round_path = model_dir / f"{prefix}_student_round_{round_num:04d}.pt"
+        latest_path = model_dir / f"{prefix}_student_latest.pt"
         torch.save(checkpoint, round_path)
         torch.save(checkpoint, latest_path)
         torch.save(checkpoint, _resolve_path(self.cfg.checkpointing.latest_checkpoint_path))

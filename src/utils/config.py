@@ -183,9 +183,16 @@ def _apply_experiment_protocol(cfg: DictConfig) -> None:
         _set_cfg_value(cfg, "dataset.preprocessing.protocol", "open_set")
 
     _set_cfg_value(cfg, "open_set.enabled", bool(open_mode))
-    _set_cfg_value(cfg, "open_set.method", "prototype_rank" if open_mode else "disabled")
-    _set_cfg_value(cfg, "open_set.detector", "prototype_rank" if open_mode else "disabled")
-    _set_cfg_value(cfg, "open_set.prototype_rank.enabled", bool(open_mode))
+    requested_detector = _select_str(cfg, "open_set.detector", "multicenter_conformal").lower()
+    # A4 is the only predeclared study allowed to select a non-canonical detector.
+    # Its variants keep the training objective canonical and change only the
+    # post-federation detector on a matched seeded representation.
+    detector = requested_detector if study == "A4" and requested_detector == "prototype_rank" else (
+        "multicenter_conformal" if open_mode else "disabled"
+    )
+    _set_cfg_value(cfg, "open_set.method", detector)
+    _set_cfg_value(cfg, "open_set.detector", detector)
+    _set_cfg_value(cfg, "open_set.prototype_rank.enabled", bool(open_mode and detector == "prototype_rank"))
     if OmegaConf.select(cfg, "open_set.prototype_rank.proser.enabled", default=None) is not None:
         _set_cfg_value(cfg, "open_set.prototype_rank.proser.enabled", False)
     if OmegaConf.select(cfg, "open_set.prototype_rank.energy.train_margin_enabled", default=None) is not None:
