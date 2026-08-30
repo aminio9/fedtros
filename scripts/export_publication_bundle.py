@@ -30,7 +30,7 @@ ABLATION_METRICS=(
     "closed_set/macro_f1",
     "open_set/auroc",
     "open_set/unknown_f1",
-    "open_set/known_false_unknown_rate",
+    "open_set/KFR",
 )
 
 def ablation_delta_rows(runs):
@@ -105,7 +105,7 @@ def concat_frame(runs, attr:str)->pd.DataFrame:
 def export(outputs:Path,target_root:Path,freeze_id:str|None,include_stages:list[str])->Path:
     all_runs=query_runs(outputs_dir=outputs,status="COMPLETED")
     runs=[r for r in all_runs if r.study in STUDIES and r.stage in set(include_stages)]
-    freeze=freeze_id or datetime.now(timezone.utc).strftime("fedtros-pr-vct-%Y%m%dT%H%M%SZ")
+    freeze=freeze_id or datetime.now(timezone.utc).strftime("fedtros-mc-vct-%Y%m%dT%H%M%SZ")
     target=target_root/freeze
     if target.exists(): raise FileExistsError(f"Publication bundle already exists: {target}; use a new --freeze-id")
     target.mkdir(parents=True)

@@ -504,7 +504,7 @@ def build_result_json(runs: list[RunRecord], osr_run: RunRecord | None, output_p
         "schema_version": "2.1",
         "units": {"classification_metrics": "percent", "communication": "MB"},
         "metadata": {
-            "method_display_name": "FedTROS-PR",
+            "method_display_name": "FedTROS-MC",
             "source_runs": [run.run_id for run in runs],
             "evidence_policy": "Measured canonical FedTROS outputs only; no synthetic fallback rows.",
         },
@@ -597,7 +597,7 @@ def export_extended_series(runs: list[RunRecord], output_dir: Path) -> dict[str,
             attack_name = r.unknown_labels[0]
             rec = _metric(r, ("open_set/unknown_recall", "openset_unknown_recall"))
             k_acc = _metric(r, ("open_set/known_acc", "openset_known_acc", "open_set/known_accuracy_after"))
-            k_fur = _metric(r, ("open_set/known_false_unknown_rate", "openset_known_false_unknown_rate"))
+            k_fur = _metric(r, ("open_set/KFR", "open_set/known_false_unknown_rate", "openset_known_false_unknown_rate", "openset_KFR"))
             if rec is not None:
                 e8_records.append({
                     "attack": f"{attack_name} ({r.dataset})",

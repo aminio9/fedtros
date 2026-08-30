@@ -49,7 +49,7 @@ def _format_cell(mean: float, std: float, percent: bool = True, bold: bool = Fal
 def build_e1_iid_table(runs: Sequence[RunRecord]) -> pd.DataFrame:
     """Generate E1 IID Utility Benchmark table."""
     runs = [r for r in _study_runs(runs, "E1-IID-CS") if r.dataset.upper() == "B-NAT"]
-    methods = ["Centralized", "FedAvg-Student", "FedProx-Student", "FedTROS-PR"]
+    methods = ["Centralized", "FedAvg-Student", "FedProx-Student", "FedTROS-MC"]
     rows = []
 
     for m in methods:
@@ -84,7 +84,7 @@ def build_e3_non_iid_table(runs: Sequence[RunRecord]) -> pd.DataFrame:
     """Generate E3 Non-IID Closed-Set Robustness table across alpha in {0.1, 0.5, 1.0}."""
     alphas = [1.0, 0.5, 0.1]
     runs = [r for r in _study_runs(runs, "E3-NIID-CS") if r.dataset.upper() == "B-NAT"]
-    methods = ["FedAvg-Student", "FedProx-Student", "FedTROS-PR"]
+    methods = ["FedAvg-Student", "FedProx-Student", "FedTROS-MC"]
     rows = []
 
     for alpha in alphas:
@@ -121,7 +121,7 @@ def build_e3_non_iid_table(runs: Sequence[RunRecord]) -> pd.DataFrame:
 def build_e4_open_set_table(runs: Sequence[RunRecord]) -> pd.DataFrame:
     """Generate E4 Non-IID Open-Set Detection table."""
     runs = [r for r in _study_runs(runs, "E4-NIID-FOSR") if r.dataset.upper() == "B-NAT"]
-    methods = ["FedAvg-Student", "FedProx-Student", "FedTROS-PR"]
+    methods = ["FedAvg-Student", "FedProx-Student", "FedTROS-MC"]
     rows = []
 
     for m in methods:
@@ -139,7 +139,7 @@ def build_e4_open_set_table(runs: Sequence[RunRecord]) -> pd.DataFrame:
             agg, "open_set/unknown_recall", "openset_unknown_recall", "round_openset_unknown_recall"
         )
         k_fur = _metric(
-            agg, "open_set/known_false_unknown_rate", "openset_known_false_unknown_rate"
+            agg, "open_set/KFR", "open_set/known_false_unknown_rate", "openset_known_false_unknown_rate", "openset_KFR"
         )
 
         rows.append(
@@ -165,7 +165,7 @@ def build_e5_multidataset_table(runs: Sequence[RunRecord]) -> pd.DataFrame:
     """Generate E5 Multi-Dataset Generalization table (B-NAT, ToN-IoT, CIC-IDS2017)."""
     runs = _study_runs(runs, "E5-DATASET")
     datasets = ["B-NAT", "B-TAT", "ToN-IoT", "CIC-IDS2017"]
-    methods = ["FedAvg-Student", "FedProx-Student", "FedTROS-PR"]
+    methods = ["FedAvg-Student", "FedProx-Student", "FedTROS-MC"]
     rows = []
 
     for d in datasets:
@@ -203,7 +203,7 @@ def build_ablation_table(runs: Sequence[RunRecord]) -> pd.DataFrame:
         ("w/ Disagreement Gating", "gating_only"),
         ("w/ Coverage Anchoring", "anchor_only"),
         ("w/ Prototype-Rank Module", "prototype_only"),
-        ("FedTROS-PR (Full Umbrella)", "fedtros_full"),
+        ("FedTROS-MC (Full Method)", "fedtros_full"),
     ]
     rows = []
     for label, key in ablation_configs:

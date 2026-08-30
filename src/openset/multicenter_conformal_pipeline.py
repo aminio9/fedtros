@@ -238,10 +238,12 @@ def evaluate_multicenter_conformal(
         metrics["open_set/known_accuracy_before"] = float(accuracy_score(y_true[known_mask], y_pred_before[known_mask]))
         metrics["open_set/known_accuracy_after"] = float(accuracy_score(y_true[known_mask], y_pred_after[known_mask]))
         metrics["open_set/KFR"] = float(np.mean(rejected[known_mask]))
+        metrics["open_set/known_false_unknown_rate"] = metrics["open_set/KFR"]
     else:
         metrics["open_set/known_accuracy_before"] = 0.0
         metrics["open_set/known_accuracy_after"] = 0.0
         metrics["open_set/KFR"] = 0.0
+        metrics["open_set/known_false_unknown_rate"] = 0.0
         
     if np.any(is_unknown):
         metrics["open_set/unknown_recall"] = float(np.mean(rejected[is_unknown]))
