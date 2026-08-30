@@ -16,6 +16,8 @@ This ledger tracks the method-consistency and experimental-reproducibility remed
 | Paper-stage protocol gate | completed | 1789abb | Publication stages now enforce 100 rounds/10 clients for all non-scalability studies; ablations use five seeds |
 | A4/A5 split traceability | completed | 1327f75 | Added row-level prototype-fit/prototype-validation artifact and checksum; conformal contract tests passed |
 | Matched baseline matrix | completed | 2d399e9 | Added centralized method config and exposed FedAvg/FedProx/SCAFFOLD/local-only/centralized in core studies |
+| Publication provenance gate | completed | 2f9d661 | Validator now verifies final-test identifier path, existence, and SHA-256 checksum for open-set studies |
+| Full regression verification | completed | 10a53d2 | Full test suite after final changes: 157 passed |
 
 ## Operating rules
 
