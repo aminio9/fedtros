@@ -472,6 +472,9 @@ class SaveModelFedAvg(FedAvg):
             server_round, results, failures
         )
 
+        total_bytes = sum(sum(len(t) for t in fit_res.parameters.tensors) for _, fit_res in results if fit_res.parameters.tensors)
+        aggregated_metrics["communication/real_payload_bytes_rx"] = float(total_bytes)
+
         if aggregated_parameters is not None:
             # Save the model
             save_global_model(
@@ -514,6 +517,9 @@ class SaveModelFedProx(FedProx):
         aggregated_parameters, aggregated_metrics = super().aggregate_fit(
             server_round, results, failures
         )
+
+        total_bytes = sum(sum(len(t) for t in fit_res.parameters.tensors) for _, fit_res in results if fit_res.parameters.tensors)
+        aggregated_metrics["communication/real_payload_bytes_rx"] = float(total_bytes)
 
         if aggregated_parameters is not None:
             save_global_model(
@@ -739,6 +745,9 @@ class FedTROSStrategy(FedAvg):
 
         fit_metrics = [(int(r["num_examples"]), r["metrics"]) for r in records]
         metrics = aggregate_fit_metrics(fit_metrics)
+
+        total_bytes = sum(sum(len(t) for t in fit_res.parameters.tensors) for _, fit_res in results if fit_res.parameters.tensors)
+        metrics["communication/real_payload_bytes_rx"] = float(total_bytes)
 
         macro_f1_values = [
             value for record in records for value in [
