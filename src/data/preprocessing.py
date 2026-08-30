@@ -807,6 +807,24 @@ def run_preprocessing(cfg: DictConfig, *, project_root: Path) -> dict[str, Any]:
             }
             for source_index, row in frame.iterrows()
         )
+    
+    # Automated leakage and disjointness checks
+    split_indices = {
+        split_name: set(frame.index)
+        for split_name, frame in (
+            ("known_train", train_df),
+            ("validation", val_df),
+            ("known_test", test_df),
+            ("unknown_test", df_unknown),
+        )
+    }
+    for s1 in split_indices:
+        for s2 in split_indices:
+            if s1 < s2:
+                overlap = split_indices[s1].intersection(split_indices[s2])
+                if overlap:
+                    raise AssertionError(f"Leakage detected! {len(overlap)} samples overlap between {s1} and {s2}.")
+
     pd.DataFrame(split_rows).to_csv(output_dir / "split_manifest.csv", index=False)
 
     feature_names = list(numerical)
