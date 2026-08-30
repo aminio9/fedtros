@@ -261,8 +261,6 @@ def expand_study_matrix(
                 allow_legacy_detector = str(study_id).upper().split("-", 1)[0] == "A4" and str(overrides.get("open_set.detector", "")).lower() == "prototype_rank"
                 if open_set and not allow_legacy_detector:
                     overrides["open_set.detector"] = "multicenter_conformal"
-                    overrides["open_set.prototype_rank.proser.enabled"] = False
-                    overrides["open_set.prototype_rank.energy.train_margin_enabled"] = False
             elif method in {"fedtros_pr", "fedtros_pr_legacy"}:
                 overrides["federated.strategy.name"] = "fedtros_pr"
             elif method in {"fedavg", "fedprox", "scaffold", "local_only", "centralized"}:
