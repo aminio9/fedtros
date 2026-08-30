@@ -62,6 +62,10 @@ def test_conformal_order_statistic_and_scores_are_reproducible(tmp_path):
     assert not set(rows["sample_id"]) & {"u0", "u1"}
     scores = np.sort(rows["nonconformity_score"].to_numpy(float))
     assert np.isclose(a["tau_alpha"], scores[a["k_alpha"] - 1])
+    internal = pd.read_csv(tmp_path / "a" / "osr" / "prototype_internal_split.csv")
+    assert set(internal["subset"]) == {"proto-fit", "proto-val"}
+    assert len(internal) == len(proto)
+    assert a["prototype_internal_split"]["fit_count"] + a["prototype_internal_split"]["val_count"] == len(proto)
 
     # Independent Mahalanobis recomputation from exported model state.
     for _, row in rows.iterrows():

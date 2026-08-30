@@ -30,6 +30,7 @@ def fit_multicenter_conformal(
     proto_sel_records = []
     proto_summary_records = []
     proto_assign_records = []
+    proto_internal_records = []
     
     z_all_proto = []
     
@@ -57,6 +58,14 @@ def fit_multicenter_conformal(
         fit_idx, val_idx = perm[:n_fit], perm[n_fit:]
         z_fit = z_c[fit_idx]
         z_val = z_c[val_idx]
+        for idx in fit_idx:
+            proto_internal_records.append({
+                "sample_id": sample_ids[idx], "class_id": c, "subset": "proto-fit"
+            })
+        for idx in val_idx:
+            proto_internal_records.append({
+                "sample_id": sample_ids[idx], "class_id": c, "subset": "proto-val"
+            })
         max_k = min(10, len(z_fit) - 1)
         proto_sel_records.append({"class_id": c, "class_name": f"Class {c}",
             "candidate_k": 1, "fold_id": 0, "surrogate_metric": np.nan,
@@ -208,6 +217,8 @@ def fit_multicenter_conformal(
         osr_dir = output_dir / "osr"
         osr_dir.mkdir(parents=True, exist_ok=True)
         pd.DataFrame(proto_sel_records).to_csv(osr_dir / "prototype_selection.csv", index=False)
+        internal_frame = pd.DataFrame(proto_internal_records)
+        internal_frame.to_csv(osr_dir / "prototype_internal_split.csv", index=False)
         pd.DataFrame(proto_summary_records).to_csv(osr_dir / "prototype_summary.csv", index=False)
         pd.DataFrame(proto_assign_records).to_csv(osr_dir / "prototype_assignments.csv", index=False)
         pd.DataFrame(calib_records).to_csv(osr_dir / "calibration_scores.csv", index=False)
@@ -226,6 +237,15 @@ def fit_multicenter_conformal(
             f"class_{c}": np.asarray(m_data["precision"], dtype=np.float64)
             for c, m_data in models.items()})
 
+    internal_payload = json.dumps(
+        sorted(
+            ({"sample_id": str(row["sample_id"]), "class_id": int(row["class_id"]), "subset": str(row["subset"])}
+             for row in proto_internal_records),
+            key=lambda row: (row["class_id"], row["subset"], row["sample_id"]),
+        ),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
     return {
         "models": models,
         "tau_alpha": tau_alpha,
@@ -233,6 +253,12 @@ def fit_multicenter_conformal(
         "k_alpha": k_alpha,
         "m": m,
         "pca": pca
+        ,"prototype_internal_split": {
+            "fit_count": sum(1 for row in proto_internal_records if row["subset"] == "proto-fit"),
+            "val_count": sum(1 for row in proto_internal_records if row["subset"] == "proto-val"),
+            "identifier_hash": hashlib.sha256(internal_payload).hexdigest(),
+            "artifact": "osr/prototype_internal_split.csv" if output_dir else None,
+        }
     }
 
 def score_multicenter_conformal(

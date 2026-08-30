@@ -145,6 +145,7 @@ def calibrate_multicenter_conformal(
             "config_hash": cfg_hash,
             "unknown_data_used_for_fitting": False,
             "misclassified_known_calibration_included": True,
+            "prototype_internal_split": conformal_meta.get("prototype_internal_split", {}),
         }
         (osr_dir / "conformal_metadata.json").write_text(json.dumps(conf_meta, indent=2), encoding="utf-8")
         
@@ -168,6 +169,7 @@ def calibrate_multicenter_conformal(
             "unknown_labels": None,
             "unknown_data_used_for_fitting": False,
             "proof": "Prototype selection/covariance use D_proto known only; calibration uses D_cal known only.",
+            "prototype_internal_split": conformal_meta.get("prototype_internal_split", {}),
         }
         (output_dir / "split_manifest.json").write_text(json.dumps(split_manifest, indent=2), encoding="utf-8")
         
