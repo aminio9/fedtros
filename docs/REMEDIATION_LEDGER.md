@@ -12,6 +12,10 @@ This ledger tracks the method-consistency and experimental-reproducibility remed
 | Canonical metric/reporting contract | completed | fa758f8 | KFR alias, FedTROS-MC reporting labels, and canonical loader normalization |
 | Baseline integration | completed | 2a11705 | SCAFFOLD/local-only server-client dispatch; centralized import fix; 29 focused tests passed |
 | Final verification | completed | 8230e68 | Full suite: 151 passed; evidence gate remains intentionally red until paper runs exist |
+| Final-test provenance | completed | 35713d2 | Added deterministic final-test identifier artifact with manifest path/hash; provenance test passed |
+| Paper-stage protocol gate | completed | 1789abb | Publication stages now enforce 100 rounds/10 clients for all non-scalability studies; ablations use five seeds |
+| A4/A5 split traceability | completed | 1327f75 | Added row-level prototype-fit/prototype-validation artifact and checksum; conformal contract tests passed |
+| Matched baseline matrix | completed | 2d399e9 | Added centralized method config and exposed FedAvg/FedProx/SCAFFOLD/local-only/centralized in core studies |
 
 ## Operating rules
 
