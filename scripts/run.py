@@ -293,7 +293,7 @@ def execute_run(cfg: DictConfig, project_root: Path, *, resume: bool = False) ->
 
     def validate_canonical_runtime_contract(cfg):
         canonical = str(OmegaConf.select(cfg, "method.canonical", default="false")).lower() == "true"
-        method_id = str(OmegaConf.select(cfg, "method", default="")).lower()
+        method_id = str(OmegaConf.select(cfg, "experiment.method", default="")).lower()
         if canonical:
             if "fedtros_mc" not in method_id and "fedtros" not in method_id:
                 raise ValueError(f"Method must be fedtros_mc, got {method_id}")
