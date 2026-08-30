@@ -88,7 +88,13 @@ def generate_run_id(cfg: DictConfig | dict[str, Any], *, study_id: str | None = 
     study = str(study_id or _select(cfg, "experiment.id", "E0-VERIFY")).upper()
     dataset = _dataset_slug(str(_select(cfg, "dataset.name", _select(cfg, "dataset", "bnat"))))
     method_raw = str(_select(cfg, "experiment.method", _select(cfg, "method", "fedtros_pr")))
-    method_slug = "fedtros_pr" if "fedtros" in method_raw.lower() else _sanitize_slug(method_raw)
+    method_token = method_raw.lower().replace("-", "_")
+    if method_token in {"fedtros", "fedtros_mc", "fedtros_m_c"}:
+        method_slug = "fedtros_mc"
+    elif method_token in {"fedtros_pr", "fedtros_pr_legacy"}:
+        method_slug = "fedtros_pr"
+    else:
+        method_slug = _sanitize_slug(method_raw)
     iid = bool(_select(cfg, "dataset.preprocessing.iid", False))
     alpha = float(_select(cfg, "dataset.preprocessing.alpha", 0.5))
     unknowns = list(_select(cfg, "dataset.preprocessing.unknown_labels", []) or [])
@@ -115,7 +121,7 @@ def generate_run_id(cfg: DictConfig | dict[str, Any], *, study_id: str | None = 
     variant_slug = "" if variant in {"", "canonical"} else f"_{variant}"
     rerun_slug = f"_rerun_{rerun_token}" if rerun_token else ""
     run_id = f"{study_slug}_{dataset}_{method_slug}_{partition_slug}_{unknown_slug}_c{clients}_s{seed}{variant_slug}{rerun_slug}_{identity_hash}"
-    human_method = "FedTROS-PR" if method_slug == "fedtros_pr" else method_raw
+    human_method = {"fedtros_mc": "FedTROS-MC", "fedtros_pr": "FedTROS-PR"}.get(method_slug, method_raw)
     human = f"{study} | {dataset.upper()} | {human_method} | {'IID' if iid else f'alpha={alpha}'} | {unknown_desc} | c={clients} | s={seed}"
     if variant_slug:
         human += f" | {variant}"

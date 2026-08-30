@@ -1,7 +1,7 @@
 study_id: E7-EFFICIENCY
 name: E7_efficiency
 description: Communication and computational efficiency using architecture-matched student baselines and actual payload bytes.
-methods: [fedtros_pr, fedavg, fedprox]
+methods: [fedtros_mc, fedavg, fedprox]
 datasets: [bnat]
 alphas: [0.5]
 iids: [false]

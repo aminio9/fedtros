@@ -1,7 +1,7 @@
 study_id: E5-DATASET
 name: E5_datasetwise
 description: Dataset-wise external validation with frozen within-dataset known/unknown protocols; not cross-dataset transfer.
-methods: [fedtros_pr, fedavg, fedprox]
+methods: [fedtros_mc, fedavg, fedprox]
 datasets: [bnat, btat, cicids2017, toniot]
 alphas: [0.5]
 iids: [false]

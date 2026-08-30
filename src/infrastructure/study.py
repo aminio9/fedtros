@@ -225,8 +225,8 @@ def expand_study_matrix(
             overrides: dict[str, Any] = {
                 **base, **stage_overrides, **variant["overrides"],
                 "experiment.id": study_id,
-                "experiment.method": "FedTROS-PR" if method in {"fedtros", "fedtros_pr"} else method,
-                "method": "fedtros_pr" if method in {"fedtros", "fedtros_pr"} else method,
+                "experiment.method": "FedTROS-MC" if method in {"fedtros", "fedtros_mc", "fedtros_m_c"} else ("FedTROS-PR" if method in {"fedtros_pr", "fedtros_pr_legacy"} else method),
+                "method": "fedtros_mc" if method in {"fedtros", "fedtros_mc", "fedtros_m_c"} else ("fedtros_pr" if method in {"fedtros_pr", "fedtros_pr_legacy"} else method),
                 "dataset": dataset,
                 "dataset.preprocessing.alpha": alpha,
                 "dataset.preprocessing.iid": iid,
@@ -237,7 +237,7 @@ def expand_study_matrix(
                 "stage": stage,
                 "evaluation.mode": "open_set" if open_set else "closed_set",
                 "open_set.enabled": open_set,
-                "open_set.method": "prototype_rank" if open_set else "disabled",
+                "open_set.method": "multicenter_conformal" if open_set else "disabled",
                 "experiment.variant": variant["name"],
             }
             known = known_by_dataset.get(str(dataset).lower())
@@ -247,12 +247,15 @@ def expand_study_matrix(
                 overrides["dataset.preprocessing.known_labels"] = known
                 overrides["model.num_classes"] = len(known)
 
-            if method in {"fedtros", "fedtros_pr"}:
-                overrides["federated.strategy.name"] = "fedtros_pr"
-                if open_set:
-                    overrides["open_set.detector"] = "prototype_rank"
+            if method in {"fedtros", "fedtros_mc", "fedtros_m_c"}:
+                overrides["federated.strategy.name"] = "fedtros"
+                allow_legacy_detector = str(study_id).upper().split("-", 1)[0] == "A4" and str(overrides.get("open_set.detector", "")).lower() == "prototype_rank"
+                if open_set and not allow_legacy_detector:
+                    overrides["open_set.detector"] = "multicenter_conformal"
                     overrides["open_set.prototype_rank.proser.enabled"] = False
                     overrides["open_set.prototype_rank.energy.train_margin_enabled"] = False
+            elif method in {"fedtros_pr", "fedtros_pr_legacy"}:
+                overrides["federated.strategy.name"] = "fedtros_pr"
             elif method in {"fedavg", "fedprox"}:
                 overrides["federated.strategy.name"] = method
 

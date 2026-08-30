@@ -129,7 +129,7 @@ def calibrate_multicenter_conformal(
             "k_alpha": conformal_meta["k_alpha"],
             "tau_alpha": conformal_meta["tau_alpha"],
             "score": "candidate_class_squared_mahalanobis",
-            "feature_source": "l2_normalized_student_hidden",
+            "feature_source": str(_nested(cfg, "prototype.feature_source", "student_hidden")),
             "calibration_scope": "global_known",
             "split_hash": split_provenance.get("proto_indices_hash", ""),
             "config_hash": cfg_hash,
@@ -347,7 +347,7 @@ def evaluate_multicenter_conformal(
             proj_df.to_csv(osr_dir / "latent_projection.csv", index=False)
             
             proj_meta = {
-                "feature_source": "l2_normalized_student_hidden",
+                "feature_source": str(_nested(cfg, "prototype.feature_source", "student_hidden")),
                 "projection": "pca",
                 "projection_fit_split": "D_proto_known_only",
                 "prototype_method": "adaptive_classwise_kmeans",

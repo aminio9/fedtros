@@ -166,42 +166,35 @@ def run_evaluation(
     return all_metrics
 
 
-def run_prototype_rank_evaluation(
-    cfg: DictConfig,
+def run_open_set_evaluation(
+    cfg,
     *,
-    project_root: Path,
-    device: torch.device,
-    tracker: MetricsSink | None = None,
-    output_dir: Path | None = None,
-    server_round: int | None = None,
-    save_scores: bool | None = None,
-    append_round_metrics: bool = False,
-) -> dict[str, Any]:
-    """Evaluate FedTROS-PR with the known-only Prototype-Rank rejection stage.
-
-    The private VCT remains client-local. Prototype-Rank consumes the configured
-    student feature source and never uses final unknown samples for fitting or
-    threshold calibration.
-    """
+    project_root,
+    device,
+    tracker = None,
+    output_dir = None,
+    server_round = None,
+    save_scores = None,
+    append_round_metrics = False,
+):
     open_set_cfg = cfg.open_set
-    prototype_rank_cfg = _compose_prototype_rank_runtime_config(open_set_cfg)
     if not bool(getattr(open_set_cfg, "enabled", False)):
-        logger.info("FedTROS-PR open-set evaluation skipped: open_set.enabled=false.")
+        logger.info("Open-set evaluation skipped: open_set.enabled=false.")
         return {}
-    detector = str(getattr(open_set_cfg, "detector", getattr(open_set_cfg, "method", "prototype_rank"))).lower()
-    if detector != "prototype_rank" or not bool(getattr(prototype_rank_cfg, "enabled", False)):
-        raise ValueError(
-            "FedTROS-PR open-set evaluation requires open_set.detector=prototype_rank "
-            "and open_set.prototype_rank.enabled=true."
-        )
+
+    detector = str(getattr(open_set_cfg, "detector", getattr(open_set_cfg, "method", "multicenter_conformal"))).lower()
+    logger.info("Open-set detector=%s", detector)
+    canonical = str(getattr(getattr(cfg, "method", None), "canonical", "false")).lower() == "true"
+    
+    if canonical and detector != "multicenter_conformal":
+        raise ValueError("CanonicalConfigurationError: canonical=true MUST resolve to backend=multicenter_conformal.")
 
     base_output_dir = resolve_path(project_root, cfg.evaluation.output_dir)
     output_dir = Path(output_dir) if output_dir is not None else base_output_dir
     if not output_dir.is_absolute():
         output_dir = project_root / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
-    if save_scores is None:
-        save_scores = True
+    if save_scores is None: save_scores = True
 
     agent = build_agent(cfg, device)
     student_ckpt = _resolve_prototype_rank_checkpoint(cfg, project_root=project_root)
@@ -211,12 +204,6 @@ def run_prototype_rank_evaluation(
         raise KeyError(f"Missing 'student_model' in checkpoint: {student_ckpt}")
     agent.student_model.load_state_dict(state, strict=True)
     agent.student_model.to(device).eval()
-    feature_source = str(getattr(getattr(prototype_rank_cfg, "prototype", None), "feature_source", "student_embedding")).lower()
-    if feature_source in {"osr_mu", "osr_embedding"} and not bool(getattr(agent.student_model, "osr_enabled", False)):
-        raise RuntimeError(
-            "Prototype-Rank feature_source=osr_mu requires the optional student OSR branch. "
-            "Use feature_source=student_embedding or enable the branch for A5 evaluation."
-        )
 
     class_names = load_class_names(resolve_path(project_root, cfg.evaluation.class_names), int(cfg.model.num_classes))
     calibration_features, calibration_labels = load_tensor_dataset(
@@ -225,134 +212,63 @@ def run_prototype_rank_evaluation(
     open_features, open_labels = load_tensor_dataset(
         resolve_path(project_root, cfg.evaluation.open_set_data), map_location="cpu"
     )
-    unknown_label_id = int(getattr(open_set_cfg, "unknown_label_id", -1))
-    num_unknown_train = int((calibration_labels == unknown_label_id).sum().item())
-    num_unknown_test = int((open_labels == unknown_label_id).sum().item())
-    unknown_label_names = _open_set_unknown_names(cfg, project_root=project_root)
-    logger.info(
-        "FEDTROS-PR PROTOTYPE-RANK ACTIVE | known_classes=%s | unknown_labels=%s | unknown_label_id=%s | "
-        "num_classes=%d | calibration_samples=%d | calibration_unknown=%d | open_test_samples=%d | "
-        "open_test_unknown=%d | osr_latent_dim=%d | boundary_samples=%s | energy=%s | prototype=%s | server_round=%s",
-        [class_names[k] for k in sorted(class_names)],
-        unknown_label_names or ["held_out_unknown"],
-        unknown_label_id,
-        int(cfg.model.num_classes),
-        int(calibration_labels.numel()),
-        num_unknown_train,
-        int(open_labels.numel()),
-        num_unknown_test,
-        int(getattr(agent.student_model, "osr_latent_dim", 0)),
-        bool(getattr(getattr(prototype_rank_cfg, "boundary_samples", None), "enabled", True)),
-        bool(getattr(getattr(prototype_rank_cfg, "energy", None), "enabled", True)),
-        bool(getattr(getattr(prototype_rank_cfg, "prototype", None), "enabled", True)),
-        "final" if server_round is None else int(server_round),
-    )
-    if num_unknown_train != 0:
-        raise ValueError("Prototype-Rank calibration data must contain known classes only; found unknown labels.")
 
-    prototype_bank, calibration_df, meta = calibrate_prototype_rank(
-        calibration_features,
-        calibration_labels,
-        student_model=agent.student_model,
-        batch_size=int(cfg.evaluation.batch_size),
-        device=device,
-        cfg=prototype_rank_cfg,
-        logger_=logger,
-    )
-    pr_output_dir = output_dir / "artifacts" / "prototype_rank"
-    pr_output_dir.mkdir(parents=True, exist_ok=True)
-    meta_json = json.dumps(meta, indent=2, sort_keys=True)
-    (pr_output_dir / "prototype_rank_meta.json").write_text(meta_json, encoding="utf-8")
-    metrics = evaluate_prototype_rank(
-        open_features,
-        open_labels,
-        student_model=agent.student_model,
-        batch_size=int(cfg.evaluation.batch_size),
-        device=device,
-        cfg=prototype_rank_cfg,
-        class_names=class_names,
-        output_dir=output_dir,
-        prototype_bank=prototype_bank,
-        calibration_df=calibration_df,
-        logger_=logger,
-        report_to_stdout=bool(cfg.evaluation.report_to_stdout),
-        meta=meta,
-    )
-
-    if bool(getattr(cfg.evaluation, "export_latent_embeddings", True)):
-        scores_path = output_dir / "predictions" / "open_set_scores.csv"
-        if not scores_path.exists():
-            scores_path = output_dir / "open_set_scores.csv"
-        if not scores_path.exists():
-            raise FileNotFoundError(
-                "Prototype-Rank evaluation did not write open_set_scores.csv required for "
-                "the latent projection artifact."
-            )
-        export_prototype_rank_projection(
-            model=agent.student_model,
-            features=open_features,
-            labels=open_labels,
-            class_names=class_names,
-            prototype_bank=prototype_bank,
-            scores=pd.read_csv(scores_path),
-            output_path=output_dir / "artifacts" / "prototype_rank_latent_projection.csv",
-            batch_size=int(cfg.evaluation.latent_embeddings_batch_size),
-            max_points=int(cfg.evaluation.latent_embeddings_max_points),
-            feature_source=feature_source,
+    if detector == "multicenter_conformal":
+        logger.info("Evaluating Multicenter Conformal | canonical=%s", canonical)
+        from src.openset.multicenter_conformal_pipeline import calibrate_multicenter_conformal, evaluate_multicenter_conformal
+        conformal_meta, df_calib, meta = calibrate_multicenter_conformal(
+            calibration_features, calibration_labels,
+            student_model=agent.student_model, batch_size=int(cfg.evaluation.batch_size),
+            device=device, cfg=open_set_cfg, logger_=logger, output_dir=output_dir
         )
-
-    if server_round is not None:
-        metrics["server_round"] = int(server_round)
-        metrics["open_set/server_round"] = float(server_round)
-
-    if append_round_metrics and server_round is not None:
-        curve_path = base_output_dir / "metrics" / "open_set_round_metrics.csv"
-        curve_path.parent.mkdir(parents=True, exist_ok=True)
-        round_row = {
-            "round": int(server_round),
-            "backend": "prototype_rank",
-            "openset_known_acc": float(metrics.get("openset_known_acc", 0.0)),
-            "openset_unknown_recall": float(metrics.get("openset_unknown_recall", 0.0)),
-            "openset_unknown_f1": float(metrics.get("openset_unknown_f1", 0.0)),
-            "openset_f1_macro": float(metrics.get("openset_f1_macro", 0.0)),
-            "openset_overall_acc": float(metrics.get("openset_overall_acc", 0.0)),
-            "openset_auroc": float(metrics.get("openset_auroc", 0.0)),
-            "openset_auprc": float(metrics.get("openset_auprc", 0.0)),
-            "openset_fpr95": float(metrics.get("openset_fpr95", 1.0)),
-            "openset_known_false_unknown_rate": float(metrics.get("openset_known_false_unknown_rate", 0.0)),
-            "openset_rejected_by_gen": float(metrics.get("openset_rejected_by_gen", 0.0)),
-            "openset_rejected_by_energy": float(metrics.get("openset_rejected_by_energy", 0.0)),
-            "openset_rejected_by_prototype": float(metrics.get("openset_rejected_by_prototype", 0.0)),
-        }
-        write_header = not curve_path.exists()
-        with curve_path.open("a", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=list(round_row.keys()))
-            if write_header:
-                writer.writeheader()
-            writer.writerow(round_row)
-        logger.info(
-            "Prototype-Rank round metrics appended | round=%s | AUROC=%.4f | UnknownRecall=%.4f | KnownFU=%.4f",
-            int(server_round),
-            float(metrics.get("openset_auroc", 0.0)),
-            float(metrics.get("openset_unknown_recall", 0.0)),
-            float(metrics.get("openset_known_false_unknown_rate", 0.0)),
+        
+        pr_output_dir = output_dir / "artifacts" / "multicenter_conformal"
+        pr_output_dir.mkdir(parents=True, exist_ok=True)
+        import json
+        meta_json = json.dumps(meta, indent=2, sort_keys=True)
+        (pr_output_dir / "mc_meta.json").write_text(meta_json, encoding="utf-8")
+        
+        metrics = evaluate_multicenter_conformal(
+            open_features, open_labels,
+            student_model=agent.student_model, batch_size=int(cfg.evaluation.batch_size),
+            device=device, cfg=open_set_cfg, class_names=class_names,
+            output_dir=output_dir, conformal_meta=conformal_meta, logger_=logger
         )
+        all_metrics = metrics
+    else:
+        # Legacy Prototype Rank
+        logger.info("Evaluating Legacy Prototype-Rank")
+        from src.openset.prototype_rank_pipeline import calibrate_prototype_rank, evaluate_prototype_rank, export_prototype_rank_projection
+        prototype_rank_cfg = _compose_prototype_rank_runtime_config(open_set_cfg)
+        prototype_bank, calibration_df, meta = calibrate_prototype_rank(
+            calibration_features, calibration_labels,
+            student_model=agent.student_model, batch_size=int(cfg.evaluation.batch_size),
+            device=device, cfg=prototype_rank_cfg, logger_=logger
+        )
+        
+        pr_output_dir = output_dir / "artifacts" / "prototype_rank"
+        pr_output_dir.mkdir(parents=True, exist_ok=True)
+        import json
+        meta_json = json.dumps(meta, indent=2, sort_keys=True)
+        (pr_output_dir / "prototype_rank_meta.json").write_text(meta_json, encoding="utf-8")
+        
+        metrics = evaluate_prototype_rank(
+            open_features, open_labels,
+            student_model=agent.student_model, batch_size=int(cfg.evaluation.batch_size),
+            device=device, cfg=prototype_rank_cfg, class_names=class_names,
+            output_dir=output_dir, prototype_bank=prototype_bank, calibration_df=calibration_df,
+            logger_=logger, report_to_stdout=bool(cfg.evaluation.report_to_stdout), meta=meta
+        )
+        all_metrics = metrics
 
-    # Standardized B9 Metric Namespaces
-    metrics["open_set/auroc"] = float(metrics.get("openset_auroc", 0.0))
-    metrics["open_set/auprc"] = float(metrics.get("openset_auprc", 0.0))
-    metrics["open_set/fpr_at_95_tpr"] = float(metrics.get("openset_fpr95", 1.0))
-    metrics["open_set/unknown_f1"] = float(metrics.get("openset_unknown_f1", 0.0))
-    metrics["open_set/unknown_recall"] = float(metrics.get("openset_unknown_recall", 0.0))
-    metrics["open_set/known_false_unknown_rate"] = float(metrics.get("openset_known_false_unknown_rate", 0.0))
-    metrics["closed_set/accuracy"] = float(metrics.get("openset_known_acc_before", 0.0))
-
-    if tracker:
-        tracker.log_metrics(metrics)
-    metrics_payload = json.dumps(metrics, indent=2, sort_keys=True)
     metrics_dir = output_dir / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
-    (metrics_dir / "evaluation_metrics.json").write_text(metrics_payload, encoding="utf-8")
-    (metrics_dir / "open_set_metrics.json").write_text(metrics_payload, encoding="utf-8")
-    logger.info("FedTROS-PR Prototype-Rank evaluation complete: %s", output_dir)
-    return metrics
+    import json
+    (metrics_dir / "evaluation_metrics.json").write_text(
+        json.dumps(all_metrics, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    logger.info("Evaluation complete. Metrics saved under %s", output_dir)
+    return all_metrics
+
+
