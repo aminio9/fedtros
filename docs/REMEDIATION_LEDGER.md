@@ -4,12 +4,12 @@ This ledger tracks the method-consistency and experimental-reproducibility remed
 
 | Section | Status | Commit | Verification |
 |---|---|---|---|
-| Baseline inventory | in progress | — | Record current dirty tree, run inventory, and failing tests |
-| Canonical method/configuration | pending | — | Unit tests for canonical coverage and matched method resolution |
-| Multicenter conformal/provenance/metrics | pending | — | Conformal protocol, artifact, leakage, and metric tests |
-| Study/export contracts | pending | — | Study validation, ablation routing, and publication bundle tests |
-| Plot-data publication gate | pending | — | Reject unsupported historical/incomplete data; validate one frozen bundle |
-| Final verification | pending | — | Full test suite, clean status, and commit review |
+| Baseline inventory | completed | c3f6e8e | Recorded current dirty tree, run inventory, and failing tests |
+| Canonical method/configuration | completed | b97986f | Canonical training flag propagated; focused tests passed |
+| Multicenter conformal/provenance/metrics | completed | aa7f281 | Disjoint K selection, pooled covariance fallback, metrics, and split provenance |
+| Study/export contracts | completed | 126524c | FedTROS-MC identities, A4/A5 routing, stage validation, and schema fix |
+| Plot-data publication gate | completed | 06df643 | Added fail-fast evidence validator and gated publication export |
+| Final verification | in progress | — | Full test suite, clean status, and commit review |
 
 ## Operating rules
 

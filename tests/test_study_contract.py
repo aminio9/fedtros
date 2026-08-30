@@ -27,7 +27,7 @@ def test_headline_seed_policy():
 def test_e3_alpha_matrix():
     cfg = _study("E3-NIID-CS")
     assert list(map(float, cfg["alphas"])) == [1.0, 0.5, 0.1]
-    assert set(cfg["methods"]) == {"fedtros_pr", "fedavg", "fedprox"}
+    assert set(cfg["methods"]) == {"fedtros_mc", "fedavg", "fedprox"}
     assert cfg["known_labels"] == ["Normal", "BP", "DoS", "MitM", "FoT"]
 
 
@@ -75,7 +75,7 @@ def test_e8_holdouts_keep_normal_known():
 def test_a4_detector_variants():
     cfg = _study("A4-PR")
     variants = [v["name"] for v in cfg["variants"]]
-    assert variants == ["msp", "energy", "positive_only", "boundary_raw", "full_rank"]
+    assert variants == ["multicenter_conformal", "msp", "energy", "positive_only", "boundary_raw", "prototype_rank"]
 
 
 def test_paired_partition_path_is_method_independent():
