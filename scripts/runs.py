@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect FedTROS-PR runs and compare them with the declarative study contract."""
+"""Inspect FedTROS-MC runs and compare them with the declarative study contract."""
 from __future__ import annotations
 
 import argparse
@@ -56,7 +56,7 @@ def cmd_show(args: argparse.Namespace) -> int:
     except FileNotFoundError:
         print(f"Run not found: {args.target}"); return 1
     r=load_run(p)
-    print("\nFedTROS-PR run")
+    print("\nFedTROS-MC run")
     print("="*92)
     for label,value in (
         ("Run ID",r.run_id),("Study",r.study),("Stage",r.stage),("Status",r.status),
@@ -101,7 +101,7 @@ def cmd_resumable(args: argparse.Namespace) -> int:
     rows=[]
     for r in _runs(args,status=None):
         if r.status.upper() not in {"FAILED","INTERRUPTED","RESUMED"}: continue
-        ckpts=[r.run_dir/"checkpoints"/"latest.pt", r.run_dir/"checkpoints"/"fedtros_pr_student_latest.pt"]
+        ckpts=[r.run_dir/"checkpoints"/"latest.pt", r.run_dir/"checkpoints"/"fedtros_mc_student_latest.pt"]
         if any(p.exists() for p in ckpts): rows.append(r)
     _print_runs(rows); return 0
 
@@ -117,7 +117,7 @@ def cmd_missing(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    p=argparse.ArgumentParser(description="FedTROS-PR run registry/query CLI")
+    p=argparse.ArgumentParser(description="FedTROS-MC run registry/query CLI")
     p.add_argument("--outputs-dir",default=str(_ROOT/"outputs"))
     sub=p.add_subparsers(dest="command",required=True)
     q=sub.add_parser("list"); q.add_argument("--study"); q.add_argument("--stage"); q.add_argument("--method"); q.add_argument("--status",default=None)

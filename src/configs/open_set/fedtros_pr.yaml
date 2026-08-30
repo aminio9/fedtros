@@ -1,16 +1,14 @@
 name: fedtros_pr
 enabled: true
-method: prototype_rank
+method: multicenter_conformal
+detector: multicenter_conformal
 
-calibration:
-  prototype_fit_fraction: 0.70
-  threshold_calibration_fraction: 0.30
-  target_known_fpr: 0.05
-  min_samples_per_class: 50
-  fit_correct_only: true
-  strict_disjoint: true
+synthetic_boundary: false
+osr_decoder: false
+aggregation_gamma: 0.5
+score: candidate_mahalanobis_sq
+calibration: global_split_conformal
 
-detector: prototype_rank
 unknown_label_id: -1
 open_set_label_id: 99
 evaluate_each_round: false
@@ -18,90 +16,16 @@ evaluate_every_n_rounds: 1
 round_eval_dir: open_set_rounds
 save_round_scores: true
 
-prototype_rank:
-  enabled: true
-  # Prototype-Rank configuration. The A5 gate decides whether student_embedding or the optional OSR branch is retained.
-  detach_features: true
-  batch_size: 256
-  local_epochs: 2
-  strict_no_unknown_train: true
-  beta_kl: 0.02
-  recon_weight: 1.0
-  latent_nll_weight: 0.02
-  grad_clip_norm: 5.0
+prototype:
+  feature_source: student_hidden
+  l2_normalize: true
+  adaptive_k: true
+  covariance: ledoit_wolf
+  seed: 42
 
-  boundary_samples:
-    enabled: true
-    ratio: 1.00
-    margin: 0.40
-    margin_weight: 0.15
-    mixup_alpha: 1.0
-    mask_probability: 0.05
-    noise_std: 0.01
-
-  proser:
-    enabled: false
-    score_type: margin
-    weight: 1.0
-    known_weight: 1.0
-    masked_placeholder_weight: 0.25
-    boundary_placeholder_weight: 1.0
-    feature_mixup_weight: 1.0
-    detach_features: true
-    label_smoothing: 0.02
-
-  energy:
-    enabled: false
-    temperature: 1.0
-    rank_direction: two_sided
-    train_margin_enabled: false
-    train_margin_weight: 0.05
-    known_ce_weight: 0.10
-    known_margin: 2.0
-    boundary_margin: 1.0
-
-  score_fusion:
-    method: prototype_rank
-    calibration_scope: global
-    generator_score_column: recon_error
-    decision_rule: selected_rank_threshold
-    weights:
-      proser: 0.0
-      generator: 0.0
-      energy: 0.0
-      prototype: 1.0
-
-  prototype:
-    enabled: true
-    feature_source: student_embedding
-    normalize: true
-    radius_quantile: 0.95
-    num_prototypes_per_class: 16
-    min_samples_per_prototype: 25
-    seed: 42
-    negative:
-      enabled: true
-      num_prototypes: 32
-      max_samples: 5000
-      mixup_alpha: 1.0
-      noise_std: 0.005
-      radius_quantile: 0.75
-      weight: 0.35
-      random_seed: 43
-
-  aggregation:
-    enabled: true
-    min_samples: 500
-    min_label_coverage: 0.0
-    min_class_entropy: 0.0
-    min_score_gap: 0.0
-    quality_target_gap: 0.5
-
-
-  logging:
-    save_scores: true
-    save_quantiles: true
-    save_overlap_report: true
 rejection:
   method: multicenter_conformal
   alpha: 0.05
+
+prototype_rank:
+  enabled: false

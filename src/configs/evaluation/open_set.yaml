@@ -29,5 +29,5 @@ evaluation:
   latent_embeddings_max_points: 5000
 open_set:
   enabled: true
-  detector: prototype_rank
+  detector: multicenter_conformal
 

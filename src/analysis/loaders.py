@@ -66,6 +66,7 @@ class RunRecord:
     _communication_df: pd.DataFrame | None = None
     _runtime_df: pd.DataFrame | None = None
     _client_distribution_df: pd.DataFrame | None = None
+    _client_support_df: pd.DataFrame | None = None
 
     @property
     def history(self) -> pd.DataFrame:
@@ -87,7 +88,7 @@ class RunRecord:
             self._scores_df=_csv(
                 self.run_dir/"predictions"/"open_set_scores.csv",
                 self.run_dir/"open_set_scores.csv",
-                self.run_dir/"prototype_rank_scores.csv",
+                self.run_dir/"prototype_rank_scores.csv", self.run_dir/"osr"/"test_scores.csv",
             )
         return self._scores_df
 
@@ -143,6 +144,16 @@ class RunRecord:
                 self.run_dir/"client_class_distribution.csv",
             )
         return self._client_distribution_df
+
+    @property
+    def client_support(self) -> pd.DataFrame:
+        if self._client_support_df is None:
+            self._client_support_df = _csv(
+                self.run_dir / "client_support.csv",
+                self.run_dir / "metadata" / "client_support.csv",
+                self.run_dir / "metrics" / "client_support.csv",
+            )
+        return self._client_support_df
 
     @property
     def confusion_before_path(self) -> Path | None:
@@ -275,3 +286,9 @@ def load_run(run_dir: str|Path) -> RunRecord:
         timestamp_utc=str(manifest.get("started_at", manifest.get("created_at", ""))),
         variant=variant,
     )
+
+    @property
+    def client_support(self) -> pd.DataFrame:
+        if self._client_support_df is None:
+            self._client_support_df = _csv(self.run_dir / "client_support.csv")
+        return self._client_support_df

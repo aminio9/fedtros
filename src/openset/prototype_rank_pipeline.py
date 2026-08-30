@@ -1095,8 +1095,8 @@ def evaluate_prototype_rank(
     known_acc_before = float(accuracy_score(y_true[known_mask], y_before[known_mask])) if known_mask.any() else 0.0
     known_acc_after = float(accuracy_score(y_true[known_mask], y_pred[known_mask])) if known_mask.any() else 0.0
     unknown_recall = float(np.mean(y_pred[unknown_mask] == open_set_label_id)) if unknown_mask.any() else 0.0
-    known_false_unknown_rate = float(np.mean(y_pred[known_mask] == open_set_label_id)) if known_mask.any() else 0.0
-    known_acceptance_rate = 1.0 - known_false_unknown_rate
+    KFR = float(np.mean(y_pred[known_mask] == open_set_label_id)) if known_mask.any() else 0.0
+    known_acceptance_rate = 1.0 - KFR
     f1_macro = float(f1_score(y_true, y_pred, average="macro", zero_division=0))
     pred_unknown_binary = (y_pred == open_set_label_id).astype(int)
     unknown_f1 = float(f1_score(y_binary, pred_unknown_binary, zero_division=0))
@@ -1219,7 +1219,7 @@ def evaluate_prototype_rank(
         pred_component = np.where(reject, open_set_label_id, y_before)
         return {
             f"{name}_unknown_recall": float(np.mean(reject[unknown_mask])) if unknown_mask.any() else 0.0,
-            f"{name}_known_false_unknown_rate": float(np.mean(reject[known_mask])) if known_mask.any() else 0.0,
+            f"{name}_KFR": float(np.mean(reject[known_mask])) if known_mask.any() else 0.0,
             f"{name}_overall_acc": float(accuracy_score(y_true, pred_component)),
             f"{name}_rejected_total": float(np.sum(reject)),
         }
@@ -1258,7 +1258,7 @@ def evaluate_prototype_rank(
         "openset_known_acc_before": known_acc_before,
         "openset_known_acc": known_acc_after,
         "openset_unknown_recall": unknown_recall,
-        "openset_known_false_unknown_rate": known_false_unknown_rate,
+        "openset_KFR": KFR,
         "openset_overall_acc": overall_acc,
         "openset_unknown_as_normal_before_rate": unknown_as_normal_before,
         "openset_rejected_by_proser": float(np.sum(export_df.get("proser_rank_reject", 0.0))),
@@ -1275,12 +1275,13 @@ def evaluate_prototype_rank(
         "open_set/known_accuracy_before": known_acc_before,
         "open_set/known_accuracy_after": known_acc_after,
         "open_set/known_acceptance_rate": known_acceptance_rate,
-        "open_set/known_false_unknown_rate": known_false_unknown_rate,
+        "open_set/KFR": KFR,
+        "open_set/known_false_unknown_rate": KFR,
         "open_set/macro_f1": f1_macro,
         "open_set/overall_accuracy": overall_acc,
         "prototype_rank/threshold": reported_threshold,
         "prototype_rank/calibration_known_fpr": calibration_known_fpr,
-        "prototype_rank/test_known_fur": known_false_unknown_rate,
+        "prototype_rank/test_KFR": KFR,
         "prototype_rank/num_positive_prototypes": float(sum(len(v) for v in prototype_bank.prototypes.values())),
         "prototype_rank/num_boundary_prototypes": float(
             len(prototype_bank.negative_prototypes) if prototype_bank.negative_prototypes is not None else 0
@@ -1293,7 +1294,7 @@ def evaluate_prototype_rank(
     )
     log.info(
         "FedTROS-PR open-set | selected=%s AUROC=%.4f AUPRC=%.4f FPR95=%.4f KnownAcc %.4f->%.4f "
-        "UnknownRecall=%.4f KnownFU=%.4f calibration_KFU=%.4f",
+        "UnknownRecall=%.4f KFR=%.4f calibration_KFU=%.4f",
         selected_score_name,
         auroc,
         auprc,
@@ -1301,7 +1302,7 @@ def evaluate_prototype_rank(
         known_acc_before,
         known_acc_after,
         unknown_recall,
-        known_false_unknown_rate,
+        KFR,
         calibration_known_fpr,
     )
     return metrics

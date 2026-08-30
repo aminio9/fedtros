@@ -1,7 +1,7 @@
 study_id: S1-SENSITIVITY
 name: S1_sensitivity
 description: Targeted sensitivity around claimed components; not a final-test hyperparameter sweep.
-methods: [fedtros_pr]
+methods: [fedtros_mc]
 datasets: [bnat]
 alphas: [0.5]
 iids: [false]

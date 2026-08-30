@@ -1,7 +1,7 @@
 study_id: E6-SCALE
 name: E6_scalability
 description: Fixed-global-data federation fragmentation/scalability at 10, 50, and 100 clients.
-methods: [fedtros_pr]
+methods: [fedtros_mc]
 datasets: [bnat]
 alphas: [0.5]
 iids: [false]

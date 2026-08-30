@@ -1,7 +1,7 @@
 study_id: E8-LOAO
 name: E8_leave_one_attack_out
 description: Leave-one-attack-out OSR at canonical alpha=0.5; Normal always remains known.
-methods: [fedtros_pr]
+methods: [fedtros_mc]
 datasets: [bnat]
 alphas: [0.5]
 iids: [false]

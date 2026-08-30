@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Canonical FedTROS-PR study runner.
+"""Canonical FedTROS-MC study runner.
 
 Examples:
   python scripts/run_study.py E4-NIID-FOSR --dry-run --stage paper_final
@@ -30,7 +30,7 @@ logger = get_logger("run_study")
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Run a declarative FedTROS-PR study matrix.")
+    p = argparse.ArgumentParser(description="Run a declarative FedTROS-MC study matrix.")
     p.add_argument("study", help="Study ID/name/YAML (e.g. E4-NIID-FOSR, A1-TEACHER)")
     p.add_argument("--stage", default="development", choices=["smoke","development","tuning","ablation","paper_final","reproduction"])
     p.add_argument("--seeds", type=int, nargs="+")
@@ -105,7 +105,7 @@ def _force_new_identity(run: PlannedRun, token: str) -> PlannedRun:
 def _checkpoint_for(run_dir: Path) -> Path | None:
     for p in (
         run_dir / "checkpoints" / "latest.pt",
-        run_dir / "checkpoints" / "fedtros_pr_student_latest.pt",
+        run_dir / "checkpoints" / "fedtros_mc_student_latest.pt",
         run_dir / "latest_checkpoint.pt",
     ):
         if p.exists():

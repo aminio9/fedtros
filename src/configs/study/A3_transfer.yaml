@@ -1,7 +1,7 @@
 study_id: A3-TRANSFER
 name: A3_transfer
 description: "Isolate teacher-transfer components: KD gating and feature alignment."
-methods: [fedtros_pr]
+methods: [fedtros_mc]
 datasets: [bnat]
 alphas: [0.5]
 iids: [false]

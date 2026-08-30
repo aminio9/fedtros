@@ -1,7 +1,7 @@
 study_id: A1-TEACHER
 name: A1_teacher
 description: "Teacher attribution gate: no teacher vs deterministic teacher vs VCT and beta=0 control."
-methods: [fedtros_pr]
+methods: [fedtros_mc]
 datasets: [bnat]
 alphas: [0.1, 0.5]
 iids: [false]

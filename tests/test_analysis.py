@@ -424,7 +424,7 @@ def test_publication_bundle_schema(tmp_path: Path):
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["schema_name"] == SCHEMA_NAME
     assert manifest["schema_version"] == SCHEMA_VERSION
-    assert manifest["method"] == "FedTROS-PR"
+    assert manifest["method"] == "FedTROS-MC"
     assert manifest["config_freeze_id"] == "test-freeze"
     assert set(manifest["source_run_ids"]) == {"mock_run_s17", "mock_run_s42", "mock_run_s73"}
     assert (bundle_dir / "E4-NIID-FOSR" / "summary.csv").exists()

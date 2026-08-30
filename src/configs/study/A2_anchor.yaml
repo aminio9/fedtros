@@ -1,7 +1,7 @@
 study_id: A2-ANCHOR
 name: A2_anchor
 description: Coverage-adaptive anchor attribution under severe and moderate non-IID.
-methods: [fedtros_pr]
+methods: [fedtros_mc]
 datasets: [bnat]
 alphas: [0.1, 0.5]
 iids: [false]

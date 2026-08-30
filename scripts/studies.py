@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect the declarative FedTROS-PR experiment contract."""
+"""Inspect the declarative FedTROS-MC experiment contract."""
 from __future__ import annotations
 
 import argparse
@@ -18,7 +18,7 @@ def _study_files() -> list[Path]:
 
 
 def cmd_list() -> int:
-    print("FedTROS-PR canonical studies")
+    print("FedTROS-MC canonical studies")
     print("=" * 92)
     print(f"{'Study':<20} {'Datasets':<28} {'Methods':<28} Description")
     print("-" * 92)
@@ -59,7 +59,7 @@ def cmd_show(study: str, stage: str) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Inspect FedTROS-PR study definitions.")
+    parser = argparse.ArgumentParser(description="Inspect FedTROS-MC study definitions.")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("list", help="List canonical studies")
     show = sub.add_parser("show", help="Show one study and its planned matrix")

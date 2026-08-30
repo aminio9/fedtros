@@ -105,7 +105,7 @@ class RunManifest:
     method: str = "FedTROS-PR"
     method_id: str = "fedtros_pr"
     teacher_type: str = "variational_classifier"
-    open_set_method: str = "prototype_rank"
+    open_set_method: str = "multicenter_conformal"
 
     dataset: str = "bnat"
     known_labels: list[Any] = field(default_factory=list)
@@ -190,7 +190,7 @@ def create_initial_run_manifest(
         method=str(get_val("experiment.method", "FedTROS-PR")),
         method_id=str(get_val("federated.strategy.name", get_val("strategy.name", "fedtros_pr"))),
         teacher_type=str(get_val("model.teacher_type", "variational_classifier")),
-        open_set_method=str(get_val("open_set.detector", "prototype_rank")),
+        open_set_method=str(get_val("open_set.detector", "multicenter_conformal")),
         dataset=str(get_val("dataset.name", "bnat")),
         known_labels=list(get_val("dataset.preprocessing.known_labels", [])),
         unknown_labels=list(get_val("dataset.preprocessing.unknown_labels", [])),

@@ -1,7 +1,7 @@
 study_id: E0-VERIFY
 name: E0_verify
 description: Protocol and implementation verification gate; no publication claims.
-methods: [fedtros_pr]
+methods: [fedtros_mc]
 datasets: [bnat]
 alphas: [0.5]
 iids: [false]

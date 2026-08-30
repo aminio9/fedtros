@@ -52,8 +52,8 @@ def _aggregate(rows: list[dict[str, str]], run: Path, metric: str) -> float:
         "metric": metric,
     }
     aliases = {
-        "fedtros_pr": "FedTROS-PR", "fedavg": "FedAvg-Student",
-        "fedprox": "FedProx-Student", "FedTROS-PR": "FedTROS-PR",
+        "fedtros_mc": "FedTROS-MC", "fedavg": "FedAvg-Student",
+        "fedprox": "FedProx-Student", "FedTROS-MC": "FedTROS-MC",
         "FedAvg": "FedAvg-Student", "FedProx": "FedProx-Student",
     }
     keys["method"] = aliases.get(keys["method"], keys["method"])
@@ -87,10 +87,10 @@ def main() -> int:
     rows: list[dict[str, Any]] = []
 
     scalar_specs = [
-        ("E3-NIID-CS", "closed_set/macro_f1", "e3niidcs_bnat_fedtros_pr_a0p5_closed_c2_s42_"),
-        ("E4-NIID-FOSR", "open_set/auroc", "e4niidfosr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_"),
-        ("E4-NIID-FOSR", "open_set/unknown_f1", "e4niidfosr_bnat_fedtros_pr_a0p5_fotunk_c2_s42_"),
-        ("E8-LOAO", "open_set/unknown_f1", "e8loao_bnat_fedtros_pr_a0p5_fotunk_c2_s42_"),
+        ("E3-NIID-CS", "closed_set/macro_f1", "e3niidcs_bnat_fedtros_mc_a0p5_closed_c2_s42_"),
+        ("E4-NIID-FOSR", "open_set/auroc", "e4niidfosr_bnat_fedtros_mc_a0p5_fotunk_c2_s42_"),
+        ("E4-NIID-FOSR", "open_set/unknown_f1", "e4niidfosr_bnat_fedtros_mc_a0p5_fotunk_c2_s42_"),
+        ("E8-LOAO", "open_set/unknown_f1", "e8loao_bnat_fedtros_mc_a0p5_fotunk_c2_s42_"),
     ]
     for study, metric, prefix in scalar_specs:
         run = _run(outputs, prefix)
@@ -104,7 +104,7 @@ def main() -> int:
                      "plot_input": bundle_value, "status": "PASS" if passed else "FAIL"})
 
     # E6 figure 08 renders the median of measured per-round runtime.
-    run = _run(outputs, "e6scale_bnat_fedtros_pr_a0p5_fotunk_c2_s42_")
+    run = _run(outputs, "e6scale_bnat_fedtros_mc_a0p5_fotunk_c2_s42_")
     local_rounds = [float(row["runtime/round_seconds"]) for row in _read_csv(run / "metrics" / "timing_round.csv")]
     wandb_rounds = [float(value) for value in _wandb(run)["history"]["runtime/round_seconds"]]
     bundle_rounds = [float(row["runtime/round_seconds"]) for row in _read_csv(bundle / "E6-SCALE" / "runtime.csv") if row["run_id"] == run.name]
@@ -117,7 +117,7 @@ def main() -> int:
                  "plot_input": bundle_value, "status": "PASS" if passed else "FAIL"})
 
     # E7 cumulative payload is a scientific join over the structured round series.
-    run = _run(outputs, "e7efficiency_bnat_fedtros_pr_a0p5_fotunk_c2_s42_")
+    run = _run(outputs, "e7efficiency_bnat_fedtros_mc_a0p5_fotunk_c2_s42_")
     local = sum(float(row["communication/round_bytes"]) for row in _read_csv(run / "metrics" / "communication_round.csv"))
     wandb = sum(float(value) for value in _wandb(run)["history"]["communication/round_bytes"])
     communication = [row for row in _read_csv(bundle / "E7-EFFICIENCY" / "communication.csv") if row["run_id"] == run.name]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build non-visual Q1 statistics/tables from completed FedTROS-PR runs.
+"""Build non-visual Q1 statistics/tables from completed FedTROS-MC runs.
 
 Publication figures are rendered exclusively by the separate plots repository.
 """
@@ -35,13 +35,13 @@ def build(outputs: Path, target: Path, stage: str|list[str]|tuple[str, ...]|None
 
     comparisons=[]
     for st in sorted({r.study for r in runs}):
-        cand=[r for r in runs if r.study==st and r.method=="FedTROS-PR"]
+        cand=[r for r in runs if r.study==st and r.method=="FedTROS-MC"]
         for baseline in ("FedAvg-Student","FedProx-Student"):
             base=[r for r in runs if r.study==st and r.method==baseline]
             if not cand or not base: continue
-            for metric in ("closed_set/macro_f1","open_set/auroc","open_set/unknown_f1","open_set/known_false_unknown_rate"):
+            for metric in ("closed_set/macro_f1","open_set/auroc","open_set/unknown_f1","open_set/KFR"):
                 rep=compare_paired_significance(cand,base,metric)
-                if rep: comparisons.append(rep.__dict__|{"study":st,"candidate":"FedTROS-PR","baseline":baseline})
+                if rep: comparisons.append(rep.__dict__|{"study":st,"candidate":"FedTROS-MC","baseline":baseline})
     pd.DataFrame(comparisons).to_csv(stats/"paired_comparisons.csv",index=False)
     generate_provenance_manifest(runs,prov/"provenance_manifest.json",extra_metadata={"analysis":"build_q1_results","stage":stage})
     summary={"status":"SUCCESS" if runs else "EMPTY","runs":len(runs),"conditions":len(groups),"target":str(target)}
