@@ -29,6 +29,7 @@ from omegaconf import DictConfig, OmegaConf
 from src.models.bundle import FedTROSModelBundle as Agent
 from src.checkpointing.checkpoints import load_agent_checkpoint
 from src.models.models import FedTROSModelFactory
+from src.training.scaffold_student import decode_control_variate, encode_control_variate
 logger = logging.getLogger("Server")
 
 EPS = 1e-8
@@ -545,6 +546,50 @@ class SaveModelFedProx(FedProx):
         )
         return loss, metrics
 
+
+class ScaffoldStrategy(SaveModelFedAvg):
+    """FedAvg-compatible SCAFFOLD strategy with server/client control variates."""
+
+    def __init__(self, cfg: DictConfig, *args, metrics_sink: Any | None = None, **kwargs):
+        super().__init__(cfg, *args, metrics_sink=metrics_sink, **kwargs)
+        if GLOBAL_AGENT_REF is None:
+            raise RuntimeError("SCAFFOLD needs a server Agent reference.")
+        self.server_control_variate = {
+            name: torch.zeros_like(param.detach().cpu())
+            for name, param in GLOBAL_AGENT_REF.student_model.named_parameters()
+            if param.requires_grad
+        }
+
+    def configure_fit(self, server_round: int, parameters: Parameters, client_manager):
+        instructions = super().configure_fit(server_round, parameters, client_manager)
+        payload = encode_control_variate(self.server_control_variate)
+        return [(client, FitIns(fit_ins.parameters, dict(fit_ins.config, scaffold_server_control=payload))) for client, fit_ins in instructions]
+
+    def aggregate_fit(self, server_round: int, results, failures):
+        deltas = []
+        for _, fit_res in results:
+            delta = decode_control_variate(fit_res.metrics.get("scaffold_control_delta"))
+            if delta:
+                deltas.append(delta)
+        if deltas:
+            names = set.intersection(*(set(item) for item in deltas))
+            for name in names:
+                stacked = torch.stack([item[name] for item in deltas])
+                self.server_control_variate[name] = self.server_control_variate.get(name, torch.zeros_like(stacked[0])) + stacked.mean(dim=0)
+        return super().aggregate_fit(server_round, results, failures)
+
+
+class LocalOnlyStrategy(SaveModelFedAvg):
+    """No-federation baseline: retain the incoming global parameters."""
+
+    def aggregate_fit(self, server_round: int, results, failures):
+        metrics = aggregate_fit_metrics([(int(res.num_examples), dict(res.metrics)) for _, res in results])
+        metrics["federated/local_only"] = 1.0
+        metrics["federated/participating_clients"] = float(len(results))
+        if self.initial_parameters is not None:
+            save_global_model(self.initial_parameters, server_round, self.cfg, metrics=metrics)
+        _emit_round_metrics(self.metrics_sink, server_round=int(server_round), phase="fit", metrics=metrics)
+        return self.initial_parameters, metrics
 
 class FedTROSStrategy(FedAvg):
     """FedTROS strategy for federated teacher-regularized open-set learning.
@@ -1158,6 +1203,14 @@ def get_strategy(cfg: DictConfig, metrics_sink: Any | None = None) -> Strategy:
         fit_metrics_aggregation_fn=aggregate_fit_metrics,
         evaluate_metrics_aggregation_fn=aggregate_evaluate_metrics,
     )
+
+    if strat_name == "scaffold":
+        logger.info("--- Strategy: SCAFFOLD-Student ---")
+        return ScaffoldStrategy(cfg=cfg, metrics_sink=metrics_sink, **args)
+
+    if strat_name == "local_only":
+        logger.info("--- Strategy: Local-only Student ---")
+        return LocalOnlyStrategy(cfg=cfg, metrics_sink=metrics_sink, **args)
 
     if strat_name == "fedtros_pr":
         logger.info("--- Strategy: FedTROS-PR (Federated Teacher-Regularized Open-Set Recognition with Prototype-Rank Rejection) ---")

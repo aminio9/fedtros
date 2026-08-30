@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -15,6 +16,24 @@ if TYPE_CHECKING:
 from src.training.class_balance import class_balanced_cross_entropy, effective_number_class_weights
 
 logger = logging.getLogger("ScaffoldTraining")
+
+
+def encode_control_variate(control: dict[str, torch.Tensor]) -> str:
+    """Serialize SCAFFOLD control variates for Flower scalar config/metrics."""
+    return json.dumps({name: tensor.detach().cpu().tolist() for name, tensor in control.items()}, separators=(",", ":"))
+
+
+def decode_control_variate(payload: str | bytes | None) -> dict[str, torch.Tensor]:
+    """Deserialize SCAFFOLD control variates; malformed payloads fail closed to empty."""
+    if not payload:
+        return {}
+    try:
+        if isinstance(payload, bytes):
+            payload = payload.decode("utf-8")
+        raw = json.loads(str(payload))
+        return {str(name): torch.tensor(value, dtype=torch.float32) for name, value in raw.items()}
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
 
 
 def run_scaffold_training_round(

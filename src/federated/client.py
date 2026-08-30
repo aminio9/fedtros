@@ -17,6 +17,8 @@ from torch.utils.data import DataLoader, TensorDataset
 from src.models.bundle import FedTROSModelBundle as Agent
 from src.models.models import ModelFactory
 from src.training.local_training import run_local_training_round
+from src.training.local_only_student import run_local_only_training
+from src.training.scaffold_student import decode_control_variate, encode_control_variate, run_scaffold_training_round
 from src.utils.utils import get_device, project_root
 
 PROJECT_ROOT = project_root()
@@ -76,6 +78,7 @@ class FlowerClient(fl.client.NumPyClient):
         self.model_factory = ModelFactory(cfg.model)
         self.agent = Agent(self.model_factory, cfg.training, self.device, logger=self.logger)
         self._private_state_restored = False
+        self._scaffold_client_control_variate: dict[str, torch.Tensor] = {}
         self._maybe_restore_private_state()
 
         self.cached_weights: list[np.ndarray] = []
@@ -286,6 +289,54 @@ class FlowerClient(fl.client.NumPyClient):
                 return student_after_train, num_examples, self._sanitize_server_metrics(metrics)
 
             # =========================================================
+            # =========================================================
+            # SCAFFOLD and local-only baselines
+            # =========================================================
+            if strategy_name == "scaffold":
+                if param_list:
+                    self.agent.set_student_parameters(param_list)
+                server_control = decode_control_variate(config.get("scaffold_server_control"))
+                if not server_control:
+                    server_control = {
+                        name: torch.zeros_like(param.detach().cpu())
+                        for name, param in self.agent.student_model.named_parameters()
+                        if param.requires_grad
+                    }
+                if not self._scaffold_client_control_variate:
+                    self._scaffold_client_control_variate = {
+                        name: torch.zeros_like(value) for name, value in server_control.items()
+                    }
+                steps, metrics, new_control, delta_control = run_scaffold_training_round(
+                    agent=self.agent,
+                    features=self.features,
+                    labels=self.labels,
+                    cfg_training=self.cfg.training,
+                    device=self.device,
+                    server_control_variate=server_control,
+                    client_control_variate=self._scaffold_client_control_variate,
+                    round_num=round_index,
+                    client_id=self.cid,
+                    logger=self.logger,
+                )
+                self._scaffold_client_control_variate = new_control
+                metrics["scaffold_control_delta"] = encode_control_variate(delta_control)
+                metrics["student_num_parameters"] = float(sum(p.size for p in self.agent.get_student_parameters()))
+                metrics["local_num_examples"] = float(self.local_data_profile["local_num_examples"])
+                return self.agent.get_student_parameters(), int(self.local_data_profile["local_num_examples"]), self._sanitize_server_metrics(metrics)
+
+            if strategy_name == "local_only":
+                if param_list:
+                    self.agent.set_student_parameters(param_list)
+                metrics = run_local_only_training(
+                    agent=self.agent,
+                    features=self.features,
+                    labels=self.labels,
+                    cfg_training=self.cfg.training,
+                    device=self.device,
+                    client_id=self.cid,
+                )
+                return self.agent.get_student_parameters(), int(self.local_data_profile["local_num_examples"]), self._sanitize_server_metrics(metrics)
+
             # Standard Baselines: FedAvg-Student / FedProx-Student
             # =========================================================
             phase_name = "FedProx-Student" if proximal_mu > 0.0 else "FedAvg-Student"
