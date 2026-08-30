@@ -74,6 +74,9 @@ def run_training(
         load_class_names(class_names_path, int(cfg.model.num_classes)) if can_validate else None
     )
 
+    method = str(OmegaConf.select(cfg, "experiment.method", default="Centralized-Student")).lower()
+    is_fedtros = "fedtros" in method or method == "centralized-fedtros"
+
     for epoch in range(1, int(cfg.training.epochs) + 1):
         steps, train_metrics = run_local_training_round(
             agent=agent,
@@ -82,7 +85,7 @@ def run_training(
             cfg_training=cfg.training,
             device=device,
             round_num=epoch,
-            is_fedtros=True,
+            is_fedtros=is_fedtros,
             logger=logger,
         )
         total_steps += int(steps)
@@ -91,12 +94,15 @@ def run_training(
             "global_step": total_steps,
             "train/loss": float(train_metrics.get("avg_student_total_loss", train_metrics.get("train_loss", 0.0))),
             "train/task_loss": float(train_metrics.get("avg_student_task_loss", 0.0)),
-            "train/teacher_loss": float(train_metrics.get("avg_teacher_loss", 0.0)),
-            "train/teacher_kl_loss": float(train_metrics.get("avg_teacher_kl_loss", 0.0)),
-            "train/kd_loss": float(train_metrics.get("avg_student_kd_loss", 0.0)),
-            "train/align_loss": float(train_metrics.get("avg_student_align_loss", 0.0)),
             "train/accuracy": float(train_metrics.get("student_acc", 0.0)),
         }
+        if is_fedtros:
+            metrics.update({
+                "train/teacher_loss": float(train_metrics.get("avg_teacher_loss", 0.0)),
+                "train/teacher_kl_loss": float(train_metrics.get("avg_teacher_kl_loss", 0.0)),
+                "train/kd_loss": float(train_metrics.get("avg_student_kd_loss", 0.0)),
+                "train/align_loss": float(train_metrics.get("avg_student_align_loss", 0.0)),
+            })
 
         if can_validate and epoch % int(cfg.training.validation_interval) == 0:
             val_features, val_labels = load_tensor_dataset(val_data_path, map_location="cpu")

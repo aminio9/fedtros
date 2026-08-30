@@ -1,0 +1,30 @@
+# @package _global_
+experiment:
+  method: Local-only-Student
+
+federated:
+  strategy:
+    name: local_only
+    aggregation_strategy: local_only
+  server:
+    proximal_mu: 0.0
+    fraction_evaluate: 1.0
+  central_evaluate:
+    enabled: false
+
+training:
+  teacher_enabled: false
+  kd_enabled: false
+  alignment_enabled: false
+  student_osr_enabled: false
+  student_open_set_enabled: false
+  fedtros_global_anchor_weight: 0.0
+  reset_optimizer_each_round: true
+  evaluate_after_local_fit: true
+  evaluate_before_local_fit: false
+  local_epochs: 50
+  batch_size: 64
+
+checkpointing:
+  monitor_metric: val/macro_f1
+  monitor_mode: max
