@@ -23,6 +23,16 @@ import hashlib
 
 logger = logging.getLogger("MulticenterConformal")
 
+def persist_final_test_identifiers(test_scores_df: pd.DataFrame, output_dir: Path) -> tuple[Path, str]:
+    """Write final known/unknown sample IDs and return path plus SHA-256 hash."""
+    osr_dir = output_dir / "osr"
+    osr_dir.mkdir(parents=True, exist_ok=True)
+    final_ids = test_scores_df[["sample_id", "known_or_unknown"]].copy()
+    final_ids = final_ids.rename(columns={"known_or_unknown": "partition"})
+    path = osr_dir / "final_test_identifiers.csv"
+    final_ids.to_csv(path, index=False)
+    return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
 def calibrate_multicenter_conformal(
     features: torch.Tensor,
     labels: torch.Tensor,
@@ -278,6 +288,9 @@ def evaluate_multicenter_conformal(
         })
         test_scores_df.to_csv(osr_dir / "test_scores.csv", index=False)
 
+        # Persist deterministic final-test identifiers as a separate audit artifact.
+        final_ids_path, final_ids_hash = persist_final_test_identifiers(test_scores_df, output_dir)
+
         # Complete the split manifest with final evaluation sample counts and
         # deterministic sample-id hashes once the frozen test set is available.
         split_manifest_path = output_dir / "split_manifest.json"
@@ -296,6 +309,11 @@ def evaluate_multicenter_conformal(
                 }
                 split_manifest["unknown_labels"] = [int(unknown_label_id)] if unknown_ids else []
                 split_manifest["final_test_sample_ids_recorded"] = True
+                split_manifest["final_test_identifiers"] = {
+                    "path": str(final_ids_path.relative_to(output_dir)),
+                    "count": len(test_scores_df),
+                    "hash": final_ids_hash,
+                }
                 split_manifest_path.write_text(json.dumps(split_manifest, indent=2), encoding="utf-8")
             except Exception as exc:
                 log.warning("Could not update final split manifest: %s", exc)
