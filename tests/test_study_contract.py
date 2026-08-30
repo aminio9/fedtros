@@ -1,6 +1,10 @@
 from pathlib import Path
 
+import pytest
+from omegaconf import OmegaConf
+
 from src.infrastructure.study import CANONICAL_SEEDS, expand_study_matrix, load_study_config
+from src.utils.config import _validate_experiment_contract
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -83,3 +87,27 @@ def test_paired_partition_path_is_method_independent():
     plans = expand_study_matrix(cfg, stage="paper_final", seeds=[42], project_root=ROOT)
     a01 = [p for p in plans if abs(p.alpha - 0.1) < 1e-9]
     assert len({p.partition_file for p in a01}) == 1
+
+
+def test_publication_stage_enforces_rounds_for_ablations():
+    cfg = OmegaConf.create({
+        "experiment": {"id": "A1-TEACHER", "pipeline": "full"},
+        "stage": "paper_final",
+        "federated": {"num_rounds": 99, "num_clients": 10},
+        "dataset": {"preprocessing": {"iid": False, "alpha": 0.5}},
+    })
+    with pytest.raises(ValueError, match="100-round"):
+        _validate_experiment_contract(cfg)
+    cfg.federated.num_rounds = 100
+    _validate_experiment_contract(cfg)
+
+
+def test_publication_stage_enforces_ten_clients_for_non_scalability_ablations():
+    cfg = OmegaConf.create({
+        "experiment": {"id": "A4-PR", "pipeline": "full"},
+        "stage": "reproduction",
+        "federated": {"num_rounds": 100, "num_clients": 5},
+        "dataset": {"preprocessing": {"iid": False, "alpha": 0.5}},
+    })
+    with pytest.raises(ValueError, match="10 clients"):
+        _validate_experiment_contract(cfg)

@@ -276,7 +276,7 @@ def _validate_experiment_contract(cfg: DictConfig) -> None:
             "Use the declarative study runner instead of publishing an ad-hoc baseline config."
         )
 
-    if study not in {f"E{i}" for i in range(1, 9)} or stage not in {"paper_final", "reproduction"}:
+    if stage not in {"paper_final", "reproduction"}:
         return
 
     rounds = int(OmegaConf.select(cfg, "federated.num_rounds"))
@@ -289,6 +289,10 @@ def _validate_experiment_contract(cfg: DictConfig) -> None:
             raise ValueError("E6 fixed-data scalability requires clients in {10,50,100}.")
     elif clients != 10:
         raise ValueError(f"{study} {stage} runs require 10 clients in the canonical protocol.")
+
+    # All non-scalability publication studies, including ablations and
+    # sensitivity analyses, use the same ten-client federated topology.  The
+    # E6 exception above is the only declared client-count variation.
 
     iid = bool(OmegaConf.select(cfg, "dataset.preprocessing.iid", default=False))
     if study in {"E1", "E2"} and not iid:
