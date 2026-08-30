@@ -2,8 +2,8 @@
 """Canonical FedTROS-MC study runner.
 
 Examples:
-  python scripts/run_study.py E4-NIID-FOSR --dry-run --stage paper_final
-  python scripts/run_study.py E4-NIID-FOSR --stage paper_final --seeds 17 42 73 101 137
+  python scripts/run_study.py E4-NIID-FOSR --dry-run --stage main
+  python scripts/run_study.py E4-NIID-FOSR --stage main --seeds 17 42 73 101 137
   python scripts/run_study.py E6-SCALE --clients 10 50 100 --gpus 0 1 --max-parallel 2
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ logger = get_logger("run_study")
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run a declarative FedTROS-MC study matrix.")
     p.add_argument("study", help="Study ID/name/YAML (e.g. E4-NIID-FOSR, A1-TEACHER)")
-    p.add_argument("--stage", default="development", choices=["smoke","development","tuning","ablation","paper_final","reproduction"])
+    p.add_argument("--stage", default="development", choices=["smoke","development","tuning","ablation","main","reproduction"])
     p.add_argument("--seeds", type=int, nargs="+")
     p.add_argument("--alpha", type=float, nargs="+")
     p.add_argument("--clients", type=int, nargs="+")

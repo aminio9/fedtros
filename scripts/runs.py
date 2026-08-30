@@ -124,7 +124,7 @@ def main() -> int:
     for name in ("failed","interrupted","completed","resumable","summary"):
         sp=sub.add_parser(name); sp.add_argument("--study",default=None); sp.add_argument("--stage",default=None); sp.add_argument("--method",default=None)
     show=sub.add_parser("show",aliases=["inspect"]); show.add_argument("target")
-    miss=sub.add_parser("missing"); miss.add_argument("study"); miss.add_argument("--stage",default="paper_final"); miss.add_argument("--seeds",type=int,nargs="+")
+    miss=sub.add_parser("missing"); miss.add_argument("study"); miss.add_argument("--stage",default="main"); miss.add_argument("--seeds",type=int,nargs="+")
     args=p.parse_args()
     if args.command=="list": return cmd_list(args)
     if args.command in {"show","inspect"}: return cmd_show(args)

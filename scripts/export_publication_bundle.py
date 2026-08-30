@@ -159,7 +159,7 @@ def export(outputs:Path,target_root:Path,freeze_id:str|None,include_stages:list[
 
 def main():
     p=argparse.ArgumentParser(description="Export versioned publication bundle for the separate plots repository")
-    p.add_argument("--outputs-dir",default="outputs"); p.add_argument("--target-root",default="publication_exports"); p.add_argument("--freeze-id",default=None); p.add_argument("--include-stages",nargs="+",default=["paper_final","ablation","reproduction"])
+    p.add_argument("--outputs-dir",default="outputs"); p.add_argument("--target-root",default="publication_exports"); p.add_argument("--freeze-id",default=None); p.add_argument("--include-stages",nargs="+",default=["main","ablation","reproduction"])
     p.add_argument("--allow-incomplete", action="store_true", help="diagnostic export only; bypass the publication evidence gate")
     a=p.parse_args()
     if not a.allow_incomplete:

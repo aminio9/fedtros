@@ -17,7 +17,7 @@ from src.analysis.statistics import compare_paired_significance
 from src.analysis.tables import export_all_paper_tables
 
 
-def build(outputs: Path, target: Path, stage: str|list[str]|tuple[str, ...]|None="paper_final", study: str|None=None) -> dict[str,Any]:
+def build(outputs: Path, target: Path, stage: str|list[str]|tuple[str, ...]|None="main", study: str|None=None) -> dict[str,Any]:
     target.mkdir(parents=True,exist_ok=True)
     tables=target/"tables"; stats=target/"statistics"; agg_dir=target/"aggregates"; prov=target/"provenance"
     for d in (tables,stats,agg_dir,prov): d.mkdir(parents=True,exist_ok=True)
@@ -50,6 +50,6 @@ def build(outputs: Path, target: Path, stage: str|list[str]|tuple[str, ...]|None
 
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__); p.add_argument("--outputs-dir",default="outputs"); p.add_argument("--target",default="paper_results"); p.add_argument("--stage",nargs="+",default=["paper_final"],help="One or more run stages, e.g. paper_final ablation reproduction"); p.add_argument("--study",default=None)
+    p=argparse.ArgumentParser(description=__doc__); p.add_argument("--outputs-dir",default="outputs"); p.add_argument("--target",default="paper_results"); p.add_argument("--stage",nargs="+",default=["main"],help="One or more run stages, e.g. main ablation reproduction"); p.add_argument("--study",default=None)
     a=p.parse_args(); print(json.dumps(build(Path(a.outputs_dir),Path(a.target),a.stage,a.study),indent=2))
 if __name__=="__main__": main()

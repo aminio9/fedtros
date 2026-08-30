@@ -64,7 +64,7 @@ def main() -> int:
     sub.add_parser("list", help="List canonical studies")
     show = sub.add_parser("show", help="Show one study and its planned matrix")
     show.add_argument("study")
-    show.add_argument("--stage", default="paper_final")
+    show.add_argument("--stage", default="main")
     args = parser.parse_args()
     return cmd_list() if args.command == "list" else cmd_show(args.study, args.stage)
 

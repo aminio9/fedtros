@@ -713,7 +713,7 @@ def main() -> int:
         "--stage",
         nargs="+",
         default=None,
-        help="One or more stages, e.g. paper_final ablation reproduction; default: all completed runs.",
+        help="One or more stages, e.g. main ablation reproduction; default: all completed runs.",
     )
     parser.add_argument("--runs-dir", default="outputs")
     parser.add_argument("--output-dir", default="paper_artifacts/plot_data")
