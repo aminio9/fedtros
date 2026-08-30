@@ -1,7 +1,7 @@
 study_id: E4-NIID-FOSR
 name: E4_noniid_fosr
 description: Central non-IID federated open-set benchmark with FoT held out.
-methods: [fedtros_mc, fedavg, fedprox]
+methods: [fedtros_mc, fedavg, fedprox, scaffold, local_only, centralized]
 datasets: [bnat]
 alphas: [1.0, 0.5, 0.1]
 iids: [false]

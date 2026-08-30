@@ -1,7 +1,7 @@
 study_id: E3-NIID-CS
 name: E3_noniid_closed
 description: Non-IID closed-set robustness under Dirichlet alpha 1.0, 0.5, and 0.1.
-methods: [fedtros_mc, fedavg, fedprox]
+methods: [fedtros_mc, fedavg, fedprox, scaffold, local_only, centralized]
 datasets: [bnat]
 alphas: [1.0, 0.5, 0.1]
 iids: [false]

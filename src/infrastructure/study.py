@@ -225,7 +225,16 @@ def expand_study_matrix(
             overrides: dict[str, Any] = {
                 **base, **stage_overrides, **variant["overrides"],
                 "experiment.id": study_id,
-                "experiment.method": "FedTROS-MC" if method in {"fedtros", "fedtros_mc", "fedtros_m_c"} else ("FedTROS-PR" if method in {"fedtros_pr", "fedtros_pr_legacy"} else method),
+                "experiment.method": (
+                    "FedTROS-MC" if method in {"fedtros", "fedtros_mc", "fedtros_m_c"}
+                    else "FedTROS-PR" if method in {"fedtros_pr", "fedtros_pr_legacy"}
+                    else "FedAvg-Student" if method == "fedavg"
+                    else "FedProx-Student" if method == "fedprox"
+                    else "SCAFFOLD-Student" if method == "scaffold"
+                    else "Local-only-Student" if method == "local_only"
+                    else "Centralized-Student" if method == "centralized"
+                    else method
+                ),
                 "method": "fedtros_mc" if method in {"fedtros", "fedtros_mc", "fedtros_m_c"} else ("fedtros_pr" if method in {"fedtros_pr", "fedtros_pr_legacy"} else method),
                 "dataset": dataset,
                 "dataset.preprocessing.alpha": alpha,
@@ -256,8 +265,10 @@ def expand_study_matrix(
                     overrides["open_set.prototype_rank.energy.train_margin_enabled"] = False
             elif method in {"fedtros_pr", "fedtros_pr_legacy"}:
                 overrides["federated.strategy.name"] = "fedtros_pr"
-            elif method in {"fedavg", "fedprox"}:
+            elif method in {"fedavg", "fedprox", "scaffold", "local_only", "centralized"}:
                 overrides["federated.strategy.name"] = method
+                if method == "centralized":
+                    overrides["experiment.pipeline"] = "centralized"
 
             part = get_paired_partition_path(
                 root, dataset, alpha, int(seed), iid=iid, num_clients=clients,

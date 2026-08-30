@@ -1,7 +1,7 @@
 study_id: E1-IID-CS
 name: E1_iid_closed
 description: IID closed-set utility on BNaT and BTAT with architecture-matched student baselines.
-methods: [fedtros_mc, fedavg, fedprox]
+methods: [fedtros_mc, fedavg, fedprox, scaffold, local_only, centralized]
 datasets: [bnat, btat]
 alphas: [1.0]
 iids: [true]

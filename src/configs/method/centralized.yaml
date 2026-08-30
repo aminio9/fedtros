@@ -1,0 +1,36 @@
+# @package _global_
+experiment:
+  method: Centralized-Student
+  pipeline: centralized
+
+method:
+  canonical: false
+
+federated:
+  strategy:
+    name: centralized
+    aggregation_strategy: centralized
+  server:
+    proximal_mu: 0.0
+    fraction_evaluate: 1.0
+  central_evaluate:
+    enabled: true
+    data_path: ${paths.validation_data}
+    prefix: val
+
+training:
+  teacher_enabled: false
+  kd_enabled: false
+  alignment_enabled: false
+  student_osr_enabled: false
+  student_open_set_enabled: false
+  fedtros_global_anchor_weight: 0.0
+  reset_optimizer_each_round: true
+  evaluate_after_local_fit: true
+  evaluate_before_local_fit: false
+  local_epochs: 2
+  batch_size: 64
+
+checkpointing:
+  monitor_metric: val/macro_f1
+  monitor_mode: max

@@ -1,7 +1,7 @@
 study_id: E2-IID-OSR
 name: E2_iid_osr
 description: IID open-set mechanism isolation with FoT held out and known-only PR calibration.
-methods: [fedtros_mc]
+methods: [fedtros_mc, fedavg, fedprox, scaffold, local_only, centralized]
 datasets: [bnat]
 alphas: [1.0]
 iids: [true]
