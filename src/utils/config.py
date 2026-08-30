@@ -11,6 +11,11 @@ from omegaconf import DictConfig, OmegaConf
 
 logger = logging.getLogger(__name__)
 
+# ``main`` is the canonical publication-stage alias used by the current
+# runner. ``paper_final`` and ``reproduction`` remain supported for older
+# checkouts and exact reruns.
+PUBLICATION_STAGES = {"main", "paper_final", "reproduction"}
+
 
 def _canonical_dataset_id(value: str) -> str:
     compact = "".join(character for character in str(value).lower() if character.isalnum())
@@ -210,7 +215,7 @@ def _validate_external_experiment_contract(cfg: DictConfig) -> None:
     if dataset_name not in {"bnat", "btat", "toniot", "cicids2017"}:
         raise ValueError(f"E5 dataset-wise validation received unsupported dataset={dataset_name!r}")
     stage = _select_str(cfg, "stage", "development").lower()
-    if stage in {"paper_final", "reproduction"} and int(OmegaConf.select(cfg, "federated.num_clients", default=10)) != 10:
+    if stage in PUBLICATION_STAGES and int(OmegaConf.select(cfg, "federated.num_clients", default=10)) != 10:
         raise ValueError("E5 requires 10 clients in the canonical dataset-wise protocol.")
     if abs(float(OmegaConf.select(cfg, "dataset.preprocessing.alpha", default=0.5)) - 0.5) > 1e-12:
         raise ValueError("E5 requires Dirichlet alpha=0.5.")
@@ -226,7 +231,7 @@ def _validate_runtime(cfg: DictConfig) -> None:
     runtime_prefer = str(OmegaConf.select(cfg, "runtime.device_prefer")).lower()
     allow_fallback = bool(OmegaConf.select(cfg, "device.allow_cpu_fallback"))
     stage = _select_str(cfg, "stage", "development").lower()
-    if (allow_fallback or bool(OmegaConf.select(cfg, "runtime.allow_cpu_fallback"))) and stage in {"paper_final", "reproduction"}:
+    if (allow_fallback or bool(OmegaConf.select(cfg, "runtime.allow_cpu_fallback"))) and stage in PUBLICATION_STAGES:
         raise ValueError("Automatic CPU fallback is disabled; allow_cpu_fallback must be false for publication stages.")
     if prefer != runtime_prefer:
         raise ValueError("device.prefer must resolve from runtime.device_prefer.")
@@ -270,13 +275,13 @@ def _validate_experiment_contract(cfg: DictConfig) -> None:
         "E0", "E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8",
         "A1", "A2", "A3", "A4", "A5", "S1",
     }
-    if stage in {"paper_final", "reproduction"} and study not in canonical_studies:
+    if stage in PUBLICATION_STAGES and study not in canonical_studies:
         raise ValueError(
             f"stage={stage!r} requires a canonical E0-E8/A1-A5/S1 study ID; got {study!r}. "
             "Use the declarative study runner instead of publishing an ad-hoc baseline config."
         )
 
-    if stage not in {"paper_final", "reproduction"}:
+    if stage not in PUBLICATION_STAGES:
         return
 
     rounds = int(OmegaConf.select(cfg, "federated.num_rounds"))

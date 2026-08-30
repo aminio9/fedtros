@@ -11,6 +11,7 @@ from collections import defaultdict
 from pathlib import Path
 
 SEEDS = {17, 42, 73, 101, 137}
+PUBLICATION_STAGES = {"main", "paper_final", "reproduction"}
 STUDIES = {"E1-IID-CS", "E2-IID-OSR", "E3-NIID-CS", "E4-NIID-FOSR", "E5-DATASET", "E6-SCALE", "E7-EFFICIENCY", "E8-LOAO", "A1-TEACHER", "A2-ANCHOR", "A3-TRANSFER", "A4-PR", "A5-FEATURE", "S1-SENSITIVITY"}
 
 def read_manifest(run: Path) -> dict:
@@ -55,6 +56,8 @@ def validate(runs_root: Path) -> dict:
             ignored.append(run.name); continue
         study = str(m.get("study_id", "")).upper()
         if study not in STUDIES:
+            ignored.append(run.name); continue
+        if str(m.get("stage", "")).lower() not in PUBLICATION_STAGES:
             ignored.append(run.name); continue
         groups[study].append({"run_id": run.name, "seed": m.get("seed"), "rounds": m.get("num_rounds"), "clients": m.get("num_clients"), "method": m.get("method"), "stage": m.get("stage"), "open_set_method": m.get("open_set_method")})
         # Provenance is checked per completed candidate, before aggregation.

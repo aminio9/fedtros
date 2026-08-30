@@ -112,10 +112,11 @@ def test_paired_partition_path_is_method_independent():
     assert len({p.partition_file for p in a01}) == 1
 
 
-def test_publication_stage_enforces_rounds_for_ablations():
+@pytest.mark.parametrize("stage", ["main", "paper_final", "reproduction"])
+def test_publication_stage_enforces_rounds_for_ablations(stage):
     cfg = OmegaConf.create({
         "experiment": {"id": "A1-TEACHER", "pipeline": "full"},
-        "stage": "paper_final",
+        "stage": stage,
         "federated": {"num_rounds": 99, "num_clients": 10},
         "dataset": {"preprocessing": {"iid": False, "alpha": 0.5}},
     })
