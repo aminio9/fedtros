@@ -1,0 +1,31 @@
+name: fedtros_pr
+enabled: true
+method: multicenter_conformal
+detector: multicenter_conformal
+
+synthetic_boundary: false
+osr_decoder: false
+aggregation_gamma: 0.5
+score: candidate_mahalanobis_sq
+calibration: global_split_conformal
+
+unknown_label_id: -1
+open_set_label_id: 99
+evaluate_each_round: false
+evaluate_every_n_rounds: 1
+round_eval_dir: open_set_rounds
+save_round_scores: true
+
+prototype:
+  feature_source: student_hidden
+  l2_normalize: true
+  adaptive_k: true
+  covariance: ledoit_wolf
+  seed: 42
+
+rejection:
+  method: multicenter_conformal
+  alpha: 0.05
+
+prototype_rank:
+  enabled: false

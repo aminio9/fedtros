@@ -1,0 +1,14 @@
+study_id: A4-DISTANCE
+name: A4 Distance Ablation
+description: Compare Euclidean versus Ledoit-Wolf shrinkage Mahalanobis geometry.
+datasets:
+  - bnat
+methods:
+  - fedtros_mc
+variants:
+  - name: canonical
+    overrides: {}
+  - name: euclidean
+    overrides: {method.ablation.distance_metric: "euclidean"}
+alphas: [0.05]
+iids: [false]

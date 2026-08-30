@@ -1,0 +1,45 @@
+# Canonical FedTROS-PR open-set detector (Sections 3-4).
+# This profile is intentionally separate from the legacy prototype-rank config;
+# legacy runs must never be relabelled as canonical v2 results.
+name: fedtros_pr_v2
+enabled: true
+method: multicenter_conformal
+feature_source: student_hidden
+l2_normalize: true
+adaptive_k: true
+k_max: 10
+covariance: ledoit_wolf
+score: candidate_mahalanobis_sq
+calibration: global_split_conformal
+alpha: 0.05
+aggregation_gamma: 0.5
+synthetic_boundary: false
+osr_decoder: false
+legacy_osr_branch: false
+revised_kappa_anchor: true
+unknown_label_id: -1
+open_set_label_id: 99
+
+# D_proto-only model-selection and fitting; D_cal is used only for calibration.
+calibration_scope: global_known
+prototype_fit_split: D_proto_known_only
+strict_disjoint: true
+prototype_seed: 42
+
+# Publication artifact contract.
+artifact_schema_version: 2
+required_artifacts:
+  - split_manifest.json
+  - client_support.csv
+  - osr/prototype_selection.csv
+  - osr/prototype_summary.csv
+  - osr/prototype_centers.npz
+  - osr/prototype_assignments.csv
+  - osr/covariance.npz
+  - osr/calibration_scores.csv
+  - osr/conformal_metadata.json
+  - osr/test_scores.csv
+  - osr/roc.csv
+  - osr/pr.csv
+  - osr/latent_projection.csv
+  - osr/latent_projection_metadata.json
