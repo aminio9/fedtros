@@ -252,8 +252,8 @@ def fit_multicenter_conformal(
         "alpha": alpha,
         "k_alpha": k_alpha,
         "m": m,
-        "pca": pca
-        ,"prototype_internal_split": {
+        "pca": pca,
+        "prototype_internal_split": {
             "fit_count": sum(1 for row in proto_internal_records if row["subset"] == "proto-fit"),
             "val_count": sum(1 for row in proto_internal_records if row["subset"] == "proto-val"),
             "identifier_hash": hashlib.sha256(internal_payload).hexdigest(),
