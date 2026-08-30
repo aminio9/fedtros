@@ -6,7 +6,7 @@ artifacts as non-publication evidence. It reports missing canonical cells instea
 of silently aggregating whatever happens to be present.
 """
 from __future__ import annotations
-import argparse, json
+import argparse, hashlib, json
 from collections import defaultdict
 from pathlib import Path
 
@@ -20,6 +20,31 @@ def read_manifest(run: Path) -> dict:
             except json.JSONDecodeError: return {"status": "CORRUPTED"}
     return {}
 
+def validate_split_provenance(run: Path, study: str) -> list[str]:
+    """Validate final-test identifier traceability for open-set evidence."""
+    if study not in {"E2-IID-OSR", "E4-NIID-FOSR", "E5-DATASET", "E7-EFFICIENCY", "E8-LOAO",
+                     "A1-TEACHER", "A2-ANCHOR", "A3-TRANSFER", "A4-PR", "A5-FEATURE", "S1-SENSITIVITY"}:
+        return []
+    path = run / "split_manifest.json"
+    if not path.exists():
+        return [f"{study}/{run.name}: missing split_manifest.json"]
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return [f"{study}/{run.name}: corrupted split_manifest.json"]
+    entry = manifest.get("final_test_identifiers") or {}
+    rel = entry.get("path")
+    expected_hash = str(entry.get("hash") or "")
+    if not rel or not expected_hash:
+        return [f"{study}/{run.name}: final-test identifier path/hash missing"]
+    identifier_path = run / str(rel)
+    if not identifier_path.exists():
+        return [f"{study}/{run.name}: final-test identifier artifact missing: {rel}"]
+    actual_hash = hashlib.sha256(identifier_path.read_bytes()).hexdigest()
+    if actual_hash != expected_hash:
+        return [f"{study}/{run.name}: final-test identifier checksum mismatch"]
+    return []
+
 def validate(runs_root: Path) -> dict:
     groups = defaultdict(list)
     ignored = []
@@ -32,6 +57,8 @@ def validate(runs_root: Path) -> dict:
         if study not in STUDIES:
             ignored.append(run.name); continue
         groups[study].append({"run_id": run.name, "seed": m.get("seed"), "rounds": m.get("num_rounds"), "clients": m.get("num_clients"), "method": m.get("method"), "stage": m.get("stage"), "open_set_method": m.get("open_set_method")})
+        # Provenance is checked per completed candidate, before aggregation.
+        groups[study][-1]["provenance_errors"] = validate_split_provenance(run, study)
     errors = []
     for study in sorted(STUDIES):
         rows = groups.get(study, [])
@@ -47,9 +74,13 @@ def validate(runs_root: Path) -> dict:
             errors.append(f"{study}: at least one run is not 10 clients")
         if any("PR" in str(r["method"]).upper() and "MC" not in str(r["method"]).upper() for r in rows):
             errors.append(f"{study}: legacy FedTROS-PR method label present")
-        if study in {"E2-IID-OSR", "E4-NIID-FOSR", "E5-DATASET", "E6-SCALE", "E7-EFFICIENCY", "E8-LOAO", "A1-TEACHER", "A2-ANCHOR", "A3-TRANSFER", "A4-PR", "A5-FEATURE", "S1-SENSITIVITY"}:
-            if any(str(r["open_set_method"]).lower() != "multicenter_conformal" for r in rows):
-                errors.append(f"{study}: detector is not multicenter_conformal")
+        for row in rows:
+            errors.extend(row.get("provenance_errors", []))
+        open_set_studies = {"E2-IID-OSR", "E4-NIID-FOSR", "E5-DATASET", "E6-SCALE", "E7-EFFICIENCY", "E8-LOAO", "A1-TEACHER", "A2-ANCHOR", "A3-TRANSFER", "A4-PR", "A5-FEATURE", "S1-SENSITIVITY"}
+        if study in open_set_studies:
+            allowed_detectors = {"multicenter_conformal", "prototype_rank"} if study == "A4-PR" else {"multicenter_conformal"}
+            if any(str(r["open_set_method"]).lower() not in allowed_detectors for r in rows):
+                errors.append(f"{study}: detector is outside the declared canonical ablation set")
     return {"publication_ready": not errors, "errors": errors, "completed_rows": sum(map(len, groups.values())), "ignored_runs": ignored, "studies_present": sorted(groups), "required_seeds": sorted(SEEDS)}
 
 def main() -> int:
