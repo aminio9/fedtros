@@ -9,7 +9,7 @@ This ledger tracks the method-consistency and experimental-reproducibility remed
 | Multicenter conformal/provenance/metrics | completed | aa7f281 | Disjoint K selection, pooled covariance fallback, metrics, and split provenance |
 | Study/export contracts | completed | 126524c | FedTROS-MC identities, A4/A5 routing, stage validation, and schema fix |
 | Plot-data publication gate | completed | 06df643 | Added fail-fast evidence validator and gated publication export |
-| Final verification | completed | 33ccdbd | Full suite: 151 passed; evidence gate remains intentionally red until paper runs exist |
+| Final verification | completed | 8230e68 | Full suite: 151 passed; evidence gate remains intentionally red until paper runs exist |
 
 ## Operating rules
 
