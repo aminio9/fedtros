@@ -1,5 +1,9 @@
 # FedTROS-MC experiment running guide
 
+The expanded Colab/Jupyter download-and-plot workflow is maintained at
+`D:\Research\Code\running.md`. It always runs `fedtros_mc` before the matched
+baseline methods and uses the publication-stage five-seed protocol.
+
 ## 1. Pre-flight
 
 ```bash
@@ -15,7 +19,7 @@ The canonical lifecycle is:
 
 ```text
 E0 verification
- -> one-seed engineering pilot (seed 42)
+    -> one-seed engineering pilot (seed 42; engineering only)
  -> A1/A2/A4 (+A5 only if relevant) architecture gates
  -> configuration/code freeze
  -> five-seed headline studies
@@ -43,9 +47,9 @@ Filter a matrix:
 ```bash
 poetry run python scripts/run_study.py E3-NIID-CS \
   --stage paper_final \
-  --method fedtros_pr \
+  --method fedtros_mc \
   --alpha 0.1 \
-  --seeds 17 42 \
+  --seeds 17 42 73 101 137 \
   --dry-run
 ```
 

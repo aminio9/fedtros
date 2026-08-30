@@ -28,6 +28,17 @@ def test_headline_seed_policy():
         assert list(_study(study)["seeds"]) == list(CANONICAL_SEEDS)
 
 
+def test_every_publication_study_starts_with_canonical_fedtros_mc():
+    studies = (
+        "E1-IID-CS", "E2-IID-OSR", "E3-NIID-CS", "E4-NIID-FOSR",
+        "E5-DATASET", "E6-SCALE", "E7-EFFICIENCY", "E8-LOAO",
+        "A1-TEACHER", "A2-ANCHOR", "A3-TRANSFER", "A4-PR",
+        "A5-FEATURE", "S1-SENSITIVITY",
+    )
+    for study in studies:
+        assert list(_study(study)["methods"])[0] == "fedtros_mc", study
+
+
 def test_e3_alpha_matrix():
     cfg = _study("E3-NIID-CS")
     assert list(map(float, cfg["alphas"])) == [1.0, 0.5, 0.1]
