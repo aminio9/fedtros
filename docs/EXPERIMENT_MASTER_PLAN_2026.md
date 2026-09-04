@@ -551,7 +551,7 @@ Important: `alpha=1.0` is still a Dirichlet non-IID condition; it is not the sam
 
 ### Primary metric
 
-**Macro-F1** should become the primary headline metric because client/attack distributions are imbalanced. Accuracy remains important but should not be the only metric.
+**Macro-F1** should become the primary headline metric because client traffic distributions exhibit severe non-IID label skew. Accuracy remains important but should not be the only metric.
 
 ### Additional metrics
 

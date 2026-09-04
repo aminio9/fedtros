@@ -1278,6 +1278,9 @@ def get_effective_num_rounds(cfg: DictConfig) -> int:
     return int(cfg.server.num_rounds)
 
 
+get_total_rounds = get_effective_num_rounds
+
+
 
 def run_server(cfg: DictConfig, device: torch.device | None = None) -> None:
     # Initialize the global agent reference for saving capabilities

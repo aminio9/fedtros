@@ -440,7 +440,6 @@ class FlowerClient(fl.client.NumPyClient):
         "kappa_i",
         "missing_classes",
         "present_classes",
-        "imbalance_ratio",
     }
 
     def _sanitize_server_metrics(self, metrics: dict[str, Any]) -> dict[str, Any]:

@@ -33,7 +33,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from src.federated.client import FlowerClient
 from src.federated.server import (
-    get_effective_num_rounds,
+    get_total_rounds,
     get_strategy,
     init_global_agent_ref,
     run_server,
@@ -387,7 +387,7 @@ def run_federated_simulation(
         "Starting Flower simulation | clients=%d | logical_rounds=%d | flower_rounds=%d | strategy=%s | simulation_device=%s | gpu_batching=%s | worker_concurrency=%d | local_batch_size=%d",
         int(cfg.federated.num_clients),
         int(cfg.federated.num_rounds),
-        get_effective_num_rounds(cfg),
+        get_total_rounds(cfg),
         str(cfg.federated.strategy.name),
         simulation_execution_device,
         gpu_batching_enabled,
@@ -414,7 +414,7 @@ def run_federated_simulation(
             "Deterministic local simulation enabled | max_workers=1 to isolate client RNG streams"
         )
     _restore_resume_rng_state(cfg, project_root)
-    history, _elapsed_time = server.fit(num_rounds=get_effective_num_rounds(cfg), timeout=None)
+    history, _elapsed_time = server.fit(num_rounds=get_total_rounds(cfg), timeout=None)
     run_dir = tracker.run_dir if tracker is not None else resolve_path(project_root, cfg.tracking.run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     history_rows = _history_rows(history)
@@ -481,7 +481,7 @@ def run_federated_simulation(
 
     summary = {
         "federated/rounds": int(cfg.federated.num_rounds),
-        "federated/flower_rounds": get_effective_num_rounds(cfg),
+        "federated/flower_rounds": get_total_rounds(cfg),
         "federated/num_clients": int(cfg.federated.num_clients),
         "federated/total_training_time_sec": float(_elapsed_time),
         **timing_summary,

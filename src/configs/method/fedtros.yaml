@@ -82,9 +82,6 @@ training:
   lambda_align_max: 0.12
   align_mse_weight: 1.0
   align_cos_weight: 0.5
-  class_balance_beta: 0.999
-  class_weight_min: 0.2
-  class_weight_max: 5.0
 
   # Backward compatibility aliases
   dkd_student_hidden_dims: ${training.fedtros_student_hidden_dims}

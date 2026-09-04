@@ -6,7 +6,6 @@ import torch.nn.functional as F
 
 from src.models.student import StudentIDSModel
 from src.models.variational_teacher import VariationalClassifierTeacher
-from src.training.class_balance import class_balanced_cross_entropy
 from src.training.distillation import directional_kd_loss, mse_cosine_alignment
 
 
@@ -115,7 +114,7 @@ def test_strict_gradient_isolation():
     student_features, student_logits = student(x)
 
     # 3. Student losses
-    loss_task = class_balanced_cross_entropy(student_logits, y)
+    loss_task = F.cross_entropy(student_logits, y)
     loss_kd = directional_kd_loss(teacher_logits, student_logits, temperature=2.0)
     loss_align, _ = mse_cosine_alignment(aligner(teacher_mu), student_features)
 

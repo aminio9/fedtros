@@ -19,7 +19,6 @@ from src.models.variational_teacher import (
     VariationalClassifierTeacher,
     kl_standard_normal,
 )
-from src.training.class_balance import class_balanced_cross_entropy
 from src.training.distillation import (
     directional_kd_loss,
     kd_temperature,
@@ -75,7 +74,7 @@ class FedTROSModelBundle:
 
         # 2. Federated Shared Student (the only communicated model)
         student_hidden = list(getattr(train_cfg, "fedtros_student_hidden_dims", [512, 256, 128]))
-        student_osr_enabled = bool(getattr(train_cfg, "student_osr_enabled", True))
+        student_osr_enabled = bool(getattr(train_cfg, "student_osr_enabled", False))
         student_open_set_enabled = bool(getattr(train_cfg, "student_open_set_enabled", False))
         student_osr_hidden = list(getattr(train_cfg, "student_osr_hidden_dims", [128, 64]))
         student_osr_decoder_hidden = list(getattr(train_cfg, "student_osr_decoder_hidden_dims", [64, 128]))
@@ -273,14 +272,13 @@ class FedTROSModelBundle:
         features: torch.Tensor,
         labels: torch.Tensor,
         *,
-        class_weights: torch.Tensor | None = None,
         beta_kl: float | None = None,
         label_smoothing: float = 0.02,
         max_grad_norm: float = 1.0,
     ) -> dict[str, float]:
         """Execute one supervised VIB training step for the private teacher.
 
-        Objective: L_T = L_CBCE^T + beta_T * D_KL[q_phi(z|x) || N(0, I)]
+        Objective: L_T = L_CE^T + beta_T * D_KL[q_phi(z|x) || N(0, I)]
         """
         if self.teacher is None or self.optimizer_teacher is None:
             raise RuntimeError("VCT teacher step requested while teacher_enabled=false")
@@ -288,8 +286,8 @@ class FedTROSModelBundle:
         self.optimizer_teacher.zero_grad()
 
         logits, mu, logvar, _ = self.teacher(features, sample=self.teacher_stochastic_training)
-        loss_cls = class_balanced_cross_entropy(
-            logits, labels, class_weights, label_smoothing=label_smoothing
+        loss_cls = F.cross_entropy(
+            logits, labels.view(-1).long().clamp(0, logits.shape[1] - 1), label_smoothing=label_smoothing
         )
         loss_kl = kl_standard_normal(mu, logvar)
         b_kl = self.beta_kl if beta_kl is None else float(beta_kl)
@@ -312,7 +310,6 @@ class FedTROSModelBundle:
         features: torch.Tensor,
         labels: torch.Tensor,
         *,
-        class_weights: torch.Tensor | None = None,
         present_classes: torch.Tensor | None = None,
         kappa_i: float | None = None,
         round_num: int = 0,
@@ -323,7 +320,7 @@ class FedTROSModelBundle:
     ) -> dict[str, float]:
         """Execute one training step for the federated student with VCT guidance.
 
-        Objective: L_S = L_CBCE + lambda_anchor * L_anchor + lambda_KD * L_T->S + lambda_align * L_align
+        Objective: L_S = L_CE + lambda_anchor * L_anchor + lambda_KD * L_T->S + lambda_align * L_align
         """
         self.student_model.train()
         if self.teacher_to_student_aligner is not None:
@@ -344,9 +341,11 @@ class FedTROSModelBundle:
                 teacher_logits = teacher_logits.detach()
                 teacher_mu = teacher_mu.detach()
 
-        # 3. Student Task Loss (Class-Balanced CE)
-        student_task_loss = class_balanced_cross_entropy(
-            student_logits, labels, class_weights, label_smoothing=label_smoothing
+        # 3. Student Task Loss (Standard Supervised Cross-Entropy)
+        student_task_loss = F.cross_entropy(
+            student_logits,
+            labels.view(-1).long().clamp(0, student_logits.shape[1] - 1),
+            label_smoothing=label_smoothing,
         )
 
         # 4. Coverage-Adaptive Global Anchor Loss
@@ -354,8 +353,7 @@ class FedTROSModelBundle:
         anchor_weight = 0.0
         class_coverage = 1.0
         
-        canonical = bool(getattr(self.train_cfg, "canonical", False))
-        if canonical and kappa_i is not None:
+        if kappa_i is not None:
             class_coverage = float(kappa_i)
         elif present_classes is not None:
             present_mask = present_classes.to(self.device).bool().view(-1)[: self.num_classes]
@@ -380,8 +378,7 @@ class FedTROSModelBundle:
             anchor_loss = directional_kd_loss(
                 anchor_logits,
                 student_logits,
-                temperature=float(getattr(self.train_cfg, "kd_base_temperature", 2.0)),
-                mean_class_weight=1.0,
+                temperature=float(getattr(self.train_cfg, "anchor_temperature", getattr(self.train_cfg, "kd_base_temperature", 2.0))),
             )
 
         # 5. Disagreement-Gated T -> S KD
@@ -402,12 +399,12 @@ class FedTROSModelBundle:
         if t2s_enabled:
             if self.kd_gating_enabled:
                 t2s_component, stats = disagreement_gated_teacher_to_student_kd(
-                    teacher_logits, student_logits, temperature=temperature, mean_class_weight=1.0, labels=labels
+                    teacher_logits, student_logits, temperature=temperature, labels=labels
                 )
             else:
                 stats = prediction_stats(teacher_logits, student_logits, labels=labels)
                 t2s_component = directional_kd_loss(
-                    teacher_logits, student_logits, temperature=temperature, mean_class_weight=1.0
+                    teacher_logits, student_logits, temperature=temperature
                 )
 
         # 6. Teacher-Student Feature Alignment (mu_T -> A_phi -> h_S)
@@ -504,7 +501,6 @@ class FedTROSModelBundle:
         cfg_training: DictConfig,
         *,
         round_num: int,
-        class_weights: torch.Tensor | None = None,
         present_classes: torch.Tensor | None = None,
         device: torch.device | None = None,
         logger: logging.Logger | None = None,
@@ -540,8 +536,6 @@ class FedTROSModelBundle:
             return {"dataset_train_steps": 0.0}
 
         loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=False)
-        if class_weights is not None:
-            class_weights = class_weights.to(dev)
         if present_classes is not None:
             present_classes = present_classes.to(dev)
 
@@ -556,7 +550,7 @@ class FedTROSModelBundle:
             for _ in range(max(1, teacher_epochs)):
                 for bx, by in loader:
                     t_metrics = self.train_teacher_step(
-                        bx, by, class_weights=class_weights, label_smoothing=label_smoothing
+                        bx, by, label_smoothing=label_smoothing
                     )
                     teacher_loss_sum += t_metrics["teacher_loss"]
                     teacher_cls_sum += t_metrics["teacher_cls_loss"]
@@ -584,7 +578,6 @@ class FedTROSModelBundle:
                 s_metrics = self.train_student_step(
                     bx,
                     by,
-                    class_weights=class_weights,
                     present_classes=present_classes,
                     kappa_i=kappa_i,
                     round_num=round_num,

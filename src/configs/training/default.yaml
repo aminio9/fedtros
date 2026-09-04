@@ -48,9 +48,6 @@ fedtros_global_anchor_weight: 2.0
 fedtros_global_anchor_min_weight: 0.0
 fedtros_global_anchor_coverage_power: 1.0
 student_task_weight: 1.0
-class_balance_beta: 0.999
-class_weight_min: 0.2
-class_weight_max: 5.0
 
 # Student OSR Latent Branch (8-D)
 student_osr_enabled: false

@@ -3,10 +3,10 @@
 The private teacher adopts a supervised Variational Information Bottleneck (VIB)
 formulation (following Alemi et al. and recent supervised VIB classification research).
 It encodes client-specific input features into a regularized latent distribution
-q_phi(z|x) = N(mu, diag(sigma^2)), trained with a class-balanced predictive loss plus
+q_phi(z|x) = N(mu, diag(sigma^2)), trained with a supervised cross-entropy loss plus
 a KL divergence penalty against a standard Normal prior N(0, I):
 
-    L_T = L_CBCE^T(logits, y) + beta_T * D_KL[q_phi(z|x) || N(0, I)]
+    L_T = L_CE^T(logits, y) + beta_T * D_KL[q_phi(z|x) || N(0, I)]
 
 During teacher training, latent sampling is stochastic (sample=True).
 During evaluation, knowledge distillation (KD), and feature alignment, teacher

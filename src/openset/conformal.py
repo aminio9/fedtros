@@ -294,7 +294,7 @@ def score_multicenter_conformal(
         n_id = np.argmin(dists)
         
         nonconformity_scores[i] = score
-        rejected[i] = score > tau_alpha
+        rejected[i] = score >= tau_alpha
         nearest_p[i] = n_id
         
     df_out = df.copy()

@@ -78,7 +78,6 @@ def directional_kd_loss(
     target_logits: torch.Tensor,
     *,
     temperature: float,
-    mean_class_weight: torch.Tensor | float = 1.0,
 ) -> torch.Tensor:
     """One-way KD loss that updates target_logits toward source_logits.
 
@@ -88,8 +87,7 @@ def directional_kd_loss(
     t = max(float(temperature), 1e-6)
     source_prob = F.softmax(source_logits.detach() / t, dim=1)
     target_log_prob = F.log_softmax(target_logits / t, dim=1)
-    weight = torch.as_tensor(mean_class_weight, device=target_logits.device, dtype=target_logits.dtype)
-    return weight * F.kl_div(target_log_prob, source_prob, reduction="batchmean") * (t**2)
+    return F.kl_div(target_log_prob, source_prob, reduction="batchmean") * (t**2)
 
 
 class KnowledgeDistillationLoss(nn.Module):
@@ -103,13 +101,11 @@ class KnowledgeDistillationLoss(nn.Module):
         self,
         student_logits: torch.Tensor,
         teacher_logits: torch.Tensor,
-        mean_class_weight: torch.Tensor | float = 1.0,
     ) -> torch.Tensor:
         return directional_kd_loss(
             teacher_logits,
             student_logits,
             temperature=self.temperature,
-            mean_class_weight=mean_class_weight,
         )
 
 
@@ -129,7 +125,6 @@ def disagreement_gated_teacher_to_student_kd(
     student_logits: torch.Tensor,
     *,
     temperature: float,
-    mean_class_weight: torch.Tensor | float = 1.0,
     labels: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """One-way VCT→student KD weighted by prediction disagreement.
@@ -145,7 +140,6 @@ def disagreement_gated_teacher_to_student_kd(
         teacher_logits,
         student_logits,
         temperature=temperature,
-        mean_class_weight=mean_class_weight,
     )
     return t2s, stats
 

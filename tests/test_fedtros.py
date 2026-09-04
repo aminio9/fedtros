@@ -4,7 +4,6 @@ from omegaconf import OmegaConf
 
 from src.models.bundle import FedTROSModelBundle as Agent
 from src.models.models import ModelFactory
-from src.training.class_balance import effective_number_class_weights
 
 
 def _model_cfg():
@@ -29,13 +28,6 @@ def _training_cfg():
     )
 
 
-def test_effective_number_weights_upweight_minority_class():
-    labels = torch.tensor([0] * 20 + [1] * 2 + [2] * 1)
-    weights = effective_number_class_weights(labels, 4, beta=0.999, device="cpu")
-    assert weights[2] > weights[1] > weights[0]
-    assert torch.isfinite(weights).all()
-
-
 def test_fedtros_train_dataset_updates_both_models():
     factory = ModelFactory(_model_cfg())
     cfg = _training_cfg()
@@ -52,7 +44,6 @@ def test_fedtros_train_dataset_updates_both_models():
         labels=labels,
         cfg_training=cfg,
         round_num=1,
-        class_weights=torch.ones(4),
         present_classes=torch.ones(4, dtype=torch.bool),
         device=torch.device("cpu"),
     )
@@ -83,10 +74,10 @@ def test_one_class_dataset_activates_anchor():
         labels=labels,
         cfg_training=cfg,
         round_num=2,
-        class_weights=torch.ones(4),
         present_classes=torch.tensor([1, 0, 0, 0], dtype=torch.bool),
         device=torch.device("cpu"),
     )
 
     assert metrics["avg_student_anchor_loss"] >= 0.0
     assert metrics["student_anchor_weight"] > 0.0
+

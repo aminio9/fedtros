@@ -8,12 +8,12 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import torch
+import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader, TensorDataset
 
 if TYPE_CHECKING:
     from src.models.bundle import FedTROSModelBundle as Agent
-from src.training.class_balance import class_balanced_cross_entropy, effective_number_class_weights
 
 logger = logging.getLogger("ScaffoldTraining")
 
@@ -72,16 +72,6 @@ def run_scaffold_training_round(
     active_logger = logger or logging.getLogger(f"ScaffoldTraining.{client_id}")
     num_classes = agent.num_classes
 
-    class_weights = effective_number_class_weights(
-        labels.detach().cpu(),
-        num_classes,
-        beta=float(getattr(cfg_training, "class_balance_beta", 0.999)),
-        min_weight=float(getattr(cfg_training, "class_weight_min", 0.2)),
-        max_weight=float(getattr(cfg_training, "class_weight_max", 5.0)),
-        normalize=True,
-        device=device,
-    )
-
     batch_size = int(getattr(cfg_training, "batch_size", 64))
     local_epochs = int(getattr(cfg_training, "local_epochs", 2))
     label_smoothing = float(getattr(cfg_training, "label_smoothing", 0.0))
@@ -107,9 +97,7 @@ def run_scaffold_training_round(
         for bx, by in loader:
             agent.optimizer_student.zero_grad()
             _, logits = agent.student_model(bx)
-            loss = class_balanced_cross_entropy(
-                logits, by, weights=class_weights, label_smoothing=label_smoothing
-            )
+            loss = F.cross_entropy(logits, by, label_smoothing=label_smoothing)
             loss.backward()
             
             # Apply SCAFFOLD correction: grad = grad - c_i + c
