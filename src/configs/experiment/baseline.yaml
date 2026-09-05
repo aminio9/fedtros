@@ -2,8 +2,8 @@ id: baseline
 name: baseline
 variant: canonical
 pipeline: full
-description: BNaT FedTROS-PR baseline with canonical VCT training and Prototype-Rank evaluation.
-method: FedTROS-PR
+description: BNaT FedTROS-MC baseline with canonical VCT training and Multicenter Conformal evaluation.
+method: FedTROS-MC
 dataset: BNaT
 partition: dirichlet
 alpha: ${dataset.preprocessing.alpha}

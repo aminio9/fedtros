@@ -65,3 +65,49 @@ def test_legacy_dqn_checkpoint_raises_error(tmp_path, agent):
         load_agent_checkpoint(agent, legacy_ckpt_path, device=torch.device("cpu"))
 
     assert "legacy DQN/RL checkpoint" in str(exc_info.value)
+
+
+def test_save_global_model_round_gating(tmp_path, agent):
+    import src.federated.server as server_mod
+
+    server_mod.GLOBAL_AGENT_REF = agent
+    ckpt_dir = tmp_path / "checkpoints"
+    params = agent.get_federated_parameters()
+
+    cfg = OmegaConf.create(
+        {
+            "checkpointing": {
+                "dir": str(ckpt_dir),
+                "latest_checkpoint_path": str(ckpt_dir / "latest.pt"),
+                "best_model_path": str(ckpt_dir / "best_model.pt"),
+                "final_model_path": str(ckpt_dir / "final_model.pt"),
+                "save_latest": True,
+                "save_best": True,
+                "save_final": True,
+                "save_round_checkpoints": False,
+                "checkpoint_interval": 0,
+                "include_rng_state": False,
+                "monitor_metric": "val/accuracy",
+            },
+            "federated": {"num_rounds": 2, "central_evaluate": {"enabled": False}},
+            "model": {"feature_dim": 10, "latent_dim": 8, "num_classes": 4},
+        }
+    )
+
+    # Round 1 with save_round_checkpoints=False:
+    server_mod.save_global_model(params, 1, cfg, metrics={"val/accuracy": 0.8})
+    assert (ckpt_dir / "latest.pt").exists()
+    assert (ckpt_dir / "best_model.pt").exists()
+    assert not (ckpt_dir / "global_model_round_0001.pt").exists()
+    assert not (ckpt_dir / "final_model.pt").exists()
+
+    # Round 2 (final round): final_model.pt should be saved
+    server_mod.save_global_model(params, 2, cfg, metrics={"val/accuracy": 0.85})
+    assert (ckpt_dir / "final_model.pt").exists()
+    assert not (ckpt_dir / "global_model_round_0002.pt").exists()
+
+    # With save_round_checkpoints=True: round file should be saved
+    cfg.checkpointing.save_round_checkpoints = True
+    server_mod.save_global_model(params, 3, cfg, metrics={"val/accuracy": 0.86})
+    assert (ckpt_dir / "global_model_round_0003.pt").exists()
+

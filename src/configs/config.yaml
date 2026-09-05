@@ -6,7 +6,7 @@ defaults:
   - training: default
   - evaluation: default
   - federated: default
-  - open_set: fedtros_pr
+  - open_set: fedtros_mc
   - checkpointing: default
   - logging: default
   - tracking: wandb
@@ -17,7 +17,7 @@ defaults:
   # Global method and stage configs intentionally come after their base groups.
   # Otherwise later defaults overwrite method-specific strategy/training values
   # (for example FedProx's non-zero proximal coefficient).
-  - method: fedtros_pr
+  - method: fedtros_mc
   - stage: development
   - override hydra/job_logging: disabled
   - override hydra/hydra_logging: disabled
