@@ -299,8 +299,9 @@ def evaluate_multicenter_conformal(
         if split_manifest_path.exists():
             try:
                 split_manifest = json.loads(split_manifest_path.read_text(encoding="utf-8"))
-                known_ids = test_scores_df.loc[~is_unknown, "sample_id"].astype(str).tolist()
-                unknown_ids = test_scores_df.loc[is_unknown, "sample_id"].astype(str).tolist()
+                is_unk_mask = (test_scores_df["known_or_unknown"] == "unknown")
+                known_ids = test_scores_df.loc[~is_unk_mask, "sample_id"].astype(str).tolist()
+                unknown_ids = test_scores_df.loc[is_unk_mask, "sample_id"].astype(str).tolist()
                 split_manifest["final_known_test"] = {
                     "count": len(known_ids),
                     "hash": hashlib.sha256("|".join(sorted(known_ids)).encode()).hexdigest(),

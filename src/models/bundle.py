@@ -625,16 +625,32 @@ class FedTROSModelBundle:
         }
 
         active_logger.info(
-            "FedTROS local round | teacher_loss=%.4f (cls=%.4f kl=%.4f) | "
-            "student_loss=%.4f (task=%.4f kd=%.4f align=%.4f anchor=%.4f)",
-            avg_teacher_loss,
-            avg_teacher_cls,
-            avg_teacher_kl,
+            "FedTROS-MC local training | Round %d | "
+            "Entropy H_k=%.4f, Coverage kappa_k=%.4f, Anchor lambda_a=%.4f (Eq. 90, 95) | "
+            "Temp tau_t=%.4f (Eq. 66), Agr a_agr=%.4f, Gate (1-a)=%.4f (Eq. 72, 76) | "
+            "AlignCos=%.4f (Eq. 81) | "
+            "Losses: L_S=%.4f [CE=%.4f, KD=%.4f*%.2f, Align=%.4f*%.2f, Anchor=%.4f*%.4f] (Eq. 108) | "
+            "Teacher VIB: L_T=%.4f [CE=%.4f, KL=%.4f*%.2f] (Eq. 54)",
+            int(round_num),
+            unnorm_entropy,
+            kappa_i,
+            metrics["student_anchor_weight"],
+            metrics["temperature"],
+            metrics["agreement"],
+            1.0 - metrics["agreement"],
+            metrics["align_score"],
             metrics["avg_student_total_loss"],
             metrics["avg_student_task_loss"],
             metrics["avg_student_kd_loss"],
+            self.lambda_kd,
             metrics["avg_student_align_loss"],
+            self.lambda_align,
             metrics["avg_student_anchor_loss"],
+            metrics["student_anchor_weight"],
+            avg_teacher_loss,
+            avg_teacher_cls,
+            avg_teacher_kl,
+            self.beta_kl,
         )
         return metrics
 

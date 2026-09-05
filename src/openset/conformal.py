@@ -198,7 +198,17 @@ def fit_multicenter_conformal(
     else:
         tau_alpha = float('inf')
         
-    logger.info(f"Global Calibration: n={m}, alpha={alpha}, k_alpha={k_alpha}, tau_alpha={tau_alpha:.4f}")
+    logger.info(
+        "=== Multicenter Conformal Calibration (Algorithm 2 & Eq. 196) ===\n"
+        "  * Prototype Banks: %s\n"
+        "  * Calibration Samples: |D_cal| = %d\n"
+        "  * Significance Level alpha = %.4f (Confidence = %.2f%%)\n"
+        "  * Quantile Rank k_alpha = ceil((%d + 1) * %.4f) = %d\n"
+        "  * Rejection Threshold tau_alpha = %.4f",
+        ", ".join(f"Class {c}: K*={m_d['k']}, N={m_d['n_proto_samples']}" for c, m_d in models.items()),
+        m, alpha, (1.0 - alpha) * 100.0,
+        m, 1.0 - alpha, k_alpha, tau_alpha
+    )
     
     for r in calib_records:
         r["alpha"] = alpha
@@ -302,4 +312,16 @@ def score_multicenter_conformal(
     df_out["rejected"] = rejected
     df_out["nearest_prototype_id"] = nearest_p
     df_out["nearest_prototype_class"] = nearest_c
+
+    total_q = len(df_out)
+    n_rej = int(np.sum(rejected))
+    n_acc = total_q - n_rej
+    logger.info(
+        "=== Conformal Decision Rule Evaluation (Algorithm 2) ===\n"
+        "  * Total Test Queries: %d\n"
+        "  * Admitted Known (s(x) < tau_alpha): %d (%.2f%%)\n"
+        "  * Rejected Unknown Anomalies (s(x) >= tau_alpha): %d (%.2f%%)",
+        total_q, n_acc, 100.0 * n_acc / max(total_q, 1),
+        n_rej, 100.0 * n_rej / max(total_q, 1)
+    )
     return df_out
