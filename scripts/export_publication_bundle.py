@@ -17,7 +17,7 @@ from src.analysis.export import build_efficiency_curve
 from src.analysis.query import query_runs
 
 SCHEMA_NAME="fedtros_mc_publication_bundle"
-SCHEMA_VERSION=1
+SCHEMA_VERSION=2
 STUDIES=("E1-IID-CS","E2-IID-OSR","E3-NIID-CS","E4-NIID-FOSR","E5-DATASET","E6-SCALE","E7-EFFICIENCY","E8-LOAO","A1-TEACHER","A2-ANCHOR","A3-TRANSFER","A4-PR","A5-FEATURE","S1-SENSITIVITY")
 
 ABLATION_REFERENCES={
@@ -153,7 +153,7 @@ def export(outputs:Path,target_root:Path,freeze_id:str|None,include_stages:list[
     files={}
     for p in sorted(target.rglob("*")):
         if p.is_file() and p.name!="manifest.json": files[p.relative_to(target).as_posix()]={"sha256":sha256(p),"size_bytes":p.stat().st_size}
-    manifest={"schema_name":SCHEMA_NAME,"schema_version":SCHEMA_VERSION,"method":"FedTROS-MC","teacher":"VCT","detector":"adaptive_multicenter_lw_split_conformal","experiment_contract_version":"2026-08-19","config_freeze_id":freeze,"created_at":datetime.now(timezone.utc).isoformat(),"code_commit":git_commit(_ROOT),"source_run_ids":[r.run_id for r in runs],"source_config_hashes":sorted({r.config_hash for r in runs if r.config_hash}),"source_split_hashes":sorted({r.split_hash for r in runs if r.split_hash}),"studies_present":sorted({r.study for r in runs}),"include_stages":include_stages,"tabular_format":"csv","files":files}
+    manifest={"schema_name":SCHEMA_NAME,"schema_version":SCHEMA_VERSION,"method":"FedTROS-MC","teacher":"VCT","detector":"adaptive_multicenter_lw_split_conformal","feature_source":"student_hidden_l2","alpha":0.05,"aggregation_gamma":0.5,"legacy_osr_branch":False,"synthetic_boundary":False,"experiment_contract_version":"2026-08-19","config_freeze_id":freeze,"created_at":datetime.now(timezone.utc).isoformat(),"code_commit":git_commit(_ROOT),"source_run_ids":[r.run_id for r in runs],"source_config_hashes":sorted({r.config_hash for r in runs if r.config_hash}),"source_split_hashes":sorted({r.split_hash for r in runs if r.split_hash}),"studies_present":sorted({r.study for r in runs}),"include_stages":include_stages,"tabular_format":"csv","files":files}
     (target/"manifest.json").write_text(json.dumps(manifest,indent=2,sort_keys=True),encoding="utf-8")
     return target
 

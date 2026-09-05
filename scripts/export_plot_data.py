@@ -244,18 +244,22 @@ def _score_contract(run: RunRecord) -> pd.DataFrame:
     if known_unknown is None:
         flag = pd.to_numeric(series("is_unknown", "unknown_flag"), errors="coerce").fillna(0)
         known_unknown = np.where(flag.astype(int) == 1, "unknown", "known")
-    threshold = series("selected_threshold_used", default=_metric(run, ("prototype_rank/threshold",)))
-    return pd.DataFrame({
+    threshold = series("tau_alpha", "selected_threshold_used", default=_metric(run, ("open_set/tau_alpha", "prototype_rank/threshold")))
+    nonconf = series("nonconformity_score", "prototype_score", "raw_score", "unknown_score", "recon_error")
+    data: dict[str, Any] = {
         "sample_id": series("sample_id", default=np.arange(len(source))),
         "true_label": series("y_true", "y_raw", "true_label"),
         "closed_pred": series("pred_before_osr", "raw_pred", "closed_pred"),
         "open_pred": series("pred_after_osr", "y_pred", "final_pred", "open_pred"),
         "known_or_unknown": known_unknown,
-        "raw_score": series("prototype_score", "raw_score", "unknown_score", "recon_error"),
-        "prototype_rank_score": series("prototype_rank_score", "rank_score", "unknown_score"),
-        "selected_threshold_used": threshold,
+        "nonconformity_score": nonconf,
+        "tau_alpha": threshold,
         "final_reject": series("final_reject", "is_rejected"),
-    })
+    }
+    if "nonconformity_score" not in source.columns:
+        data["prototype_rank_score"] = series("prototype_rank_score", "rank_score", "unknown_score")
+        data["selected_threshold_used"] = threshold
+    return pd.DataFrame(data)
 
 
 def _class_labels(run: RunRecord, size: int) -> list[str]:
@@ -295,6 +299,9 @@ def export_osr_artifacts(runs: list[RunRecord], output_dir: Path) -> tuple[dict[
         if any(
             path.exists()
             for path in (
+                candidate.run_dir / "osr" / "latent_projection.csv",
+                candidate.run_dir / "artifacts" / "latent_projection.csv",
+                candidate.run_dir / "latent_projection.csv",
                 candidate.run_dir / "artifacts" / "prototype_rank_latent_projection.csv",
                 candidate.run_dir / "prototype_rank_latent_projection.csv",
             )
@@ -313,7 +320,8 @@ def export_osr_artifacts(runs: list[RunRecord], output_dir: Path) -> tuple[dict[
     exported["exp2_scores"] = scores_path
 
     unknown = scores["known_or_unknown"].astype(str).str.lower().eq("unknown").astype(int)
-    rank = pd.to_numeric(scores["prototype_rank_score"], errors="coerce")
+    score_col = "nonconformity_score" if "nonconformity_score" in scores.columns else "prototype_rank_score"
+    rank = pd.to_numeric(scores[score_col], errors="coerce")
     valid = rank.notna()
     if unknown[valid].nunique() == 2:
         fpr, tpr, _ = roc_curve(unknown[valid], rank[valid])
@@ -336,12 +344,19 @@ def export_osr_artifacts(runs: list[RunRecord], output_dir: Path) -> tuple[dict[
             exported[stem] = path
 
     projection_candidates = (
+        run.run_dir / "osr" / "latent_projection.csv",
+        run.run_dir / "artifacts" / "latent_projection.csv",
+        run.run_dir / "latent_projection.csv",
         run.run_dir / "artifacts" / "prototype_rank_latent_projection.csv",
         run.run_dir / "prototype_rank_latent_projection.csv",
     )
     projection = next((path for path in projection_candidates if path.exists()), None)
     if projection is not None:
         frame = pd.read_csv(projection)
+        if "point_type" in frame.columns:
+            # Clean canonical prototype types
+            frame = frame[~frame["point_type"].astype(str).str.contains("negative|boundary|synthetic", case=False, regex=True)].copy()
+            frame["point_type"] = frame["point_type"].replace({"positive_prototype": "prototype"})
         exported["exp2_latent_projection"] = _write_csv(
             frame, output_dir / "exp2_latent_projection.csv"
         )
