@@ -168,6 +168,10 @@ class FlowerClient(fl.client.NumPyClient):
         self.logger.info("Restored private VCT state for client %s from %s", self.cid, path)
 
     def _save_private_state(self, round_num: int) -> None:
+        if not bool(OmegaConf.select(self.cfg, "checkpointing.save_client_private", default=True)):
+            return
+        if not bool(OmegaConf.select(self.cfg, "checkpointing.save_latest", default=True)):
+            return
         path = self._private_checkpoint_path()
         payload = {
             "schema_version": 2,
@@ -300,7 +304,9 @@ class FlowerClient(fl.client.NumPyClient):
             # FedTROS-PR: Private VCT teacher + Guided Federated Student
             # =========================================================
             if phase in {"fedtros_pr", "fedtros"}:
-                self.logger.info(f"Client {self.cid} [FedTROS-PR]: Round {round_num}")
+                canonical = bool(OmegaConf.select(self.cfg, "method.canonical", default=False))
+                method_tag = "FedTROS-MC" if canonical else "FedTROS-PR"
+                self.logger.info(f"Client {self.cid} [{method_tag}]: Round {round_num}")
                 student_before = self.agent.get_student_parameters()
                 if param_list:
                     self.agent.set_student_parameters(param_list)

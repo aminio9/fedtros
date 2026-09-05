@@ -375,11 +375,33 @@ def save_global_model(
                 "torch_cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
             }
 
+        save_latest = bool(OmegaConf.select(cfg, "checkpointing.save_latest", default=True))
+        save_best = bool(OmegaConf.select(cfg, "checkpointing.save_best", default=True))
+        save_final = bool(OmegaConf.select(cfg, "checkpointing.save_final", default=True))
+        save_round_checkpoints = bool(
+            OmegaConf.select(cfg, "checkpointing.save_round_checkpoints", default=False)
+        )
+        checkpoint_interval = int(
+            OmegaConf.select(cfg, "checkpointing.checkpoint_interval", default=0) or 0
+        )
+        num_rounds = int(OmegaConf.select(cfg, "federated.num_rounds", default=1) or 1)
+
+        should_save_round = save_round_checkpoints or (
+            checkpoint_interval > 0 and round_num % checkpoint_interval == 0
+        )
         round_path = model_dir / f"global_model_round_{round_num:04d}.pt"
-        torch.save(checkpoint, round_path)
-        torch.save(checkpoint, model_dir / "global_model_latest.pt")
-        torch.save(checkpoint, _resolve_path(cfg.checkpointing.latest_checkpoint_path))
-        if bool(cfg.checkpointing.save_best):
+        if should_save_round:
+            torch.save(checkpoint, round_path)
+            logger.info("Saved global model round checkpoint to %s", round_path)
+
+        latest_path = _resolve_path(cfg.checkpointing.latest_checkpoint_path)
+        if save_latest:
+            torch.save(checkpoint, latest_path)
+            legacy_latest = model_dir / "global_model_latest.pt"
+            if legacy_latest != latest_path:
+                torch.save(checkpoint, legacy_latest)
+
+        if save_best:
             best_path = _resolve_path(cfg.checkpointing.best_model_path)
             monitor_metric = str(OmegaConf.select(cfg, "checkpointing.monitor_metric", default=""))
             has_monitor_metric = bool(monitor_metric and metrics and monitor_metric in metrics)
@@ -394,14 +416,21 @@ def save_global_model(
             elif not bool(OmegaConf.select(cfg, "federated.central_evaluate.enabled", default=False)):
                 torch.save(checkpoint, best_path)
 
+        if save_final and round_num >= num_rounds:
+            final_path = _resolve_path(cfg.checkpointing.final_model_path)
+            torch.save(checkpoint, final_path)
+            logger.info("Saved final global model checkpoint to %s", final_path)
+
         metrics_path = model_dir / "federated_round_metrics.csv"
         write_header = not metrics_path.exists()
         with open(metrics_path, "a", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=["federated/round", "checkpoint_path"])
             if write_header:
                 writer.writeheader()
-            writer.writerow({"federated/round": round_num, "checkpoint_path": str(round_path)})
-        logger.info("Saved global model checkpoint (schema_version 2) to %s", round_path)
+            recorded_path = str(round_path) if should_save_round else str(latest_path)
+            writer.writerow({"federated/round": round_num, "checkpoint_path": recorded_path})
+        if not should_save_round:
+            logger.info("Saved global model checkpoint (schema_version 2) to %s", latest_path)
 
     except Exception as exc:
         logger.exception("Failed to save canonical checkpoint: %s", exc)
@@ -854,9 +883,16 @@ class FedTROSStrategy(FedAvg):
             "global_update_norm": distance_to_previous,
             "metrics": metrics,
         })
+        canonical = bool(OmegaConf.select(self.cfg, "method.canonical", default=False))
+        method_label = "FedTROS-MC" if canonical else "FedTROS-PR"
+        gamma_val = 0.5 if canonical else 1.0
+        weight_details = ", ".join(
+            f"Client {r['cid']}: N={int(r['num_examples'])} -> w={r['support_weight']:.2f} ({100.0*r['support_weight']/weight_sum:.1f}%)"
+            for r in records
+        )
         logger.info(
-            "FedTROS-PR support aggregation | round=%d clients=%d update_norm=%.4f",
-            effective_round, len(records), distance_to_previous,
+            "%s power-tempered aggregation (Eq. 117, gamma=%.1f) | round=%d clients=%d update_norm=%.4f | [%s]",
+            method_label, gamma_val, effective_round, len(records), distance_to_previous, weight_details
         )
         _emit_round_metrics(
             self.metrics_sink,
@@ -1116,14 +1152,55 @@ class FedTROSStrategy(FedAvg):
                 "torch_cpu": torch.get_rng_state(),
                 "torch_cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
             }
-        prefix = "fedtros_mc" if canonical else "fedtros_pr_legacy"
-        round_path = model_dir / f"{prefix}_student_round_{round_num:04d}.pt"
-        latest_path = model_dir / f"{prefix}_student_latest.pt"
-        torch.save(checkpoint, round_path)
-        torch.save(checkpoint, latest_path)
-        torch.save(checkpoint, _resolve_path(self.cfg.checkpointing.latest_checkpoint_path))
+        save_latest = bool(OmegaConf.select(self.cfg, "checkpointing.save_latest", default=True))
+        save_best = bool(OmegaConf.select(self.cfg, "checkpointing.save_best", default=True))
+        save_final = bool(OmegaConf.select(self.cfg, "checkpointing.save_final", default=True))
+        save_round_checkpoints = bool(
+            OmegaConf.select(self.cfg, "checkpointing.save_round_checkpoints", default=False)
+        )
+        checkpoint_interval = int(
+            OmegaConf.select(self.cfg, "checkpointing.checkpoint_interval", default=0) or 0
+        )
+        num_rounds = int(OmegaConf.select(self.cfg, "federated.num_rounds", default=1) or 1)
 
-        logger.info("Saved FedTROS-PR student checkpoint to %s", round_path)
+        prefix = "fedtros_mc" if canonical else "fedtros_pr_legacy"
+        should_save_round = save_round_checkpoints or (
+            checkpoint_interval > 0 and round_num % checkpoint_interval == 0
+        )
+        round_path = model_dir / f"{prefix}_student_round_{round_num:04d}.pt"
+        if should_save_round:
+            torch.save(checkpoint, round_path)
+            logger.info("Saved FedTROS student round checkpoint to %s", round_path)
+
+        latest_path = _resolve_path(self.cfg.checkpointing.latest_checkpoint_path)
+        if save_latest:
+            torch.save(checkpoint, latest_path)
+            method_latest = model_dir / f"{prefix}_student_latest.pt"
+            if method_latest != latest_path:
+                torch.save(checkpoint, method_latest)
+
+        if save_best:
+            best_path = _resolve_path(self.cfg.checkpointing.best_model_path)
+            monitor_metric = str(OmegaConf.select(self.cfg, "checkpointing.monitor_metric", default=""))
+            has_monitor_metric = bool(monitor_metric and metrics and monitor_metric in metrics)
+            if has_monitor_metric:
+                _update_best_checkpoint(
+                    candidate_checkpoint=checkpoint,
+                    cfg=self.cfg,
+                    round_num=round_num,
+                    metric_name=monitor_metric,
+                    metric_value=float(metrics[monitor_metric]),
+                )
+            elif not bool(OmegaConf.select(self.cfg, "federated.central_evaluate.enabled", default=False)):
+                torch.save(checkpoint, best_path)
+
+        if save_final and round_num >= num_rounds:
+            final_path = _resolve_path(self.cfg.checkpointing.final_model_path)
+            torch.save(checkpoint, final_path)
+            logger.info("Saved final FedTROS student checkpoint to %s", final_path)
+
+        if not should_save_round:
+            logger.info("Saved FedTROS-PR student checkpoint to %s", latest_path)
 
     @staticmethod
     def _weight_list_norm(weights: list[np.ndarray]) -> float:
