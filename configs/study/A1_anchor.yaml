@@ -1,0 +1,14 @@
+study_id: A1-ANCHOR
+name: A1 Anchoring Ablation
+description: Compare q_i-based anchoring versus kappa_i-based anchoring.
+datasets:
+  - bnat
+methods:
+  - fedtros_mc
+variants:
+  - name: canonical
+    overrides: {}
+  - name: qi_anchoring
+    overrides: {method.ablation.anchor_metric: "qi"}
+alphas: [0.05]
+iids: [false]

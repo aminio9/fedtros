@@ -1,32 +1,19 @@
-# E8 Leave-One-Attack-Out (LOAO) Open-Set Evaluation
 study_id: E8-LOAO
 name: E8_leave_one_attack_out
-description: Systematic leave-one-attack-out open-set evaluation across all attack classes.
-
-methods:
-  - fedtros_pr
-  - fedavg
-  - fedprox
-datasets:
-  - bnat
-alphas:
-  - 0.1
-iids:
-  - false
-unknown_label_sets:
-  - ["BP"]
-  - ["DoS"]
-  - ["MitM"]
-  - ["FoT"]
-seeds:
-  - 17
-  - 42
-  - 73
-  - 101
-  - 137
+description: Leave-one-attack-out OSR at canonical alpha=0.5; Normal always remains known.
+methods: [fedtros_mc]
+datasets: [bnat]
+alphas: [0.5]
+iids: [false]
+unknown_label_sets: [[BP], [DoS], [MitM], [FoT]]
+known_labels_by_unknown:
+  BP: [Normal, DoS, MitM, FoT]
+  DoS: [Normal, BP, MitM, FoT]
+  MitM: [Normal, BP, DoS, FoT]
+  FoT: [Normal, BP, DoS, MitM]
+seeds: [17, 42, 73, 101, 137]
 num_clients: 10
-
 base_overrides:
   federated.num_rounds: 100
-  training.local_epochs: 1
+  training.local_epochs: 2
   evaluation.mode: open_set

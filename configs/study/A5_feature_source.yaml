@@ -1,25 +1,16 @@
-# A5 Feature Source Selection Ablation
-study_id: A5-FEATURE-SOURCE
+study_id: A5-FEATURE
 name: A5_feature_source
-description: Ablation comparing open-set rejection features from student latent bottleneck vs teacher representations.
-
-methods:
-  - fedtros_pr
-datasets:
-  - bnat
-alphas:
-  - 0.1
-iids:
-  - false
-unknown_label_sets:
-  - ["FoT"]
-seeds:
-  - 17
-  - 42
-  - 73
+description: Feature-source gate; run only if the dedicated student OSR branch exists and is trained.
+methods: [fedtros_mc]
+datasets: [bnat]
+alphas: [0.5]
+iids: [false]
+unknown_label_sets: [[FoT]]
+known_labels: [Normal, BP, DoS, MitM]
 num_clients: 10
-
-base_overrides:
-  federated.num_rounds: 50
-  training.local_epochs: 1
-  evaluation.mode: open_set
+seeds: [17, 42, 73, 101, 137]
+variants:
+  - name: student_embedding
+    overrides: {training.student_osr_enabled: false, open_set.prototype.feature_source: student_embedding}
+  - name: osr_branch_embedding
+    overrides: {method.canonical: false, training.canonical: true, training.student_osr_enabled: true, open_set.prototype.feature_source: osr_mu}

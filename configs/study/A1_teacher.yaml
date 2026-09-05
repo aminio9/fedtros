@@ -1,26 +1,21 @@
-# A1 Variational Classifier Teacher Ablation
 study_id: A1-TEACHER
 name: A1_teacher
-description: Ablation comparing Variational Classifier Teacher against standard deterministic teacher and teacher-free baselines.
-
-methods:
-  - fedtros_pr
-datasets:
-  - bnat
-alphas:
-  - 0.1
-  - 0.5
-iids:
-  - false
-unknown_label_sets:
-  - ["FoT"]
-seeds:
-  - 17
-  - 42
-  - 73
+description: "Teacher attribution gate: no teacher vs deterministic teacher vs VCT and beta=0 control."
+methods: [fedtros_mc]
+datasets: [bnat]
+alphas: [0.1, 0.5]
+iids: [false]
+unknown_label_sets: [[FoT]]
+known_labels: [Normal, BP, DoS, MitM]
+seeds: [17, 42, 73, 101, 137]
 num_clients: 10
-
-base_overrides:
-  federated.num_rounds: 50
-  training.local_epochs: 1
-  evaluation.mode: open_set
+variants:
+  - name: no_teacher
+    overrides: {training.teacher_enabled: false, training.kd_enabled: false, training.alignment_enabled: false}
+  - name: deterministic_teacher
+    overrides: {training.teacher_enabled: true, training.teacher_stochastic_training: false, training.teacher_beta_kl: 0.0}
+  - name: vct_beta0
+    overrides: {training.teacher_enabled: true, training.teacher_stochastic_training: true, training.teacher_beta_kl: 0.0}
+  - name: vct
+    overrides: {training.teacher_enabled: true, training.teacher_stochastic_training: true}
+base_overrides: {federated.num_rounds: 100, training.local_epochs: 2, evaluation.mode: open_set}

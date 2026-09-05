@@ -1,25 +1,21 @@
-# A3 Knowledge Transfer Schedule Ablation
 study_id: A3-TRANSFER
 name: A3_transfer
-description: Ablation of teacher-to-student distillation onset rounds and latent alignment schedules.
-
-methods:
-  - fedtros_pr
-datasets:
-  - bnat
-alphas:
-  - 0.1
-iids:
-  - false
-unknown_label_sets:
-  - ["FoT"]
-seeds:
-  - 17
-  - 42
-  - 73
+description: "Isolate teacher-transfer components: KD gating and feature alignment."
+methods: [fedtros_mc]
+datasets: [bnat]
+alphas: [0.5]
+iids: [false]
+unknown_label_sets: [[FoT]]
+known_labels: [Normal, BP, DoS, MitM]
+seeds: [17, 42, 73, 101, 137]
 num_clients: 10
-
-base_overrides:
-  federated.num_rounds: 50
-  training.local_epochs: 1
-  evaluation.mode: open_set
+variants:
+  - name: no_kd_no_alignment
+    overrides: {training.kd_enabled: false, training.alignment_enabled: false}
+  - name: ungated_kd
+    overrides: {training.kd_enabled: true, training.kd_gating_enabled: false, training.alignment_enabled: false}
+  - name: gated_kd
+    overrides: {training.kd_enabled: true, training.kd_gating_enabled: true, training.alignment_enabled: false}
+  - name: full_transfer
+    overrides: {training.kd_enabled: true, training.kd_gating_enabled: true, training.alignment_enabled: true}
+base_overrides: {federated.num_rounds: 100, training.local_epochs: 2, evaluation.mode: open_set}

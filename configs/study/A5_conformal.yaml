@@ -1,0 +1,14 @@
+study_id: A5-CONFORMAL
+name: A5 Conformal Ablation
+description: Compare global versus candidate-conditioned conformal calibration.
+datasets:
+  - bnat
+methods:
+  - fedtros_mc
+variants:
+  - name: canonical
+    overrides: {}
+  - name: global_conformal
+    overrides: {method.ablation.calibration_scope: "global"}
+alphas: [0.05]
+iids: [false]

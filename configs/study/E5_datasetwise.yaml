@@ -1,32 +1,24 @@
-# E5 Multi-Dataset Generalization
-study_id: E5-MULTI-DATASET
+study_id: E5-DATASET
 name: E5_datasetwise
-description: Generalization across multiple network security datasets (BNaT, BTAT, ToN-IoT, CIC-IDS2017).
-
-methods:
-  - fedtros_pr
-  - fedavg
-  - fedprox
-datasets:
-  - bnat
-  - btat
-  - toniot
-  - cicids2017
-alphas:
-  - 0.1
-iids:
-  - false
-unknown_label_sets:
-  - ["FoT"]
-seeds:
-  - 17
-  - 42
-  - 73
-  - 101
-  - 137
+description: Dataset-wise external validation with frozen within-dataset known/unknown protocols; not cross-dataset transfer.
+methods: [fedtros_mc, fedavg, fedprox, scaffold, local_only, centralized]
+datasets: [bnat, btat, cicids2017, toniot]
+alphas: [0.5]
+iids: [false]
+# Protocols are predeclared from the dataset configs and must be frozen before paper_final execution.
+unknown_labels_by_dataset:
+  bnat: [FoT]
+  btat: [Re, DeC]
+  cicids2017: [Bot, Heartbleed, Infiltration, Web Attack-Brute Force, Web Attack-Sql Injection, Web Attack-XSS]
+  toniot: [mitm, ransomware, xss]
+known_labels_by_dataset:
+  bnat: [Normal, BP, DoS, MitM]
+  btat: [Normal, DoS, OaU, FoT, FDV]
+  cicids2017: [BENIGN, DDoS, DoS GoldenEye, DoS Hulk, DoS Slowhttptest, DoS slowloris, FTP-Patator, PortScan, SSH-Patator]
+  toniot: [normal, backdoor, ddos, dos, injection, password, scanning]
+seeds: [17, 42, 73, 101, 137]
 num_clients: 10
-
 base_overrides:
   federated.num_rounds: 100
-  training.local_epochs: 1
+  training.local_epochs: 2
   evaluation.mode: open_set

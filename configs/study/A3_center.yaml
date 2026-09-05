@@ -1,0 +1,14 @@
+study_id: A3-CENTER
+name: A3 Center Ablation
+description: Compare single-center versus adaptive multicenter geometry.
+datasets:
+  - bnat
+methods:
+  - fedtros_mc
+variants:
+  - name: canonical
+    overrides: {}
+  - name: single_center
+    overrides: {method.ablation.single_center: true}
+alphas: [0.05]
+iids: [false]

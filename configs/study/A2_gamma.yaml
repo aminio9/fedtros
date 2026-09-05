@@ -1,0 +1,20 @@
+study_id: A2-GAMMA
+name: A2 Gamma Ablation
+description: Compare gamma in {0, 0.25, 0.5, 0.75, 1.0}
+datasets:
+  - bnat
+methods:
+  - fedtros_mc
+variants:
+  - name: gamma_0p0
+    overrides: {federated.strategy.gamma: 0.0}
+  - name: gamma_0p25
+    overrides: {federated.strategy.gamma: 0.25}
+  - name: canonical
+    overrides: {}
+  - name: gamma_0p75
+    overrides: {federated.strategy.gamma: 0.75}
+  - name: gamma_1p0
+    overrides: {federated.strategy.gamma: 1.0}
+alphas: [0.05]
+iids: [false]
