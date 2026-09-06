@@ -76,15 +76,58 @@ poetry run pytest -q
 
 ---
 
-## 2. Managing Persistent Terminals with `tmux`
+## 2. Managing Persistent Terminals with `tmux` (Creation & Lifecycle Guide)
 
-Running long experiments inside `tmux` sessions ensures they keep executing in the background even if your SSH session disconnects.
+When running long deep learning experiments on a remote Linux server over SSH, an accidental network disconnection, laptop lid close, or SSH timeout will immediately kill all running processes. 
 
-### Quick `tmux` Reference:
-- **Detach** (leave running in background): Press `Ctrl + B`, release, then press `D`.
-- **Reattach** to a running session: `tmux attach -t <session_name>`
-- **List** active sessions: `tmux ls`
-- **Kill** a session when finished: `tmux kill-session -t <session_name>`
+`tmux` (**Terminal Multiplexer**) solves this by running terminals as persistent background daemon processes on the server. Even if your SSH session closes, your experiments continue running uninterrupted.
+
+---
+
+### 🔑 The Core Concept: The Prefix Key (`Ctrl + B`)
+In `tmux`, every keyboard shortcut starts with the **Prefix key**:
+1. Press `Ctrl` and `B` together.
+2. Release both keys.
+3. Press the shortcut key (e.g., `d` to detach, `[` to scroll, `s` to switch).
+
+---
+
+### 🛠️ Essential `tmux` Commands Cheatsheet
+
+| Task | Command / Shortcut | Description |
+| :--- | :--- | :--- |
+| **Create named session** | `tmux new -s <name>` | Starts a new persistent session with a custom name. |
+| **Detach from session** | Press `Ctrl + B`, then `D` | Leaves the session running safely in the background and returns to your main bash shell. |
+| **List running sessions** | `tmux ls` | Lists all active tmux sessions and their current status. |
+| **Reattach to session** | `tmux attach -t <name>` | Reconnects to an existing background session. |
+| **Switch sessions live** | Press `Ctrl + B`, then `S` | Opens an interactive session picker. Use $\uparrow$ / $\downarrow$ arrows and hit `Enter` to switch! |
+| **Kill a specific session**| `tmux kill-session -t <name>`| Stops the experiment and closes the session. |
+| **Kill ALL sessions** | `tmux kill-server` | Terminates all tmux sessions and background processes cleanly. |
+
+---
+
+### 📜 How to Scroll & View History in `tmux` (Copy Mode)
+Normally, your mouse wheel or standard terminal scroll won't scroll through past outputs in tmux. Use **Copy Mode**:
+1. Press **`Ctrl + B`**, then press **`[`** (a cursor indicator appears at the top right).
+2. Use **$\uparrow$ / $\downarrow$ arrow keys**, **`Page Up` / `Page Down`**, or mouse wheel to scroll up and inspect past training logs and epoch metrics.
+3. Press **`q`** to exit Copy Mode and return to the live prompt.
+
+> [!TIP]
+> **Enable Mouse Scrolling Permanently**:
+> Run this one-liner once on your server:
+> ```bash
+> echo "set -g mouse on" >> ~/.tmux.conf && tmux source ~/.tmux.conf
+> ```
+> Now you can scroll with your mouse wheel and click between panes naturally!
+
+---
+
+### 🚀 Creating & Launching Sessions in 1 Line (Detached Mode)
+You don't need to manually create a session, type commands, and detach. You can launch any command or script directly inside a persistent background tmux session in one command:
+```bash
+tmux new-session -d -s <session_name> "bash <script_path>"
+```
+This is exactly how our provided automated launcher script operates!
 
 ---
 
@@ -105,14 +148,34 @@ export CUDA_VISIBLE_DEVICES=MIG-GPU-xxxx
 
 ---
 
-## 4. Experiment Execution Across Terminals (Seed 42)
+## 4. 8-Terminal High-Throughput Architecture (32 GB GPU Profile)
+
+### 💡 Why 8 Parallel Terminals?
+- **Server Resources**: 24–32 GB GPU VRAM (e.g., RTX 3090 Ti / RTX 4090 / A100).
+- **VRAM per Experiment**: Each FedTROS-MC or baseline experiment using `runtime=gpu_fast` occupies ~1.5–3.5 GB of GPU VRAM.
+- **Parallel Capacity**: Running **8 experiments simultaneously** consumes ~18–26 GB VRAM, fully utilizing the 32 GB GPU memory without triggering out-of-memory (OOM) errors.
+- **Speedup**: Benchmarks complete up to **8x faster** compared to sequential execution, completing the full research matrix in hours rather than days!
 
 The execution protocol follows:
 - **Environment**: All commands use **`poetry run`**
 - **Seed**: `--seeds 42`
 - **Stage**: `--stage main` (100 communication rounds, 10 clients)
-- **Phase ordering**: Canonical method first (`--method fedtros_mc`), then matched baselines (`--method fedavg fedprox scaffold local_only centralized`)
 - **Safety**: `--only-missing` allows safe continuation if interrupted.
+
+---
+
+### 📋 8-Terminal Distribution Matrix
+
+| Terminal | Session Name | Target Studies | Method | Est. Runs | Description |
+| :---: | :--- | :--- | :---: | :---: | :--- |
+| **T1** | `t1_core_mc` | `E1-IID-CS`, `E2-IID-OSR`, `E3-NIID-CS` | FedTROS-MC | 5 | Core IID & Non-IID Closed/Open-Set Benchmark |
+| **T2** | `t2_e4_mc` | `E4-NIID-FOSR` ($\alpha \in \{1.0, 0.5, 0.1\}$) | FedTROS-MC | 3 | Central Federated Open-Set Benchmark across 3 skews |
+| **T3** | `t3_ablations_a1_a3`| `A1-TEACHER`, `A2-ANCHOR`, `A3-TRANSFER` | FedTROS-MC | 11 | Teacher, Anchor & Knowledge Transfer Ablations |
+| **T4** | `t4_ablations_a4_a5`| `A4-PR`, `A5-FEATURE` | FedTROS-MC | 8 | Prototype Geometry & Feature Depth / ConFID Ablations |
+| **T5** | `t5_datasets_mc` | `E5-DATASET`, `E6-SCALE`, `E7`, `E8-LOAO`, `S1` | FedTROS-MC | 18 | 4 Datasets, Client Scalability, LOAO, Sensitivity |
+| **T6** | `t6_baselines_e1_e3`| `E1-IID-CS`, `E2-IID-OSR`, `E3-NIID-CS` | 5 Baselines | 25 | FedAvg, FedProx, SCAFFOLD, Local, Centralized |
+| **T7** | `t7_baselines_e4` | `E4-NIID-FOSR` ($\alpha \in \{1.0, 0.5, 0.1\}$) | 5 Baselines | 15 | Baselines for Open-Set Benchmark across 3 skews |
+| **T8** | `t8_baselines_e5_e7`| `E5-DATASET` (4 Datasets), `E7-EFFICIENCY` | 5 Baselines | 25 | Baselines for Multi-Dataset & Complexity Profiling |
 
 ### 📋 Alpha Matrix Reference (Why some studies run 1 alpha vs 3 alphas):
 | Study ID | Description | Dirichlet $\alpha$ Values | Runs (`fedtros_mc`) |
@@ -133,140 +196,137 @@ The execution protocol follows:
 > [!NOTE]
 > - **If you run E1, E2, E5, E6, E7, E8, S1, or A3–A5**: It will run **only one alpha** and finish because those studies are officially designed for a single canonical alpha ($\alpha=1.0$ for IID, $\alpha=0.5$ for non-IID).
 > - **Only E3-NIID-CS and E4-NIID-FOSR** evaluate all three Dirichlet skews ($\alpha \in \{1.0, 0.5, 0.1\}$).
-> - In `E4-NIID-FOSR`, each run takes ~30 minutes. If `a1.0` is already completed, running the command with `--only-missing` will automatically continue with `a0.5`, then `a0.1`. Alternatively, you can run them directly using `--alpha 0.5` or `--alpha 0.1`.
+> - In `E4-NIID-FOSR`, each run takes ~30 minutes. If `a1.0` is already completed, running the command with `--only-missing` will automatically continue with `a0.5`, then `a0.1`.
 
-### 🚀 Option A: Automated One-Command Launcher (Recommended)
+---
 
-We provide automated, self-logging shell scripts for all 4 terminals plus a master launcher:
+### 🚀 Option A: Automated Master Launcher (Recommended)
+
+Manage all 8 parallel tmux experiment terminals with a single script:
 
 ```bash
 cd ~/fedtros
 
-# 1. Launch all 4 experiment sessions in background tmux terminals at once:
-bash scripts/launch_tmux_experiments.sh start
+# 1. Start all 8 tmux sessions in parallel in the background:
+./scripts/launch_tmux_experiments.sh start
 
-# 2. Check running status and progress across all 4 terminals:
-bash scripts/launch_tmux_experiments.sh status
+# 2. Check the real-time status of all 8 sessions & latest log lines:
+./scripts/launch_tmux_experiments.sh status
 
-# 3. Attach to any specific terminal to watch it live:
-bash scripts/launch_tmux_experiments.sh attach 1   # Core: E1, E2, E3
-bash scripts/launch_tmux_experiments.sh attach 2   # Datasets: E5, E7
-bash scripts/launch_tmux_experiments.sh attach 3   # Ablations: A1–A5
-bash scripts/launch_tmux_experiments.sh attach 4   # Heavy: E4 (3 alphas), E6, E8, S1
+# 3. Attach to any specific terminal (1 through 8) to watch live training:
+./scripts/launch_tmux_experiments.sh attach 1   # Core FedTROS-MC (E1, E2, E3)
+./scripts/launch_tmux_experiments.sh attach 2   # E4 FedTROS-MC (3 alphas)
+./scripts/launch_tmux_experiments.sh attach 3   # Ablations A1, A2, A3
+./scripts/launch_tmux_experiments.sh attach 4   # Ablations A4, A5
+./scripts/launch_tmux_experiments.sh attach 5   # Datasets & Scalability E5-E8, S1
+./scripts/launch_tmux_experiments.sh attach 6   # Baselines E1, E2, E3
+./scripts/launch_tmux_experiments.sh attach 7   # Baselines E4 (15 runs)
+./scripts/launch_tmux_experiments.sh attach 8   # Baselines E5 & E7
+# (Detach anytime: Ctrl + B, then D)
 
-# 4. View live log files without attaching:
-tail -f logs/terminal_1_core.log
-tail -f logs/terminal_4_heavy.log
+# 4. View live logs directly via tail without attaching:
+tail -f logs/terminal_1_core_mc.log
+tail -f logs/terminal_2_e4_mc.log
+tail -f logs/terminal_7_baselines_e4.log
+
+# 5. Monitor GPU VRAM across all 8 parallel processes:
+watch -n 2 nvidia-smi
+
+# 6. Stop all 8 sessions if needed:
+./scripts/launch_tmux_experiments.sh stop
 ```
 
 ---
 
 ### 🖥️ Option B: Manual Terminal Execution (Step-by-Step)
 
-If you prefer to create and run inside each tmux terminal manually, use the commands below.
+If you prefer to start tmux sessions individually and paste commands manually:
 
-### 🖥️ Terminal 1: Core Closed & Open-Set (E1, E2, E3)
-
-> [!TIP]
-> **High-Performance GPU Profile (`runtime=gpu_fast`)**:
-> On your **RTX 3090 Ti (24 GB VRAM)**, append `runtime=gpu_fast` to keep all client dataset features and model weights resident directly in GPU VRAM (`move_data_to_device=true`, `client_device_residency=resident`). This eliminates CPU↔GPU PCIe transfer and model swapping overhead, making training **5x–15x faster**.
-> *(Total VRAM used per study is only ~150–300 MB, leaving >23 GB free).*
-
-Create and open session (or run `bash scripts/run_terminal_1_core.sh` inside it):
+#### 🖥️ Terminal 1: Core FedTROS-MC (`t1_core_mc`)
 ```bash
-tmux new -s exp_e1_e3
-```
-Inside the session, run:
-```bash
+tmux new -s t1_core_mc
+# Inside session (or run: bash scripts/run_terminal_1_core_mc.sh):
 cd ~/fedtros
-
-# --- Phase 1: Canonical method (FedTROS-MC) ---
 poetry run python scripts/run_study.py E1-IID-CS --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
 poetry run python scripts/run_study.py E2-IID-OSR --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
-
-# E3-NIID-CS automatically executes all 3 Dirichlet non-IID alphas: [1.0 (mild), 0.5 (moderate), 0.1 (severe)]
 poetry run python scripts/run_study.py E3-NIID-CS --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
-# (Optional: To run each alpha individually, append: --alpha 1.0, --alpha 0.5, or --alpha 0.1)
-
-# --- Phase 2: Matched Baselines ---
-poetry run python scripts/run_study.py E1-IID-CS --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
-poetry run python scripts/run_study.py E2-IID-OSR --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
-poetry run python scripts/run_study.py E3-NIID-CS --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
+# (Detach: Ctrl + B, then D)
 ```
-*(Detach: Press `Ctrl + B`, release, then press `D`)*
 
----
-
-### 🖥️ Terminal 2: Dataset Generalization & Efficiency (E5, E7)
-
-Create and open session (or run `bash scripts/run_terminal_2_dataset.sh` inside it):
+#### 🖥️ Terminal 2: Central Open-Set E4 FedTROS-MC (`t2_e4_mc`)
 ```bash
-tmux new -s exp_e5_e7
-```
-Inside the session, run:
-```bash
+tmux new -s t2_e4_mc
+# Inside session (or run: bash scripts/run_terminal_2_e4_mc.sh):
 cd ~/fedtros
-
-# --- Phase 1: Canonical method (FedTROS-MC) ---
-poetry run python scripts/run_study.py E5-DATASET --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
-poetry run python scripts/run_study.py E7-EFFICIENCY --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
-
-# --- Phase 2: Matched Baselines ---
-poetry run python scripts/run_study.py E5-DATASET --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
-poetry run python scripts/run_study.py E7-EFFICIENCY --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
+# Runs all 3 Dirichlet alphas: [1.0 (mild), 0.5 (moderate), 0.1 (severe)]
+poetry run python scripts/run_study.py E4-NIID-FOSR --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
+# (Detach: Ctrl + B, then D)
 ```
-*(Detach: Press `Ctrl + B`, release, then press `D`)*
 
----
-
-### 🖥️ Terminal 3: Ablation Studies (A1–A5)
-
-Create and open session (or run `bash scripts/run_terminal_3_ablations.sh` inside it):
+#### 🖥️ Terminal 3: Core Ablations A1–A3 (`t3_ablations_a1_a3`)
 ```bash
-tmux new -s exp_ablations
-```
-Inside the session, run:
-```bash
+tmux new -s t3_ablations_a1_a3
+# Inside session (or run: bash scripts/run_terminal_3_ablations_a1_a3.sh):
 cd ~/fedtros
-
 poetry run python scripts/run_study.py A1-TEACHER --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
 poetry run python scripts/run_study.py A2-ANCHOR --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
 poetry run python scripts/run_study.py A3-TRANSFER --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
+# (Detach: Ctrl + B, then D)
+```
+
+#### 🖥️ Terminal 4: Geometry & Feature Ablations A4–A5 (`t4_ablations_a4_a5`)
+```bash
+tmux new -s t4_ablations_a4_a5
+# Inside session (or run: bash scripts/run_terminal_4_ablations_a4_a5.sh):
+cd ~/fedtros
 poetry run python scripts/run_study.py A4-PR --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
 poetry run python scripts/run_study.py A5-FEATURE --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
+# (Detach: Ctrl + B, then D)
 ```
-*(Detach: Press `Ctrl + B`, release, then press `D`)*
 
----
-
-### 🖥️ Terminal 4: Scalability, LOAO & Sensitivity (E4, E6, E8, S1)
-
-Create and open session (or run `bash scripts/run_terminal_4_heavy.sh` inside it):
+#### 🖥️ Terminal 5: Multi-Dataset, Scalability, LOAO & Sensitivity (`t5_datasets_mc`)
 ```bash
-tmux new -s exp_heavy
-```
-Inside the session, run:
-```bash
+tmux new -s t5_datasets_mc
+# Inside session (or run: bash scripts/run_terminal_5_datasets_mc.sh):
 cd ~/fedtros
-
-# --- Phase 1: Canonical method (FedTROS-MC across all 3 alphas: 1.0, 0.5, 0.1) ---
-# E4 automatically runs all 3 Dirichlet non-IID levels: [1.0 (mild), 0.5 (moderate), 0.1 (extreme)]
-poetry run python scripts/run_study.py E4-NIID-FOSR --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
-
-# Scalability, Leave-One-Attack-Out, and Hyperparameter Sensitivity
+poetry run python scripts/run_study.py E5-DATASET --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
 poetry run python scripts/run_study.py E6-SCALE --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
+poetry run python scripts/run_study.py E7-EFFICIENCY --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
 poetry run python scripts/run_study.py E8-LOAO --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
 poetry run python scripts/run_study.py S1-SENSITIVITY --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
-
-# --- Phase 2: E4 Matched Baselines (5 baselines x 3 alphas = 15 runs) ---
-poetry run python scripts/run_study.py E4-NIID-FOSR --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
-
-# (Optional: To run or resume a specific Dirichlet alpha individually, you can use:)
-# poetry run python scripts/run_study.py E4-NIID-FOSR --stage main --wandb-mode disabled --seeds 42 --alpha 1.0 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
-# poetry run python scripts/run_study.py E4-NIID-FOSR --stage main --wandb-mode disabled --seeds 42 --alpha 0.5 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
-# poetry run python scripts/run_study.py E4-NIID-FOSR --stage main --wandb-mode disabled --seeds 42 --alpha 0.1 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
+# (Detach: Ctrl + B, then D)
 ```
-*(Detach: Press `Ctrl + B`, release, then press `D`)*
+
+#### 🖥️ Terminal 6: Core Baselines E1, E2, E3 (`t6_baselines_e1_e3`)
+```bash
+tmux new -s t6_baselines_e1_e3
+# Inside session (or run: bash scripts/run_terminal_6_baselines_e1_e3.sh):
+cd ~/fedtros
+poetry run python scripts/run_study.py E1-IID-CS --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
+poetry run python scripts/run_study.py E2-IID-OSR --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
+poetry run python scripts/run_study.py E3-NIID-CS --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
+# (Detach: Ctrl + B, then D)
+```
+
+#### 🖥️ Terminal 7: Open-Set E4 Baselines (`t7_baselines_e4`)
+```bash
+tmux new -s t7_baselines_e4
+# Inside session (or run: bash scripts/run_terminal_7_baselines_e4.sh):
+cd ~/fedtros
+# Runs 5 baselines x 3 Dirichlet alphas = 15 runs
+poetry run python scripts/run_study.py E4-NIID-FOSR --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
+# (Detach: Ctrl + B, then D)
+```
+
+#### 🖥️ Terminal 8: Multi-Dataset & Efficiency Baselines (`t8_baselines_e5_e7`)
+```bash
+tmux new -s t8_baselines_e5_e7
+# Inside session (or run: bash scripts/run_terminal_8_baselines_e5_e7.sh):
+cd ~/fedtros
+poetry run python scripts/run_study.py E5-DATASET --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
+poetry run python scripts/run_study.py E7-EFFICIENCY --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
+# (Detach: Ctrl + B, then D)
+```
 
 ---
 
