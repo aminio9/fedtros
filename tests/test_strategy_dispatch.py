@@ -52,7 +52,7 @@ def test_gpu_fast_runtime_profile_is_explicit():
     assert cfg.device_prefer == "gpu"
     assert cfg.client_device_residency == "resident"
     assert cfg.local_batch_size == 512
-    assert cfg.simulation_gpu_batches.batch_size == 2
+    assert cfg.simulation_gpu_batches.batch_size == 10
     assert cfg.empty_cache_after_client is False
 
 
