@@ -208,20 +208,20 @@ Manage all 8 parallel tmux experiment terminals with a single script:
 cd ~/fedtros
 
 # 1. Start all 8 tmux sessions in parallel in the background:
-./scripts/launch_tmux_experiments.sh start
+./scripts/terminals/launch_tmux_experiments.sh start
 
 # 2. Check the real-time status of all 8 sessions & latest log lines:
-./scripts/launch_tmux_experiments.sh status
+./scripts/terminals/launch_tmux_experiments.sh status
 
 # 3. Attach to any specific terminal (1 through 8) to watch live training:
-./scripts/launch_tmux_experiments.sh attach 1   # Core FedTROS-MC (E1, E2, E3)
-./scripts/launch_tmux_experiments.sh attach 2   # E4 FedTROS-MC (3 alphas)
-./scripts/launch_tmux_experiments.sh attach 3   # Ablations A1, A2, A3
-./scripts/launch_tmux_experiments.sh attach 4   # Ablations A4, A5
-./scripts/launch_tmux_experiments.sh attach 5   # Datasets & Scalability E5-E8, S1
-./scripts/launch_tmux_experiments.sh attach 6   # Baselines E1, E2, E3
-./scripts/launch_tmux_experiments.sh attach 7   # Baselines E4 (15 runs)
-./scripts/launch_tmux_experiments.sh attach 8   # Baselines E5 & E7
+./scripts/terminals/launch_tmux_experiments.sh attach 1   # Core FedTROS-MC (E1, E2, E3)
+./scripts/terminals/launch_tmux_experiments.sh attach 2   # E4 FedTROS-MC (3 alphas)
+./scripts/terminals/launch_tmux_experiments.sh attach 3   # Ablations A1, A2, A3
+./scripts/terminals/launch_tmux_experiments.sh attach 4   # Ablations A4, A5
+./scripts/terminals/launch_tmux_experiments.sh attach 5   # Datasets & Scalability E5-E8, S1
+./scripts/terminals/launch_tmux_experiments.sh attach 6   # Baselines E1, E2, E3
+./scripts/terminals/launch_tmux_experiments.sh attach 7   # Baselines E4 (15 runs)
+./scripts/terminals/launch_tmux_experiments.sh attach 8   # Baselines E5 & E7
 # (Detach anytime: Ctrl + B, then D)
 
 # 4. View live logs directly via tail without attaching:
@@ -233,7 +233,7 @@ tail -f logs/terminal_7_baselines_e4.log
 watch -n 2 nvidia-smi
 
 # 6. Stop all 8 sessions if needed:
-./scripts/launch_tmux_experiments.sh stop
+./scripts/terminals/launch_tmux_experiments.sh stop
 ```
 
 ---

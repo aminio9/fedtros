@@ -263,7 +263,28 @@ def fit_multicenter_conformal(
         tau_alpha_clean = tau_alpha_global
 
     tau_alpha = tau_alpha_clean if clean_calibration else tau_alpha_global
-        
+
+    # Class-conditional quantiles
+    class_conditional_tau: dict[int, float] = {}
+    for c in sorted(models.keys()):
+        if clean_calibration:
+            c_scores = [
+                r["nonconformity_score"] for r in calib_records
+                if r["candidate_pred"] == c and r["true_label"] == c
+            ]
+        else:
+            c_scores = [
+                r["nonconformity_score"] for r in calib_records
+                if r["candidate_pred"] == c
+            ]
+        if not c_scores:
+            c_scores = [r["nonconformity_score"] for r in calib_records if r["candidate_pred"] == c]
+        if c_scores:
+            m_c = len(c_scores)
+            k_c = min(int(np.ceil((m_c + 1) * (1.0 - alpha))), m_c)
+            class_conditional_tau[c] = float(np.sort(c_scores)[k_c - 1])
+        else:
+            class_conditional_tau[c] = tau_alpha
     logger.info(
         "\n"
         "========================================================================================\n"
@@ -337,6 +358,7 @@ def fit_multicenter_conformal(
         "tau_alpha": tau_alpha,
         "tau_alpha_global": tau_alpha_global,
         "tau_alpha_clean": tau_alpha_clean,
+        "class_conditional_tau": class_conditional_tau,
         "clean_calibration": clean_calibration,
         "score_mode": score_mode,
         "ensemble_recon_weight": ensemble_recon_weight,
@@ -362,6 +384,8 @@ def score_multicenter_conformal(
     
     models = conformal_meta["models"]
     tau_alpha = conformal_meta["tau_alpha"]
+    class_conditional_tau = conformal_meta.get("class_conditional_tau", {})
+    use_class_conditional = bool(conformal_meta.get("use_class_conditional", False))
     score_mode = str(conformal_meta.get("score_mode", "candidate")).lower()
     ensemble_stats = conformal_meta.get("ensemble_stats", {})
     recon_weight = float(conformal_meta.get("ensemble_recon_weight", 0.5))
@@ -408,8 +432,15 @@ def score_multicenter_conformal(
         else:
             score = s_mah
 
-        nonconformity_scores[i] = score
-        rejected[i] = bool(score >= tau_alpha)
+        tau_thresh = class_conditional_tau.get(c, tau_alpha) if use_class_conditional else tau_alpha
+        if score_mode == "min_ratio":
+            tau_denom = max(class_conditional_tau.get(c, tau_alpha), 1e-6)
+            norm_score = float(score / tau_denom)
+            nonconformity_scores[i] = norm_score
+            rejected[i] = bool(norm_score >= 1.0)
+        else:
+            nonconformity_scores[i] = score
+            rejected[i] = bool(score >= tau_thresh)
         
     df_out = df.copy()
     df_out["conformal_score"] = nonconformity_scores
