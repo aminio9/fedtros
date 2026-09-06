@@ -3,6 +3,7 @@ import torch
 from types import SimpleNamespace
 from omegaconf import OmegaConf
 
+import src.federated.client as client_module
 import src.federated.server as server
 
 
@@ -57,7 +58,7 @@ def test_gpu_fast_runtime_profile_is_explicit():
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is unavailable on this host")
 def test_cuda_fit_device_metrics_report_actual_devices():
-    client = server.FlowerClient.__new__(server.FlowerClient)
+    client = client_module.FlowerClient.__new__(client_module.FlowerClient)
     client.cid = "test"
     client.agent = SimpleNamespace(student_model=torch.nn.Linear(2, 2, device="cuda"))
     client.features = torch.randn(2, 2, device="cuda")
