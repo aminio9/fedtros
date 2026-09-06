@@ -50,7 +50,7 @@ training:
   label_smoothing: 0.02
 
   # FedTROS-OSR latent branch (8-D student OSR)
-  student_osr_enabled: false
+  student_osr_enabled: true
   student_osr_latent_dim: 8
   student_osr_hidden_dims: [128, 64]
   student_osr_decoder_hidden_dims: [64, 128]
