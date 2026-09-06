@@ -327,12 +327,14 @@ class FlowerClient(fl.client.NumPyClient):
                 )
 
                 # Train Student OSR Branch if enabled
-                prototype_rank_cfg = getattr(getattr(self.cfg, "open_set", None), "prototype_rank", None)
-                canonical = bool(OmegaConf.select(self.cfg, "method.canonical", default=False))
-                if not canonical and prototype_rank_cfg is not None and bool(getattr(prototype_rank_cfg, "enabled", False)):
+                osr_enabled = bool(getattr(self.agent.student_model, "osr_enabled", False))
+                if osr_enabled:
+                    osr_cfg = getattr(getattr(self.cfg, "open_set", None), "prototype_rank", None)
+                    if osr_cfg is None or not bool(getattr(osr_cfg, "enabled", False)):
+                        osr_cfg = getattr(self.cfg, "method", self.cfg.training)
                     try:
                         osr_metrics = self.agent.train_student_osr_on_dataset(
-                            self.features, self.labels, prototype_rank_cfg, logger=self.logger
+                            self.features, self.labels, osr_cfg, logger=self.logger
                         )
                         metrics.update(osr_metrics)
                     except Exception:

@@ -626,11 +626,11 @@ class FedTROSModelBundle:
 
         active_logger.info(
             "FedTROS-MC local training | Round %d | "
-            "Entropy H_k=%.4f, Coverage kappa_k=%.4f, Anchor lambda_a=%.4f (Eq. 90, 95) | "
-            "Temp tau_t=%.4f (Eq. 66), Agr a_agr=%.4f, Gate (1-a)=%.4f (Eq. 72, 76) | "
-            "AlignCos=%.4f (Eq. 81) | "
-            "Losses: L_S=%.4f [CE=%.4f, KD=%.4f*%.2f, Align=%.4f*%.2f, Anchor=%.4f*%.4f] (Eq. 108) | "
-            "Teacher VIB: L_T=%.4f [CE=%.4f, KL=%.4f*%.2f] (Eq. 54)",
+            "Entropy H_k=%.4f, Coverage kappa_k=%.4f, Anchor lambda_a=%.4f | "
+            "Temp tau_t=%.4f, Agr a_agr=%.4f, Gate (1-a)=%.4f | "
+            "AlignCos=%.4f | "
+            "Losses: L_S=%.4f [CE=%.4f, KD=%.4f*%.2f, Align=%.4f*%.2f, Anchor=%.4f*%.4f] | "
+            "Teacher VIB: L_T=%.4f [CE=%.4f, KL=%.4f*%.2f]",
             int(round_num),
             unnorm_entropy,
             kappa_i,

@@ -313,6 +313,8 @@ def evaluate_multicenter_conformal(
             "final_pred": y_pred_after,
             "known_or_unknown": np.where(is_unknown_bool, "unknown", "known"),
             "nonconformity_score": scores,
+            "score_mah": df_eval["score_mah"] if "score_mah" in df_eval.columns else np.nan,
+            "score_rec": df_eval["score_rec"] if "score_rec" in df_eval.columns else np.nan,
             "tau_alpha": conformal_meta.get("tau_alpha", float('inf')),
             "final_reject": rejected,
             "nearest_prototype_id": df_eval["nearest_prototype_id"],

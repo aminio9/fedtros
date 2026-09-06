@@ -223,7 +223,12 @@ def fit_multicenter_conformal(
         "has_recon": bool(has_recon),
     }
 
-    use_ensemble = str(score_mode).lower() in {"confid_ensemble", "ensemble"} and has_recon
+    use_ensemble = (
+        str(score_mode).lower() in {"confid_ensemble", "ensemble"}
+        and has_recon
+        and float(ensemble_recon_weight) > 0.0
+        and sigma_rec > 1e-6
+    )
     effective_scores = []
     for i in range(len(all_scores_mah)):
         s_m = scores_mah_arr[i]
@@ -418,9 +423,18 @@ def score_multicenter_conformal(
         scores_mah[i] = s_mah
         nearest_p[i] = n_id
 
-        if score_mode in {"confid_ensemble", "ensemble"} and has_recon:
+        use_ens_sample = (
+            score_mode in {"confid_ensemble", "ensemble"}
+            and has_recon
+            and float(recon_weight) > 0.0
+            and float(ensemble_stats.get("sigma_rec", 0.0)) > 1e-6
+        )
+        if "recon_error" in df.columns:
             rec_val = float(df["recon_error"].iloc[i])
-            scores_rec[i] = rec_val
+            scores_rec[i] = rec_val if np.isfinite(rec_val) else np.nan
+
+        if use_ens_sample:
+            rec_val = scores_rec[i]
             if np.isfinite(rec_val) and np.isfinite(s_mah):
                 norm_m = (s_mah - ensemble_stats["mu_mah"]) / ensemble_stats["sigma_mah"]
                 norm_r = (rec_val - ensemble_stats["mu_rec"]) / ensemble_stats["sigma_rec"]

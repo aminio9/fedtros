@@ -156,6 +156,17 @@ def recalculate_run(run_dir: Path, alpha: float = 0.05, save: bool = True) -> di
         with open(final_metrics_path, "r", encoding="utf-8") as f:
             orig_metrics = json.load(f)
 
+    # Component AUROC metrics
+    mah_auroc = orig_metrics.get("open_set/auroc_mahalanobis")
+    rec_auroc = orig_metrics.get("open_set/auroc_reconstruction")
+    if mah_auroc is not None or rec_auroc is not None:
+        print("\n--- 4. ConFID Dual-Path Component Analysis ---")
+        if mah_auroc is not None:
+            print(f"  * Component 1 (Mahalanobis Distance):     {mah_auroc:.4f} ({mah_auroc*100:.2f}%)")
+        if rec_auroc is not None:
+            print(f"  * Component 2 (Reconstruction Error):    {rec_auroc:.4f} ({rec_auroc*100:.2f}%)")
+        print(f"  * Unified ConFID Ensemble AUROC:          {auroc:.4f} ({auroc*100:.2f}%)")
+
     corrected_metrics = dict(orig_metrics)
     corrected_metrics["open_set/unknown_recall"] = true_unknown_recall
     corrected_metrics["open_set/unknown_recall_buggy_logged"] = buggy_unknown_recall
