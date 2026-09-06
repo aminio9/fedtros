@@ -7,8 +7,8 @@ synthetic_boundary: false
 osr_decoder: false
 aggregation_gamma: 0.5
 score: candidate_mahalanobis_sq
-score_mode: candidate_mahalanobis_sq
-ensemble_recon_weight: 0.0
+score_mode: confid_ensemble
+ensemble_recon_weight: 0.5
 calibration: global_split_conformal
 
 unknown_label_id: -1
