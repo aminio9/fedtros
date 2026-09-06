@@ -333,6 +333,34 @@ def _collect_student_scores(
                 assert mu_np is not None
                 proto_np = mu_np
                 proto_source = "osr_mu"
+            elif proto_source_cfg in {"student_hidden_l1", "hidden_l1", "l1", "layer_1", "first"}:
+                if hasattr(student_model, "extract_intermediate_features"):
+                    proto_np = student_model.extract_intermediate_features(x, layer="l1").detach().cpu().numpy()
+                elif hasattr(student_model, "backbone"):
+                    proto_np = student_model.backbone[:3](x).detach().cpu().numpy()
+                else:
+                    proto_np = h_np
+                proto_source = "student_hidden_l1"
+            elif proto_source_cfg in {"student_hidden_l2", "hidden_l2", "l2", "layer_2"}:
+                if hasattr(student_model, "extract_intermediate_features"):
+                    proto_np = student_model.extract_intermediate_features(x, layer="l2").detach().cpu().numpy()
+                elif hasattr(student_model, "backbone"):
+                    proto_np = student_model.backbone[:7](x).detach().cpu().numpy()
+                else:
+                    proto_np = h_np
+                proto_source = "student_hidden_l2"
+            elif proto_source_cfg in {"student_hidden_l3", "hidden_l3", "l3", "layer_3"}:
+                if hasattr(student_model, "extract_intermediate_features"):
+                    proto_np = student_model.extract_intermediate_features(x, layer="l3").detach().cpu().numpy()
+                else:
+                    proto_np = h_np
+                proto_source = "student_hidden_l3"
+            elif proto_source_cfg in {"concat", "all", "hierarchical"}:
+                if hasattr(student_model, "extract_intermediate_features"):
+                    proto_np = student_model.extract_intermediate_features(x, layer="all").detach().cpu().numpy()
+                else:
+                    proto_np = h_np
+                proto_source = "student_hidden_hierarchical"
             else:
                 proto_np = h_np
                 proto_source = "student_embedding"

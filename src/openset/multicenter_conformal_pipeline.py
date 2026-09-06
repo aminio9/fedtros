@@ -114,7 +114,20 @@ def calibrate_multicenter_conformal(
         }
 
     alpha = float(_nested(cfg, "alpha", 0.05))
-    conformal_meta = fit_multicenter_conformal(df_proto, df_calib, num_classes, alpha=alpha, seed=split_seed, output_dir=output_dir)
+    clean_calib = bool(_nested(cfg, "calibration.clean_calibration", False))
+    score_mode = str(_nested(cfg, "score_mode", _nested(cfg, "score", "candidate"))).lower()
+    recon_weight = float(_nested(cfg, "ensemble_recon_weight", 0.5))
+    conformal_meta = fit_multicenter_conformal(
+        df_proto,
+        df_calib,
+        num_classes,
+        alpha=alpha,
+        seed=split_seed,
+        output_dir=output_dir,
+        clean_calibration=clean_calib,
+        score_mode=score_mode,
+        ensemble_recon_weight=recon_weight,
+    )
     
     # Clean up pca object from conformal_meta before serialization
     conformal_meta_serializable = {k: v for k, v in conformal_meta.items() if k != 'pca'}
@@ -138,13 +151,16 @@ def calibrate_multicenter_conformal(
             "calibration_size": conformal_meta["m"],
             "k_alpha": conformal_meta["k_alpha"],
             "tau_alpha": conformal_meta["tau_alpha"],
+            "tau_alpha_clean": conformal_meta.get("tau_alpha_clean", conformal_meta["tau_alpha"]),
+            "clean_calibration_used": bool(conformal_meta.get("clean_calibration", False)),
+            "class_conditional_tau": conformal_meta.get("class_conditional_tau", {}),
             "score": "candidate_class_squared_mahalanobis",
             "feature_source": str(_nested(cfg, "prototype.feature_source", "student_hidden")),
             "calibration_scope": "global_known",
             "split_hash": split_provenance.get("proto_indices_hash", ""),
             "config_hash": cfg_hash,
             "unknown_data_used_for_fitting": False,
-            "misclassified_known_calibration_included": True,
+            "misclassified_known_calibration_included": not bool(conformal_meta.get("clean_calibration", False)),
             "prototype_internal_split": conformal_meta.get("prototype_internal_split", {}),
         }
         (osr_dir / "conformal_metadata.json").write_text(json.dumps(conf_meta, indent=2), encoding="utf-8")
@@ -202,10 +218,20 @@ def evaluate_multicenter_conformal(
     )
     unknown_label_id = int(_nested(cfg, "unknown_label_id", UNKNOWN_LABEL_ID))
     
-    df_eval = score_multicenter_conformal(df_eval, conformal_meta)
+    conformal_meta_eval = dict(conformal_meta)
+    if "use_class_conditional" not in conformal_meta_eval:
+        conformal_meta_eval["use_class_conditional"] = bool(_nested(cfg, "use_class_conditional", False))
+    if "score_mode" not in conformal_meta_eval:
+        conformal_meta_eval["score_mode"] = str(_nested(cfg, "score_mode", _nested(cfg, "score", "candidate")))
+    if "ensemble_recon_weight" not in conformal_meta_eval:
+        conformal_meta_eval["ensemble_recon_weight"] = float(_nested(cfg, "ensemble_recon_weight", 0.5))
+        
+    df_eval = score_multicenter_conformal(df_eval, conformal_meta_eval)
     
     y_true = df_eval["y_raw"].to_numpy()
-    is_unknown = (y_true == unknown_label_id).astype(int)
+    is_unknown_bool = (y_true == unknown_label_id)
+    is_unknown = is_unknown_bool.astype(int)
+    known_mask = ~is_unknown_bool
     scores = df_eval["conformal_score"].to_numpy()
     
     # Missing candidate-class models are maximally nonconforming, not missing
@@ -214,12 +240,18 @@ def evaluate_multicenter_conformal(
     finite = scores[np.isfinite(scores)]
     replacement = (float(np.max(finite)) + 1.0) if finite.size else 1.0
     scores_for_detection = np.nan_to_num(scores, nan=replacement, posinf=replacement, neginf=0.0)
-    valid_scores_mask = np.ones_like(is_unknown, dtype=bool)
+    valid_scores_mask = np.ones_like(is_unknown_bool, dtype=bool)
     
     metrics = {}
     if np.sum(is_unknown) > 0 and np.sum(1 - is_unknown) > 0:
         metrics["open_set/auroc"] = float(roc_auc_score(is_unknown, scores_for_detection))
         metrics["open_set/auprc"] = float(average_precision_score(is_unknown, scores_for_detection))
+        if "score_mah" in df_eval.columns:
+            s_mah = np.nan_to_num(df_eval["score_mah"].to_numpy(), nan=replacement, posinf=replacement, neginf=0.0)
+            metrics["open_set/auroc_mahalanobis"] = float(roc_auc_score(is_unknown, s_mah))
+        if "score_rec" in df_eval.columns and not df_eval["score_rec"].isna().all():
+            s_rec = np.nan_to_num(df_eval["score_rec"].to_numpy(), nan=replacement, posinf=replacement, neginf=0.0)
+            metrics["open_set/auroc_reconstruction"] = float(roc_auc_score(is_unknown, s_rec))
         fpr, tpr, thresholds = roc_curve(is_unknown, scores_for_detection)
         
         # roc.csv
@@ -245,7 +277,6 @@ def evaluate_multicenter_conformal(
     y_pred_after = y_pred_before.copy()
     y_pred_after[rejected] = unknown_label_id
     
-    known_mask = (y_true != unknown_label_id)
     if np.any(known_mask):
         metrics["open_set/known_accuracy_before"] = float(accuracy_score(y_true[known_mask], y_pred_before[known_mask]))
         metrics["open_set/known_accuracy_after"] = float(accuracy_score(y_true[known_mask], y_pred_after[known_mask]))
@@ -257,14 +288,14 @@ def evaluate_multicenter_conformal(
         metrics["open_set/KFR"] = 0.0
         metrics["open_set/known_false_unknown_rate"] = 0.0
         
-    if np.any(is_unknown):
-        metrics["open_set/unknown_recall"] = float(np.mean(rejected[is_unknown]))
+    if np.any(is_unknown_bool):
+        metrics["open_set/unknown_recall"] = float(np.mean(rejected[is_unknown_bool]))
     else:
         metrics["open_set/unknown_recall"] = 0.0
         
     metrics["open_set/unknown_f1"] = float(f1_score(
         is_unknown, rejected.astype(int), labels=[1], average="binary", zero_division=0
-    )) if np.any(is_unknown) else 0.0
+    )) if np.any(is_unknown_bool) else 0.0
     metrics["open_set/macro_f1"] = float(f1_score(
         y_true, y_pred_after, average="macro", zero_division=0
     )) if len(y_true) else 0.0
@@ -280,13 +311,13 @@ def evaluate_multicenter_conformal(
             "true_label": y_true,
             "candidate_pred": y_pred_before,
             "final_pred": y_pred_after,
-            "known_or_unknown": np.where(is_unknown, "unknown", "known"),
+            "known_or_unknown": np.where(is_unknown_bool, "unknown", "known"),
             "nonconformity_score": scores,
             "tau_alpha": conformal_meta.get("tau_alpha", float('inf')),
             "final_reject": rejected,
             "nearest_prototype_id": df_eval["nearest_prototype_id"],
             "nearest_prototype_class": df_eval["nearest_prototype_class"],
-            "candidate_correct": (y_pred_before == y_true) & ~is_unknown
+            "candidate_correct": (y_pred_before == y_true) & known_mask
         })
         test_scores_df.to_csv(osr_dir / "test_scores.csv", index=False)
 

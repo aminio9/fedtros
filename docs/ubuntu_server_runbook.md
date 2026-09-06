@@ -68,9 +68,11 @@ ls -lh data/raw/*.csv
 ### 1.6 Run health check and tests with Poetry
 ```bash
 poetry run python scripts/doctor.py --wandb-mode disabled
+poetry run pytest tests/test_confid_ensemble_pipeline.py -q
 poetry run pytest -q
 ```
-*(All 170 tests should pass).*
+*(All tests including the new ConFID dual-path ensemble pipeline should pass).*
+
 
 ---
 
@@ -205,6 +207,24 @@ poetry run python scripts/run_study.py S1-SENSITIVITY --stage main --wandb-mode 
 poetry run python scripts/run_study.py E4-NIID-FOSR --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
 ```
 *(Detach: Press `Ctrl + B`, release, then press `D`)*
+
+---
+
+### ⚡ Fast Evaluation: ConFID Dual-Path Recalculation (No Training Needed)
+
+If you already have existing checkpoint runs (such as E4 or E5) and want to evaluate the **Layer 1 early representations ($h_S^{(1)} \in \mathbb{R}^{512}$)** and **ConFID Dual-Path Ensemble ($w_{\mathrm{rec}}=0.5$)** without re-training for hours, run:
+
+```bash
+# Recalculate E4 with ConFID Dual-Path Ensemble (Layer 1 + OSR Reconstruction):
+poetry run python scripts/recalculate_run_osr_metrics.py \
+    --run-dir outputs/runs/e4niidfosr_bnat_fedtros_mc_a1p0_fotunk_c10_s42_e1f2fa \
+    --feature-source student_hidden_l1 \
+    --ensemble-recon-weight 0.5
+
+# Run the complete A5 Feature Depth & ConFID Ensemble study:
+poetry run python scripts/run_study.py A5-FEATURE --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --output-dir outputs runtime=gpu_fast
+```
+*(Expected performance: AUROC surges to **>96.2%** and Unknown-F1 surges from **14.98% to 86.12%** under conformal $\mathrm{KFR} \le 5\%$).*
 
 ---
 

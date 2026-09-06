@@ -138,6 +138,35 @@ class StudentIDSModel(nn.Module):
             self.osr_logvar_head = None
             self.osr_decoder = None
 
+    def get_all_hidden_layers(self, x: torch.Tensor) -> list[torch.Tensor]:
+        """Extract activation representations from each hidden block of the student backbone."""
+        cur = x
+        block_outputs: list[torch.Tensor] = []
+        for i, layer_mod in enumerate(self.backbone):
+            if i > 0 and isinstance(layer_mod, nn.Linear):
+                block_outputs.append(cur)
+            cur = layer_mod(cur)
+        block_outputs.append(cur)
+        return block_outputs
+
+    def extract_intermediate_features(
+        self,
+        x: torch.Tensor,
+        layer: str = "last",
+    ) -> torch.Tensor:
+        """Extract features from a designated student layer (e.g. ConFID / Lee et al. multi-layer tapping)."""
+        layer_norm = str(layer).lower()
+        blocks = self.get_all_hidden_layers(x)
+        if layer_norm in {"l1", "student_hidden_l1", "hidden_l1", "layer_1", "first"}:
+            return blocks[0]
+        if layer_norm in {"l2", "student_hidden_l2", "hidden_l2", "layer_2"}:
+            return blocks[min(1, len(blocks) - 1)]
+        if layer_norm in {"l3", "student_hidden_l3", "hidden_l3", "layer_3"}:
+            return blocks[min(2, len(blocks) - 1)]
+        if layer_norm in {"concat", "all", "hierarchical"}:
+            return torch.cat(blocks, dim=1)
+        return blocks[-1]
+
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         features = self.backbone(x)
         logits = self.head(features)

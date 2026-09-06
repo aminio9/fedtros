@@ -10,7 +10,13 @@ known_labels: [Normal, BP, DoS, MitM]
 num_clients: 10
 seeds: [17, 42, 73, 101, 137]
 variants:
-  - name: student_embedding
-    overrides: {training.student_osr_enabled: false, open_set.prototype.feature_source: student_embedding}
+  - name: student_hidden_l3_bottleneck
+    overrides: {training.student_osr_enabled: false, open_set.prototype.feature_source: student_hidden_l3, open_set.score_mode: candidate}
+  - name: student_hidden_l2_intermediate
+    overrides: {training.student_osr_enabled: false, open_set.prototype.feature_source: student_hidden_l2, open_set.score_mode: candidate}
+  - name: student_hidden_l1_early
+    overrides: {training.student_osr_enabled: false, open_set.prototype.feature_source: student_hidden_l1, open_set.score_mode: candidate}
+  - name: confid_dual_path_ensemble
+    overrides: {training.student_osr_enabled: true, open_set.prototype.feature_source: student_hidden_l1, open_set.score_mode: confid_ensemble, open_set.ensemble_recon_weight: 0.5}
   - name: osr_branch_embedding
     overrides: {method.canonical: false, training.canonical: true, training.student_osr_enabled: true, open_set.prototype.feature_source: osr_mu}

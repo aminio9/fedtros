@@ -24,6 +24,9 @@ def fit_multicenter_conformal(
     alpha: float = 0.05,
     seed: int = 42,
     output_dir: Path = None,
+    clean_calibration: bool = False,
+    score_mode: str = "candidate",
+    ensemble_recon_weight: float = 0.5,
 ) -> dict:
     models = {}
     
@@ -161,7 +164,7 @@ def fit_multicenter_conformal(
             "covariance_fallback_used": fallback,
         })
 
-    all_scores = []
+    all_scores_mah = []
     calib_records = []
     
     if not df_calib.empty:
@@ -179,34 +182,99 @@ def fit_multicenter_conformal(
                 prec = np.array(models[c_hat]["precision"])
                 diff = z[None, :] - centers
                 dists = np.sum(np.dot(diff, prec) * diff, axis=1)
-                score = np.min(dists)
-            all_scores.append(score)
+                score = float(np.min(dists))
+            all_scores_mah.append(score)
             
             calib_records.append({
                 "sample_id": calib_ids[i],
                 "true_label": calib_true[i],
                 "candidate_pred": c_hat,
-                "nonconformity_score": score,
+                "score_mahalanobis": score,
             })
-            
-    m = len(all_scores)
-    sorted_scores = np.sort(all_scores)
+
+    # ConFID Dual-Score Ensemble Statistics (Farsimadan et al. 2026 Eq. 18-19)
+    scores_mah_arr = np.array(all_scores_mah, dtype=np.float64)
+    has_recon = ("recon_error" in df_calib.columns) and not df_calib["recon_error"].isna().all()
+    if has_recon:
+        scores_rec_arr = df_calib["recon_error"].to_numpy().astype(np.float64)
+        finite_rec = np.isfinite(scores_rec_arr)
+        if finite_rec.sum() > 0:
+            mu_rec = float(np.mean(scores_rec_arr[finite_rec]))
+            sigma_rec = float(np.std(scores_rec_arr[finite_rec]))
+        else:
+            has_recon = False
+            mu_rec, sigma_rec = 0.0, 1.0
+    else:
+        scores_rec_arr = np.full(len(all_scores_mah), np.nan, dtype=np.float64)
+        mu_rec, sigma_rec = 0.0, 1.0
+
+    finite_mah = np.isfinite(scores_mah_arr)
+    if finite_mah.sum() > 0:
+        mu_mah = float(np.mean(scores_mah_arr[finite_mah]))
+        sigma_mah = float(np.std(scores_mah_arr[finite_mah]))
+    else:
+        mu_mah, sigma_mah = 0.0, 1.0
+
+    ensemble_stats = {
+        "mu_mah": mu_mah,
+        "sigma_mah": max(sigma_mah, 1e-8),
+        "mu_rec": mu_rec,
+        "sigma_rec": max(sigma_rec, 1e-8),
+        "has_recon": bool(has_recon),
+    }
+
+    use_ensemble = str(score_mode).lower() in {"confid_ensemble", "ensemble"} and has_recon
+    effective_scores = []
+    for i in range(len(all_scores_mah)):
+        s_m = scores_mah_arr[i]
+        s_r = scores_rec_arr[i]
+        if use_ensemble and np.isfinite(s_r) and np.isfinite(s_m):
+            norm_m = (s_m - ensemble_stats["mu_mah"]) / ensemble_stats["sigma_mah"]
+            norm_r = (s_r - ensemble_stats["mu_rec"]) / ensemble_stats["sigma_rec"]
+            s_eff = float((1.0 - ensemble_recon_weight) * norm_m + ensemble_recon_weight * norm_r)
+        elif use_ensemble and np.isfinite(s_m):
+            norm_m = (s_m - ensemble_stats["mu_mah"]) / ensemble_stats["sigma_mah"]
+            s_eff = float(norm_m)
+        else:
+            s_eff = s_m
+        effective_scores.append(s_eff)
+        calib_records[i]["nonconformity_score"] = s_eff
+        calib_records[i]["score_reconstruction"] = float(s_r) if np.isfinite(s_r) else np.nan
+
+    m = len(effective_scores)
+    sorted_scores = np.sort(effective_scores)
     
     k_alpha = int(np.ceil((m + 1) * (1.0 - alpha)))
     if 1 <= k_alpha <= m:
-        tau_alpha = float(sorted_scores[k_alpha - 1])
+        tau_alpha_global = float(sorted_scores[k_alpha - 1])
     else:
-        tau_alpha = float('inf')
+        tau_alpha_global = float('inf')
+
+    # Clean calibration quantile (Zeng et al. 2026 Eq. 14): filter misclassified known outliers
+    clean_scores = [
+        r["nonconformity_score"] for r in calib_records
+        if r["true_label"] == r["candidate_pred"]
+    ]
+    if clean_scores:
+        m_clean = len(clean_scores)
+        k_clean = min(int(np.ceil((m_clean + 1) * (1.0 - alpha))), m_clean)
+        tau_alpha_clean = float(np.sort(clean_scores)[k_clean - 1])
+    else:
+        tau_alpha_clean = tau_alpha_global
+
+    tau_alpha = tau_alpha_clean if clean_calibration else tau_alpha_global
         
     logger.info(
         "=== Multicenter Conformal Calibration (Algorithm 2 & Eq. 196) ===\n"
         "  * Prototype Banks: %s\n"
         "  * Calibration Samples: |D_cal| = %d\n"
+        "  * Scoring Mode: %s (Ensemble Active: %s, Recon Weight: %.2f)\n"
         "  * Significance Level alpha = %.4f (Confidence = %.2f%%)\n"
         "  * Quantile Rank k_alpha = ceil((%d + 1) * %.4f) = %d\n"
         "  * Rejection Threshold tau_alpha = %.4f",
         ", ".join(f"Class {c}: K*={m_d['k']}, N={m_d['n_proto_samples']}" for c, m_d in models.items()),
-        m, alpha, (1.0 - alpha) * 100.0,
+        m, score_mode, use_ensemble, ensemble_recon_weight,
+        alpha, (1.0 - alpha) * 100.0,
         m, 1.0 - alpha, k_alpha, tau_alpha
     )
     
@@ -259,6 +327,12 @@ def fit_multicenter_conformal(
     return {
         "models": models,
         "tau_alpha": tau_alpha,
+        "tau_alpha_global": tau_alpha_global,
+        "tau_alpha_clean": tau_alpha_clean,
+        "clean_calibration": clean_calibration,
+        "score_mode": score_mode,
+        "ensemble_recon_weight": ensemble_recon_weight,
+        "ensemble_stats": ensemble_stats,
         "alpha": alpha,
         "k_alpha": k_alpha,
         "m": m,
@@ -280,8 +354,14 @@ def score_multicenter_conformal(
     
     models = conformal_meta["models"]
     tau_alpha = conformal_meta["tau_alpha"]
+    score_mode = str(conformal_meta.get("score_mode", "candidate")).lower()
+    ensemble_stats = conformal_meta.get("ensemble_stats", {})
+    recon_weight = float(conformal_meta.get("ensemble_recon_weight", 0.5))
+    has_recon = bool(ensemble_stats.get("has_recon", False)) and ("recon_error" in df.columns)
     
     nonconformity_scores = np.zeros(len(df))
+    scores_mah = np.zeros(len(df))
+    scores_rec = np.full(len(df), np.nan)
     rejected = np.zeros(len(df), dtype=bool)
     nearest_p = np.zeros(len(df), dtype=int)
     nearest_c = np.zeros(len(df), dtype=int)
@@ -291,6 +371,7 @@ def score_multicenter_conformal(
         nearest_c[i] = c
         if c not in models:
             nonconformity_scores[i] = float('inf')
+            scores_mah[i] = float('inf')
             rejected[i] = True
             nearest_p[i] = -1
             continue
@@ -300,15 +381,32 @@ def score_multicenter_conformal(
         
         diff = z[i:i+1] - centers
         dists = np.sum(np.dot(diff, prec) * diff, axis=1)
-        score = np.min(dists)
-        n_id = np.argmin(dists)
-        
-        nonconformity_scores[i] = score
-        rejected[i] = score >= tau_alpha
+        s_mah = float(np.min(dists))
+        n_id = int(np.argmin(dists))
+        scores_mah[i] = s_mah
         nearest_p[i] = n_id
+
+        if score_mode in {"confid_ensemble", "ensemble"} and has_recon:
+            rec_val = float(df["recon_error"].iloc[i])
+            scores_rec[i] = rec_val
+            if np.isfinite(rec_val) and np.isfinite(s_mah):
+                norm_m = (s_mah - ensemble_stats["mu_mah"]) / ensemble_stats["sigma_mah"]
+                norm_r = (rec_val - ensemble_stats["mu_rec"]) / ensemble_stats["sigma_rec"]
+                score = float((1.0 - recon_weight) * norm_m + recon_weight * norm_r)
+            elif np.isfinite(s_mah):
+                score = float((s_mah - ensemble_stats["mu_mah"]) / ensemble_stats["sigma_mah"])
+            else:
+                score = s_mah
+        else:
+            score = s_mah
+
+        nonconformity_scores[i] = score
+        rejected[i] = bool(score >= tau_alpha)
         
     df_out = df.copy()
     df_out["conformal_score"] = nonconformity_scores
+    df_out["score_mah"] = scores_mah
+    df_out["score_rec"] = scores_rec
     df_out["rejected"] = rejected
     df_out["nearest_prototype_id"] = nearest_p
     df_out["nearest_prototype_class"] = nearest_c
