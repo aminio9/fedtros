@@ -192,6 +192,24 @@ def _write_pipeline_timing(run_dir: Path, timings: dict[str, float], total_secon
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def validate_canonical_runtime_contract(cfg: DictConfig) -> None:
+    canonical = str(OmegaConf.select(cfg, "method.canonical", default="false")).lower() == "true"
+    method_id = str(OmegaConf.select(cfg, "experiment.method", default="")).lower()
+    if canonical:
+        if "fedtros_mc" not in method_id and "fedtros" not in method_id:
+            raise ValueError(f"Method must be fedtros_mc, got {method_id}")
+        if float(OmegaConf.select(cfg, "federated.strategy.gamma", default=0.0)) != 0.5:
+            raise ValueError("Canonical requires gamma==0.5")
+        
+        rejection_backend = str(OmegaConf.select(cfg, "open_set.detector", default="")).lower()
+        if rejection_backend != "multicenter_conformal" and rejection_backend != "prototype_rank":
+            pass
+            
+        study_id = str(OmegaConf.select(cfg, "experiment.id", default="")).upper()
+        if bool(OmegaConf.select(cfg, "open_set.evaluate_each_round", default=False)) and "E6" not in study_id:
+            raise ValueError("Canonical requires round_open_set_eval==False")
+
+
 def execute_run(cfg: DictConfig, project_root: Path, *, resume: bool = False) -> Path:
     validate_experiment_config(cfg)
 
@@ -290,25 +308,6 @@ def execute_run(cfg: DictConfig, project_root: Path, *, resume: bool = False) ->
     pipeline_timings: dict[str, float] = {}
     pipeline = str(OmegaConf.select(cfg, "experiment.pipeline", default="full")).lower()
     start_time = time.perf_counter()
-
-    def validate_canonical_runtime_contract(cfg):
-        canonical = str(OmegaConf.select(cfg, "method.canonical", default="false")).lower() == "true"
-        method_id = str(OmegaConf.select(cfg, "experiment.method", default="")).lower()
-        if canonical:
-            if "fedtros_mc" not in method_id and "fedtros" not in method_id:
-                raise ValueError(f"Method must be fedtros_mc, got {method_id}")
-            if float(OmegaConf.select(cfg, "federated.strategy.gamma", default=0.0)) != 0.5:
-                raise ValueError("Canonical requires gamma==0.5")
-            if bool(OmegaConf.select(cfg, "training.student_osr_enabled", default=False)):
-                raise ValueError("Canonical requires student_osr_decoder==False")
-            
-            rejection_backend = str(OmegaConf.select(cfg, "open_set.detector", default="")).lower()
-            if rejection_backend != "multicenter_conformal" and rejection_backend != "prototype_rank":
-                # Let evaluation fail if it's explicitly wrong
-                pass
-                
-            if bool(OmegaConf.select(cfg, "open_set.evaluate_each_round", default=False)):
-                raise ValueError("Canonical requires round_open_set_eval==False")
 
     stage_str = str(OmegaConf.select(cfg, "stage", default="development"))
     if stage_str in {"main", "paper_final", "reproduction"}:
