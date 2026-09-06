@@ -684,6 +684,8 @@ class FedTROSStrategy(FedAvg):
         )
 
         canonical = bool(OmegaConf.select(cfg, "method.canonical", default=False))
+        self.canonical = canonical
+        self.method_label = "FedTROS-MC" if canonical else "FedTROS-PR"
         if canonical:
             self.round_open_set_eval_enabled = False
             logger.info(
@@ -757,7 +759,7 @@ class FedTROSStrategy(FedAvg):
             self.global_student_parameters,
             {"server_round": server_round, "phase": "fedtros_pr"},
         )
-        logger.info("FedTROS-PR evaluation round=%d clients=%d", server_round, len(clients))
+        logger.info("%s evaluation round=%d clients=%d", self.method_label, server_round, len(clients))
         return [(client, evaluate_ins) for client in clients]
 
     def aggregate_fit(self, server_round: int, results, failures):
@@ -769,7 +771,7 @@ class FedTROSStrategy(FedAvg):
         """
         aggregation_start = time.perf_counter()
         if failures:
-            self._log_failures("FedTROS-PR", failures)
+            self._log_failures(self.method_label, failures)
 
         records: list[dict[str, Any]] = []
         for client, fit_res in results:
@@ -905,7 +907,7 @@ class FedTROSStrategy(FedAvg):
     def aggregate_evaluate(self, server_round: int, results, failures):
         loss, metrics = super().aggregate_evaluate(server_round, results, failures)
         if failures:
-            self._log_failures("FedTROS-PR evaluation", failures)
+            self._log_failures(f"{self.method_label} evaluation", failures)
         client_rows: list[dict[str, Any]] = []
         macro_values: list[float] = []
         accuracy_values: list[float] = []
@@ -1200,7 +1202,7 @@ class FedTROSStrategy(FedAvg):
             logger.info("Saved final FedTROS student checkpoint to %s", final_path)
 
         if not should_save_round:
-            logger.info("Saved FedTROS-PR student checkpoint to %s", latest_path)
+            logger.info("Saved %s student checkpoint to %s", self.method_label, latest_path)
 
     @staticmethod
     def _weight_list_norm(weights: list[np.ndarray]) -> float:
