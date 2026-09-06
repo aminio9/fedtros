@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ROOT_DIR="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel 2>/dev/null || (cd "${SCRIPT_DIR}/../.." && pwd))"
 cd "${ROOT_DIR}"
 
 mkdir -p logs
@@ -21,7 +21,7 @@ echo "==========================================================================
 
 export PATH="$HOME/.local/bin:$PATH"
 
-echo "📌 Running E4-NIID-FOSR Baselines (fedavg, fedprox, scaffold, local_only, centralized across 1.0, 0.5, 0.1)..."
+echo "📌 Running E4-NIID-FOSR Baselines (fedavg, fedprox, scaffold, local_only, centralized across alphas 1.0, 0.5, 0.1)..."
 poetry run python scripts/run_study.py E4-NIID-FOSR \
     --stage main --wandb-mode disabled --seeds 42 \
     --method fedavg fedprox scaffold local_only centralized \

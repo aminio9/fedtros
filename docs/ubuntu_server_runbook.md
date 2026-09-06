@@ -245,7 +245,7 @@ If you prefer to start tmux sessions individually and paste commands manually:
 #### 🖥️ Terminal 1: Core FedTROS-MC (`t1_core_mc`)
 ```bash
 tmux new -s t1_core_mc
-# Inside session (or run: bash scripts/run_terminal_1_core_mc.sh):
+# Inside session (or run: bash scripts/terminals/run_terminal_1_core_mc.sh):
 cd ~/fedtros
 poetry run python scripts/run_study.py E1-IID-CS --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
 poetry run python scripts/run_study.py E2-IID-OSR --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
@@ -256,7 +256,7 @@ poetry run python scripts/run_study.py E3-NIID-CS --stage main --wandb-mode disa
 #### 🖥️ Terminal 2: Central Open-Set E4 FedTROS-MC (`t2_e4_mc`)
 ```bash
 tmux new -s t2_e4_mc
-# Inside session (or run: bash scripts/run_terminal_2_e4_mc.sh):
+# Inside session (or run: bash scripts/terminals/run_terminal_2_e4_mc.sh):
 cd ~/fedtros
 # Runs all 3 Dirichlet alphas: [1.0 (mild), 0.5 (moderate), 0.1 (severe)]
 poetry run python scripts/run_study.py E4-NIID-FOSR --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
@@ -266,7 +266,7 @@ poetry run python scripts/run_study.py E4-NIID-FOSR --stage main --wandb-mode di
 #### 🖥️ Terminal 3: Core Ablations A1–A3 (`t3_ablations_a1_a3`)
 ```bash
 tmux new -s t3_ablations_a1_a3
-# Inside session (or run: bash scripts/run_terminal_3_ablations_a1_a3.sh):
+# Inside session (or run: bash scripts/terminals/run_terminal_3_ablations_a1_a3.sh):
 cd ~/fedtros
 poetry run python scripts/run_study.py A1-TEACHER --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
 poetry run python scripts/run_study.py A2-ANCHOR --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
@@ -277,7 +277,7 @@ poetry run python scripts/run_study.py A3-TRANSFER --stage main --wandb-mode dis
 #### 🖥️ Terminal 4: Geometry & Feature Ablations A4–A5 (`t4_ablations_a4_a5`)
 ```bash
 tmux new -s t4_ablations_a4_a5
-# Inside session (or run: bash scripts/run_terminal_4_ablations_a4_a5.sh):
+# Inside session (or run: bash scripts/terminals/run_terminal_4_ablations_a4_a5.sh):
 cd ~/fedtros
 poetry run python scripts/run_study.py A4-PR --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
 poetry run python scripts/run_study.py A5-FEATURE --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
@@ -287,7 +287,7 @@ poetry run python scripts/run_study.py A5-FEATURE --stage main --wandb-mode disa
 #### 🖥️ Terminal 5: Multi-Dataset, Scalability, LOAO & Sensitivity (`t5_datasets_mc`)
 ```bash
 tmux new -s t5_datasets_mc
-# Inside session (or run: bash scripts/run_terminal_5_datasets_mc.sh):
+# Inside session (or run: bash scripts/terminals/run_terminal_5_datasets_mc.sh):
 cd ~/fedtros
 poetry run python scripts/run_study.py E5-DATASET --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
 poetry run python scripts/run_study.py E6-SCALE --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
@@ -300,7 +300,7 @@ poetry run python scripts/run_study.py S1-SENSITIVITY --stage main --wandb-mode 
 #### 🖥️ Terminal 6: Core Baselines E1, E2, E3 (`t6_baselines_e1_e3`)
 ```bash
 tmux new -s t6_baselines_e1_e3
-# Inside session (or run: bash scripts/run_terminal_6_baselines_e1_e3.sh):
+# Inside session (or run: bash scripts/terminals/run_terminal_6_baselines_e1_e3.sh):
 cd ~/fedtros
 poetry run python scripts/run_study.py E1-IID-CS --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
 poetry run python scripts/run_study.py E2-IID-OSR --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
@@ -311,7 +311,7 @@ poetry run python scripts/run_study.py E3-NIID-CS --stage main --wandb-mode disa
 #### 🖥️ Terminal 7: Open-Set E4 Baselines (`t7_baselines_e4`)
 ```bash
 tmux new -s t7_baselines_e4
-# Inside session (or run: bash scripts/run_terminal_7_baselines_e4.sh):
+# Inside session (or run: bash scripts/terminals/run_terminal_7_baselines_e4.sh):
 cd ~/fedtros
 # Runs 5 baselines x 3 Dirichlet alphas = 15 runs
 poetry run python scripts/run_study.py E4-NIID-FOSR --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
@@ -321,7 +321,7 @@ poetry run python scripts/run_study.py E4-NIID-FOSR --stage main --wandb-mode di
 #### 🖥️ Terminal 8: Multi-Dataset & Efficiency Baselines (`t8_baselines_e5_e7`)
 ```bash
 tmux new -s t8_baselines_e5_e7
-# Inside session (or run: bash scripts/run_terminal_8_baselines_e5_e7.sh):
+# Inside session (or run: bash scripts/terminals/run_terminal_8_baselines_e5_e7.sh):
 cd ~/fedtros
 poetry run python scripts/run_study.py E5-DATASET --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
 poetry run python scripts/run_study.py E7-EFFICIENCY --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
