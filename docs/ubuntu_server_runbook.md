@@ -135,7 +135,35 @@ The execution protocol follows:
 > - **Only E3-NIID-CS and E4-NIID-FOSR** evaluate all three Dirichlet skews ($\alpha \in \{1.0, 0.5, 0.1\}$).
 > - In `E4-NIID-FOSR`, each run takes ~30 minutes. If `a1.0` is already completed, running the command with `--only-missing` will automatically continue with `a0.5`, then `a0.1`. Alternatively, you can run them directly using `--alpha 0.5` or `--alpha 0.1`.
 
+### 🚀 Option A: Automated One-Command Launcher (Recommended)
+
+We provide automated, self-logging shell scripts for all 4 terminals plus a master launcher:
+
+```bash
+cd ~/fedtros
+
+# 1. Launch all 4 experiment sessions in background tmux terminals at once:
+bash scripts/launch_tmux_experiments.sh start
+
+# 2. Check running status and progress across all 4 terminals:
+bash scripts/launch_tmux_experiments.sh status
+
+# 3. Attach to any specific terminal to watch it live:
+bash scripts/launch_tmux_experiments.sh attach 1   # Core: E1, E2, E3
+bash scripts/launch_tmux_experiments.sh attach 2   # Datasets: E5, E7
+bash scripts/launch_tmux_experiments.sh attach 3   # Ablations: A1–A5
+bash scripts/launch_tmux_experiments.sh attach 4   # Heavy: E4 (3 alphas), E6, E8, S1
+
+# 4. View live log files without attaching:
+tail -f logs/terminal_1_core.log
+tail -f logs/terminal_4_heavy.log
+```
+
 ---
+
+### 🖥️ Option B: Manual Terminal Execution (Step-by-Step)
+
+If you prefer to create and run inside each tmux terminal manually, use the commands below.
 
 ### 🖥️ Terminal 1: Core Closed & Open-Set (E1, E2, E3)
 
@@ -144,7 +172,7 @@ The execution protocol follows:
 > On your **RTX 3090 Ti (24 GB VRAM)**, append `runtime=gpu_fast` to keep all client dataset features and model weights resident directly in GPU VRAM (`move_data_to_device=true`, `client_device_residency=resident`). This eliminates CPU↔GPU PCIe transfer and model swapping overhead, making training **5x–15x faster**.
 > *(Total VRAM used per study is only ~150–300 MB, leaving >23 GB free).*
 
-Create and open session:
+Create and open session (or run `bash scripts/run_terminal_1_core.sh` inside it):
 ```bash
 tmux new -s exp_e1_e3
 ```
@@ -171,7 +199,7 @@ poetry run python scripts/run_study.py E3-NIID-CS --stage main --wandb-mode disa
 
 ### 🖥️ Terminal 2: Dataset Generalization & Efficiency (E5, E7)
 
-Create and open session:
+Create and open session (or run `bash scripts/run_terminal_2_dataset.sh` inside it):
 ```bash
 tmux new -s exp_e5_e7
 ```
@@ -193,7 +221,7 @@ poetry run python scripts/run_study.py E7-EFFICIENCY --stage main --wandb-mode d
 
 ### 🖥️ Terminal 3: Ablation Studies (A1–A5)
 
-Create and open session:
+Create and open session (or run `bash scripts/run_terminal_3_ablations.sh` inside it):
 ```bash
 tmux new -s exp_ablations
 ```
@@ -213,7 +241,7 @@ poetry run python scripts/run_study.py A5-FEATURE --stage main --wandb-mode disa
 
 ### 🖥️ Terminal 4: Scalability, LOAO & Sensitivity (E4, E6, E8, S1)
 
-Create and open session:
+Create and open session (or run `bash scripts/run_terminal_4_heavy.sh` inside it):
 ```bash
 tmux new -s exp_heavy
 ```
