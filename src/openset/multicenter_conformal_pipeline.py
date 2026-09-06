@@ -409,4 +409,32 @@ def evaluate_multicenter_conformal(
             }
             (osr_dir / "latent_projection_metadata.json").write_text(json.dumps(proj_meta, indent=2), encoding="utf-8")
         
+    log.info(
+        "\n"
+        "========================================================================================\n"
+        "                     ConFID DUAL-PATH OPEN-SET EVALUATION RESULTS                       \n"
+        "========================================================================================\n"
+        "  * Unified ConFID Ensemble AUROC:     %.4f  (%.2f%%)\n"
+        "  * Component AUROC (Mahalanobis):     %.4f  (%.2f%%)\n"
+        "  * Component AUROC (Reconstruction):  %.4f  (%.2f%%)\n"
+        "  * Area Under PR Curve (AUPRC):        %.4f\n"
+        "  --------------------------------------------------------------------------------------\n"
+        "  * Unknown Attack Recall (FoT):        %.4f  (%.2f%% of zero-day attacks intercepted)\n"
+        "  * Unknown Attack F1-Score:            %.4f  (%.2f%%)\n"
+        "  * Known False Rejection Rate (KFR):   %.4f  (Empirical Target <= %.4f)\n"
+        "  * Open-Set Macro-F1 (All Classes):    %.4f\n"
+        "  * Closed-Set Accuracy (Before/After): %.2f%% -> %.2f%%\n"
+        "========================================================================================",
+        metrics.get("open_set/auroc", 0.0), metrics.get("open_set/auroc", 0.0) * 100.0,
+        metrics.get("open_set/auroc_mahalanobis", 0.0), metrics.get("open_set/auroc_mahalanobis", 0.0) * 100.0,
+        metrics.get("open_set/auroc_reconstruction", 0.0), metrics.get("open_set/auroc_reconstruction", 0.0) * 100.0,
+        metrics.get("open_set/auprc", 0.0),
+        metrics.get("open_set/unknown_recall", 0.0), metrics.get("open_set/unknown_recall", 0.0) * 100.0,
+        metrics.get("open_set/unknown_f1", 0.0), metrics.get("open_set/unknown_f1", 0.0) * 100.0,
+        metrics.get("open_set/KFR", 0.0), metrics.get("open_set/requested_alpha", 0.05),
+        metrics.get("open_set/macro_f1", 0.0),
+        metrics.get("open_set/known_accuracy_before", 0.0) * 100.0, metrics.get("open_set/known_accuracy_after", 0.0) * 100.0,
+    )
+
     return metrics
+

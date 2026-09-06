@@ -265,18 +265,26 @@ def fit_multicenter_conformal(
     tau_alpha = tau_alpha_clean if clean_calibration else tau_alpha_global
         
     logger.info(
-        "=== Multicenter Conformal Calibration (Algorithm 2 & Eq. 196) ===\n"
-        "  * Prototype Banks: %s\n"
-        "  * Calibration Samples: |D_cal| = %d\n"
-        "  * Scoring Mode: %s (Ensemble Active: %s, Recon Weight: %.2f)\n"
-        "  * Significance Level alpha = %.4f (Confidence = %.2f%%)\n"
-        "  * Quantile Rank k_alpha = ceil((%d + 1) * %.4f) = %d\n"
-        "  * Rejection Threshold tau_alpha = %.4f",
+        "\n"
+        "========================================================================================\n"
+        "                 ConFID DUAL-PATH CALIBRATION & QUANTILE THRESHOLDING                   \n"
+        "========================================================================================\n"
+        "  * Prototype Banks:           %s\n"
+        "  * Calibration Pool:          |D_cal| = %d known samples\n"
+        "  * Scoring Mode:              %s (Ensemble Active: %s, Recon Weight w_rec: %.2f)\n"
+        "  * ConFID Z-Score Statistics: Mahalanobis mu=%.4f, sigma=%.4f | Recon mu=%.4f, sigma=%.4f\n"
+        "  * Significance Level alpha:  %.4f (Target KFR <= %.2f%%, Guaranteed Confidence: %.2f%%)\n"
+        "  * Quantile Selection:        Rank k_alpha = ceil((%d + 1) * (1 - %.4f)) = %d / %d\n"
+        "  * Calibrated Threshold:      tau_alpha = %.4f (Rejects query when s(x) >= tau_alpha)\n"
+        "========================================================================================",
         ", ".join(f"Class {c}: K*={m_d['k']}, N={m_d['n_proto_samples']}" for c, m_d in models.items()),
         m, score_mode, use_ensemble, ensemble_recon_weight,
-        alpha, (1.0 - alpha) * 100.0,
-        m, 1.0 - alpha, k_alpha, tau_alpha
+        mu_mah, sigma_mah, mu_rec, sigma_rec,
+        alpha, alpha * 100.0, (1.0 - alpha) * 100.0,
+        m, alpha, k_alpha, m,
+        tau_alpha
     )
+
     
     for r in calib_records:
         r["alpha"] = alpha
@@ -414,12 +422,23 @@ def score_multicenter_conformal(
     total_q = len(df_out)
     n_rej = int(np.sum(rejected))
     n_acc = total_q - n_rej
+    has_finite_rec = np.isfinite(scores_rec).any()
+    rec_mean_str = f"{float(np.nanmean(scores_rec)):.4f}" if has_finite_rec else "N/A"
     logger.info(
-        "=== Conformal Decision Rule Evaluation (Algorithm 2) ===\n"
-        "  * Total Test Queries: %d\n"
-        "  * Admitted Known (s(x) < tau_alpha): %d (%.2f%%)\n"
-        "  * Rejected Unknown Anomalies (s(x) >= tau_alpha): %d (%.2f%%)",
+        "\n"
+        "========================================================================================\n"
+        "                     ConFID ONLINE INFERENCE DECISION SUMMARY                           \n"
+        "========================================================================================\n"
+        "  * Total Queries Evaluated:         %d\n"
+        "  * Admitted Known (s < tau):        %d (%.2f%%) [Classified to Candidate Classes]\n"
+        "  * Rejected as Zero-Day (s >= tau): %d (%.2f%%) [Intercepted as Unknown Anomaly]\n"
+        "  * Score Averages:                  Mahalanobis=%.4f | Recon=%s | Unified ConFID=%.4f\n"
+        "  * Rejection Threshold:             tau_alpha = %.4f\n"
+        "========================================================================================",
         total_q, n_acc, 100.0 * n_acc / max(total_q, 1),
-        n_rej, 100.0 * n_rej / max(total_q, 1)
+        n_rej, 100.0 * n_rej / max(total_q, 1),
+        float(np.nanmean(scores_mah)), rec_mean_str, float(np.nanmean(nonconformity_scores)),
+        tau_alpha
     )
     return df_out
+
