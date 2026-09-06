@@ -114,6 +114,27 @@ The execution protocol follows:
 - **Phase ordering**: Canonical method first (`--method fedtros_mc`), then matched baselines (`--method fedavg fedprox scaffold local_only centralized`)
 - **Safety**: `--only-missing` allows safe continuation if interrupted.
 
+### 📋 Alpha Matrix Reference (Why some studies run 1 alpha vs 3 alphas):
+| Study ID | Description | Dirichlet $\alpha$ Values | Runs (`fedtros_mc`) |
+| :--- | :--- | :---: | :---: |
+| **E1-IID-CS** | Closed-Set IID Baseline | $\alpha = 1.0$ (IID only) | 1 run |
+| **E2-IID-OSR** | Open-Set IID Baseline | $\alpha = 1.0$ (IID only) | 1 run |
+| **E3-NIID-CS** | Closed-Set Non-IID Robustness | **$\alpha \in \{1.0, 0.5, 0.1\}$ (3 alphas)** | 3 runs |
+| **E4-NIID-FOSR** | Federated Open-Set Benchmark | **$\alpha \in \{1.0, 0.5, 0.1\}$ (3 alphas)** | 3 runs |
+| **E5-DATASET** | Dataset Generalization | $\alpha = 0.5$ (canonical) | 1 run / dataset |
+| **E6-SCALE** | Client Scalability (10, 20, 50, 100) | $\alpha = 0.5$ (canonical) | 4 runs |
+| **E7-EFFICIENCY**| Computational Complexity | $\alpha = 0.5$ (canonical) | 1 run |
+| **E8-LOAO** | Leave-One-Attack-Out | $\alpha = 0.5$ (canonical) | 4 runs |
+| **S1-SENSITIVITY**| Hyperparameter Sensitivity | $\alpha = 0.5$ (canonical) | 5 runs |
+| **A1-TEACHER** | Teacher Ablation | $\alpha \in \{0.1, 0.5\}$ (2 alphas) | 4 runs |
+| **A2-ANCHOR** | Retention Anchor Ablation | $\alpha \in \{0.1, 0.5\}$ (2 alphas) | 4 runs |
+| **A3 / A4 / A5** | Transfer, Geometry & Feature Ablations | $\alpha = 0.5$ (canonical) | 3–4 runs each |
+
+> [!NOTE]
+> - **If you run E1, E2, E5, E6, E7, E8, S1, or A3–A5**: It will run **only one alpha** and finish because those studies are officially designed for a single canonical alpha ($\alpha=1.0$ for IID, $\alpha=0.5$ for non-IID).
+> - **Only E3-NIID-CS and E4-NIID-FOSR** evaluate all three Dirichlet skews ($\alpha \in \{1.0, 0.5, 0.1\}$).
+> - In `E4-NIID-FOSR`, each run takes ~30 minutes. If `a1.0` is already completed, running the command with `--only-missing` will automatically continue with `a0.5`, then `a0.1`. Alternatively, you can run them directly using `--alpha 0.5` or `--alpha 0.1`.
+
 ---
 
 ### 🖥️ Terminal 1: Core Closed & Open-Set (E1, E2, E3)
