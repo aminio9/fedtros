@@ -20,7 +20,7 @@ cd "${ROOT_DIR}"
 mkdir -p logs
 
 SESSIONS=(
-    "t1_core_mc:scripts/terminals/run_terminal_1_core_mc.sh:logs/terminal_1_core_mc.log:Core FedTROS-MC (E1, E2, E3)"
+    # "t1_core_mc:scripts/terminals/run_terminal_1_core_mc.sh:logs/terminal_1_core_mc.log:Core FedTROS-MC (E1, E2, E3)"
     "t2_e4_mc:scripts/terminals/run_terminal_2_e4_mc.sh:logs/terminal_2_e4_mc.log:E4 Open-Set FedTROS-MC (3 alphas)"
     "t3_ablations_a1_a3:scripts/terminals/run_terminal_3_ablations_a1_a3.sh:logs/terminal_3_ablations_a1_a3.log:Ablations (A1, A2, A3)"
     "t4_ablations_a4_a5:scripts/terminals/run_terminal_4_ablations_a4_a5.sh:logs/terminal_4_ablations_a4_a5.log:Ablations (A4, A5)"
