@@ -7,7 +7,7 @@ save_latest: true
 save_final: true
 save_round_checkpoints: false
 checkpoint_interval: 0
-save_client_private: true
+save_client_private: false
 monitor_metric: val/accuracy
 monitor_mode: max
 include_rng_state: true
