@@ -134,7 +134,10 @@ cd ~/fedtros
 # --- Phase 1: Canonical method (FedTROS-MC) ---
 poetry run python scripts/run_study.py E1-IID-CS --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
 poetry run python scripts/run_study.py E2-IID-OSR --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
+
+# E3-NIID-CS automatically executes all 3 Dirichlet non-IID alphas: [1.0 (mild), 0.5 (moderate), 0.1 (severe)]
 poetry run python scripts/run_study.py E3-NIID-CS --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
+# (Optional: To run each alpha individually, append: --alpha 1.0, --alpha 0.5, or --alpha 0.1)
 
 # --- Phase 2: Matched Baselines ---
 poetry run python scripts/run_study.py E1-IID-CS --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
@@ -197,14 +200,22 @@ Inside the session, run:
 ```bash
 cd ~/fedtros
 
-# --- Phase 1: Canonical method (FedTROS-MC) ---
+# --- Phase 1: Canonical method (FedTROS-MC across all 3 alphas: 1.0, 0.5, 0.1) ---
+# E4 automatically runs all 3 Dirichlet non-IID levels: [1.0 (mild), 0.5 (moderate), 0.1 (extreme)]
 poetry run python scripts/run_study.py E4-NIID-FOSR --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
+
+# Scalability, Leave-One-Attack-Out, and Hyperparameter Sensitivity
 poetry run python scripts/run_study.py E6-SCALE --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
 poetry run python scripts/run_study.py E8-LOAO --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
 poetry run python scripts/run_study.py S1-SENSITIVITY --stage main --wandb-mode disabled --seeds 42 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
 
-# --- Phase 2: E4 Matched Baselines ---
+# --- Phase 2: E4 Matched Baselines (5 baselines x 3 alphas = 15 runs) ---
 poetry run python scripts/run_study.py E4-NIID-FOSR --stage main --wandb-mode disabled --seeds 42 --method fedavg fedprox scaffold local_only centralized --only-missing --output-dir outputs runtime=gpu_fast
+
+# (Optional: To run or resume a specific Dirichlet alpha individually, you can use:)
+# poetry run python scripts/run_study.py E4-NIID-FOSR --stage main --wandb-mode disabled --seeds 42 --alpha 1.0 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
+# poetry run python scripts/run_study.py E4-NIID-FOSR --stage main --wandb-mode disabled --seeds 42 --alpha 0.5 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
+# poetry run python scripts/run_study.py E4-NIID-FOSR --stage main --wandb-mode disabled --seeds 42 --alpha 0.1 --method fedtros_mc --only-missing --output-dir outputs runtime=gpu_fast
 ```
 *(Detach: Press `Ctrl + B`, release, then press `D`)*
 
