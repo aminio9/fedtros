@@ -16,7 +16,7 @@ import numpy as np
 import torch
 from omegaconf import OmegaConf
 
-from src.evaluation import run_evaluation, run_prototype_rank_evaluation
+from src.evaluation import run_evaluation, run_open_set_evaluation, run_prototype_rank_evaluation
 from src.experiment import create_run_services
 from src.federated import run_federated_simulation
 from src.infrastructure.checkpointing import IncompatibleCheckpointError
@@ -138,7 +138,7 @@ def resume_run(target: str|Path, *, target_rounds: int|None=None, device: str|No
         dev=torch.device(device) if device else resolve_device_from_config(cfg)
         open_enabled=bool(OmegaConf.select(cfg,"open_set.enabled",default=False)) or str(OmegaConf.select(cfg,"evaluation.mode",default="closed_set")).lower()=="open_set"
         if open_enabled:
-            run_prototype_rank_evaluation(cfg,project_root=_ROOT,device=dev,tracker=services)
+            run_open_set_evaluation(cfg,project_root=_ROOT,device=dev,tracker=services)
         else:
             run_evaluation(cfg,project_root=_ROOT,device=dev,tracker=services)
         services.set_summary(_summary(run_dir))

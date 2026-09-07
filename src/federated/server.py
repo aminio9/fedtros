@@ -965,20 +965,20 @@ class FedTROSStrategy(FedAvg):
             return {}
 
         backend = str(
-            OmegaConf.select(self.cfg, "open_set.detector", default="prototype_rank")
+            OmegaConf.select(self.cfg, "open_set.detector", default="multicenter_conformal")
         ).lower()
-        canonical = bool(OmegaConf.select(self.cfg, "method.canonical", default=False))
-        if canonical or backend not in {"prototype_rank", "fedtros_pr"}:
+        if backend not in {"multicenter_conformal", "prototype_rank", "fedtros_pr", "conformal"}:
             logger.info(
-                "FedTROS round=%d open-set evaluation skipped: canonical mode or non-legacy backend.",
+                "FedTROS round=%d open-set evaluation skipped: unrecognized backend %s.",
                 server_round,
+                backend,
             )
             return {}
 
         eval_base = _resolve_path(OmegaConf.select(self.cfg, "evaluation.output_dir", default="outputs/evaluation"))
         output_dir = eval_base / self.round_open_set_eval_dir / f"round_{int(server_round):04d}"
         try:
-            from src.evaluation.run import run_prototype_rank_evaluation
+            from src.evaluation.run import run_open_set_evaluation
 
             logger.info(
                 "[Round %d] Running server-side global open-set evaluation | backend=%s | output_dir=%s",
@@ -986,7 +986,7 @@ class FedTROSStrategy(FedAvg):
                 backend,
                 output_dir,
             )
-            metrics = run_prototype_rank_evaluation(
+            metrics = run_open_set_evaluation(
                 self.cfg,
                 project_root=_project_root(),
                 device=torch.device("cpu"),
@@ -996,13 +996,17 @@ class FedTROSStrategy(FedAvg):
                 save_scores=bool(self.round_open_set_save_scores),
                 append_round_metrics=True,
             )
+            auroc_val = float(metrics.get("openset_auroc", metrics.get("open_set/auroc", 0.0)))
+            rec_val = float(metrics.get("openset_unknown_recall", metrics.get("open_set/unknown_recall", 0.0)))
+            kfu_val = float(metrics.get("openset_known_false_unknown_rate", metrics.get("open_set/KFR", 0.0)))
+            f1_val = float(metrics.get("openset_f1_macro", metrics.get("open_set/macro_f1", 0.0)))
             logger.info(
                 "[Round %d] Global open-set eval complete | AUROC=%.4f | Unknown_Recall=%.4f | Known_FU=%.4f | MacroF1=%.4f",
                 server_round,
-                float(metrics.get("openset_auroc", 0.0)),
-                float(metrics.get("openset_unknown_recall", 0.0)),
-                float(metrics.get("openset_known_false_unknown_rate", 0.0)),
-                float(metrics.get("openset_f1_macro", 0.0)),
+                auroc_val,
+                rec_val,
+                kfu_val,
+                f1_val,
             )
             return {str(k): float(v) for k, v in metrics.items() if isinstance(v, (int, float))}
         except Exception as exc:

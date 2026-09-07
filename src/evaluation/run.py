@@ -43,15 +43,18 @@ def _resolve_prototype_rank_checkpoint(cfg: DictConfig, *, project_root: Path) -
     """Select the method-specific student checkpoint, then the canonical fallback."""
     checkpoint_dir = Path(str(cfg.checkpointing.dir))
     candidates = [
+        resolve_path(project_root, checkpoint_dir / "fedtros_mc_student_latest.pt"),
         resolve_path(project_root, checkpoint_dir / "fedtros_pr_student_latest.pt"),
         resolve_path(project_root, cfg.evaluation.checkpoint_path),
+        resolve_path(project_root, checkpoint_dir / "final_model.pt"),
+        resolve_path(project_root, checkpoint_dir / "latest.pt"),
         resolve_path(project_root, checkpoint_dir / "global_model_latest.pt"),
     ]
     for candidate in candidates:
         if candidate.exists():
             return candidate
     attempted = ", ".join(str(path) for path in candidates)
-    raise FileNotFoundError(f"No student checkpoint found for Prototype-Rank evaluation; tried: {attempted}")
+    raise FileNotFoundError(f"No student checkpoint found for open-set evaluation; tried: {attempted}")
 
 
 def build_agent(cfg: DictConfig, device: torch.device) -> Agent:
@@ -261,14 +264,45 @@ def run_open_set_evaluation(
         )
         all_metrics = metrics
 
+    # Standardized metric namespaces for downstream analysis, plotting, and tracking
+    normalized: dict[str, Any] = dict(all_metrics)
+    metric_mappings = [
+        ("open_set/auroc", "openset_auroc"),
+        ("open_set/auprc", "openset_auprc"),
+        ("open_set/fpr95", "openset_fpr95"),
+        ("open_set/macro_f1", "openset_f1_macro"),
+        ("open_set/unknown_f1", "openset_unknown_f1"),
+        ("open_set/unknown_recall", "openset_unknown_recall"),
+        ("open_set/KFR", "openset_known_false_unknown_rate"),
+        ("open_set/known_false_unknown_rate", "openset_KFR"),
+        ("open_set/known_accuracy_after", "openset_known_acc"),
+        ("open_set/known_accuracy_before", "openset_known_acc_before"),
+        ("open_set/overall_accuracy", "openset_overall_acc"),
+    ]
+    for k1, k2 in metric_mappings:
+        if k1 in normalized and k2 not in normalized:
+            normalized[k2] = normalized[k1]
+        elif k2 in normalized and k1 not in normalized:
+            normalized[k1] = normalized[k2]
+
+    all_metrics = normalized
+
+    if tracker is not None and hasattr(tracker, "log_metrics"):
+        tracker.log_metrics(all_metrics)
+
     metrics_dir = output_dir / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
     import json
-    (metrics_dir / "evaluation_metrics.json").write_text(
-        json.dumps(all_metrics, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
+    metrics_payload = json.dumps(all_metrics, indent=2, sort_keys=True)
+    (metrics_dir / "evaluation_metrics.json").write_text(metrics_payload, encoding="utf-8")
+    (metrics_dir / "open_set_metrics.json").write_text(metrics_payload, encoding="utf-8")
+    (metrics_dir / "final_metrics.json").write_text(metrics_payload, encoding="utf-8")
     logger.info("Evaluation complete. Metrics saved under %s", output_dir)
     return all_metrics
+
+
+# Backward-compatible alias
+run_prototype_rank_evaluation = run_open_set_evaluation
+
 
 
